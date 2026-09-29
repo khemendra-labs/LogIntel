@@ -1,0 +1,7 @@
+pyproject.toml
+src/logintel_engine.egg-info/PKG-INFO
+src/logintel_engine.egg-info/SOURCES.txt
+src/logintel_engine.egg-info/dependency_links.txt
+src/logintel_engine.egg-info/entry_points.txt
+src/logintel_engine.egg-info/requires.txt
+src/logintel_engine.egg-info/top_level.txt

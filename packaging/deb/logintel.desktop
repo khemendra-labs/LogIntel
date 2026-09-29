@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=LogIntel
+Comment=Linux Security Telemetry & Investigation Platform
+Exec=logintel
+Icon=logintel
+Terminal=false
+Type=Application
+Categories=Utility;System;Security;
+StartupNotify=true
+StartupWMClass=logintel
+Keywords=security;telemetry;investigation;journald;logs;audit;

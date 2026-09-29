@@ -1,0 +1,2 @@
+[console_scripts]
+logintel-engine = logintel.main:main

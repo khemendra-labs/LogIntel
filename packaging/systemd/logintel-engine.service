@@ -1,0 +1,20 @@
+[Unit]
+Description=LogIntel Linux Security Telemetry Analysis Engine
+After=network.target auditd.service systemd-journald.service
+Wants=systemd-journald.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/logintel/engine/.venv/bin/python -m logintel.main --host 127.0.0.1 --port 41721
+Restart=on-failure
+RestartSec=5s
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/usr/lib/logintel/engine
+
+# Restrict capabilities
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/logintel ~/.local/share/logintel
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+apps/engine/.venv/
+apps/engine/build/
+apps/engine/develop-eggs/
+apps/engine/dist/
+apps/engine/downloads/
+apps/engine/eggs/
+apps/engine/.eggs/
+apps/engine/lib/
+apps/engine/lib64/
+apps/engine/parts/
+apps/engine/sdist/
+apps/engine/var/
+apps/engine/wheels/
+apps/engine/*.egg-info/
+apps/engine/.installed.cfg
+apps/engine/*.egg
+.pytest_cache/
+
+# Node
+node_modules/
+apps/desktop/node_modules/
+apps/desktop/dist/
+
+# Rust / Cargo
+target/
+apps/desktop/src-tauri/target/
+
+# Package build staging
+build/
+*.deb
+
+# Environment & Local Data
+.env
+*.db
+*.db-wal
+*.db-shm
+logintel.db*
+*.log
