@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Optional
 from logintel.models import (
@@ -43,7 +44,7 @@ class KernelParser(BaseParser):
         raw_clean = sanitize_message(record.raw_content)
         ts, host, proc, pid, body = parse_syslog_header(raw_clean)
 
-        final_ts = record.timestamp or ts
+        final_ts = ts or record.timestamp or datetime.now(timezone.utc)
         final_host = record.host or host or "unknown"
         final_proc = proc or "kernel"
 
@@ -58,18 +59,41 @@ class KernelParser(BaseParser):
         src_port: Optional[int] = None
         dst_port: Optional[int] = None
 
-        # UFW Block check
-        m_ufw = UFW_RE.search(body)
-        if m_ufw:
-            src_ip = validate_ip(m_ufw.group(1))
-            dst_ip = validate_ip(m_ufw.group(2))
-            proto = m_ufw.group(3).lower()
-            src_port = int(m_ufw.group(4)) if m_ufw.group(4) else None
-            dst_port = int(m_ufw.group(5)) if m_ufw.group(5) else None
-            event_type = EventType.KERNEL_MESSAGE
-            severity = Severity.WARNING
+        # AppArmor Denial check
+        if 'apparmor="DENIED"' in body:
+            event_type = EventType.SECURITY_ACCESS_DENIED
+            severity = Severity.ALERT
             outcome = Outcome.FAILURE
-            summary = f"UFW Firewall blocked inbound connection from {src_ip or m_ufw.group(1)} to {dst_ip or m_ufw.group(2)}:{dst_port or 'any'}"
+
+            op_m = re.search(r'operation="([^"]+)"', body)
+            prof_m = re.search(r'profile="([^"]+)"', body)
+            name_m = re.search(r'name="([^"]+)"', body)
+            comm_m = re.search(r'comm="([^"]+)"', body)
+            pid_m = re.search(r'pid=(\d+)', body)
+
+            op = op_m.group(1) if op_m else "access"
+            prof = prof_m.group(1) if prof_m else "unknown"
+            target_name = name_m.group(1) if name_m else "resource"
+            if comm_m:
+                final_proc = comm_m.group(1)
+            if pid_m:
+                pid = int(pid_m.group(1))
+
+            summary = f"AppArmor security policy DENIED operation '{op}' for profile '{prof}' on target '{target_name}'"
+
+        # UFW Block check
+        if not summary:
+            m_ufw = UFW_RE.search(body)
+            if m_ufw:
+                src_ip = validate_ip(m_ufw.group(1))
+                dst_ip = validate_ip(m_ufw.group(2))
+                proto = m_ufw.group(3).lower()
+                src_port = int(m_ufw.group(4)) if m_ufw.group(4) else None
+                dst_port = int(m_ufw.group(5)) if m_ufw.group(5) else None
+                event_type = EventType.KERNEL_MESSAGE
+                severity = Severity.WARNING
+                outcome = Outcome.FAILURE
+                summary = f"UFW Firewall blocked inbound connection from {src_ip or m_ufw.group(1)} to {dst_ip or m_ufw.group(2)}:{dst_port or 'any'}"
 
         # Segfault check
         if not summary:

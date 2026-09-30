@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Optional
 from logintel.models import (
@@ -43,7 +44,7 @@ class PAMSessionParser(BaseParser):
         raw_clean = sanitize_message(record.raw_content)
         ts, host, proc, pid, body = parse_syslog_header(raw_clean)
 
-        final_ts = record.timestamp or ts
+        final_ts = ts or record.timestamp or datetime.now(timezone.utc)
         final_host = record.host or host or "unknown"
         final_proc = proc or "pam"
         final_pid = pid or (int(record.raw_attributes["_PID"]) if "_PID" in record.raw_attributes else None)

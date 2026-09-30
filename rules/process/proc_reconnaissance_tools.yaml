@@ -1,0 +1,21 @@
+id: proc.reconnaissance_tools
+name: Privileged Reconnaissance Tool Execution
+description: Detects privileged invocation of network scanning, packet capture, or system enumeration utilities via sudo.
+severity: NOTICE
+category: PROCESS
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: SUDO_COMMAND
+    - field: outcome
+      operator: equals
+      value: SUCCESS
+    - field: process_command_line
+      operator: regex
+      value: '^(\S*/)?(nmap|tcpdump|wireshark|tshark|aircrack-ng|masscan)(\s.*)?$'
+
+cooldown_seconds: 1800

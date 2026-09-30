@@ -1,0 +1,32 @@
+id: auth.invalid_user
+name: Invalid User Authentication Burst
+description: Detects rapid authentication attempts targeting non-existent or invalid user accounts.
+severity: ALERT
+category: AUTH
+rule_type: THRESHOLD
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: AUTH_LOGIN_FAILURE
+    - field: outcome
+      operator: equals
+      value: FAILURE
+    - field: summary
+      operator: contains
+      value: invalid user
+    - field: src_ip
+      operator: exists
+      value: true
+
+threshold:
+  count: 3
+  window_seconds: 180
+
+group_by:
+  - src_ip
+  - host
+
+cooldown_seconds: 3600

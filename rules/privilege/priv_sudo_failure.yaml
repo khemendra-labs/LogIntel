@@ -1,0 +1,29 @@
+id: priv.sudo_failure
+name: Repeated Sudo Authentication Failures
+description: Detects repeated failed sudo privilege elevation attempts for a user on a host within a short window.
+severity: ALERT
+category: PRIVILEGE
+rule_type: THRESHOLD
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: PRIVILEGE_ELEVATION_FAILURE
+    - field: outcome
+      operator: equals
+      value: FAILURE
+    - field: username
+      operator: exists
+      value: true
+
+threshold:
+  count: 3
+  window_seconds: 180
+
+group_by:
+  - username
+  - host
+
+cooldown_seconds: 1800

@@ -1,0 +1,29 @@
+id: auth.repeated_failures
+name: Repeated Authentication Failures for Account
+description: Detects repeated authentication failures targeting a specific user account on a host.
+severity: WARNING
+category: AUTH
+rule_type: THRESHOLD
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: AUTH_LOGIN_FAILURE
+    - field: outcome
+      operator: equals
+      value: FAILURE
+    - field: username
+      operator: exists
+      value: true
+
+threshold:
+  count: 5
+  window_seconds: 300
+
+group_by:
+  - username
+  - host
+
+cooldown_seconds: 1800

@@ -12,13 +12,20 @@ from logintel.models import RawRecord
 class KernLogCollector(Collector):
     """Monitors /var/log/kern.log for kernel messages, driver events, and hardware alerts."""
 
-    def __init__(self, file_path: Optional[str] = None):
+    def __init__(
+        self,
+        file_path: Optional[str] = None,
+        current_offset: int = 0,
+        current_inode: Optional[int] = None,
+    ):
         super().__init__(name="kern.log", source_type="file")
         path = file_path or settings.collectors.kern_log_path
         self.tailer = FileTailer(
             file_path=path,
             source_name="kern.log",
             host=settings.host_name,
+            current_offset=current_offset,
+            current_inode=current_inode,
         )
 
     def check_availability(self) -> Tuple[bool, Optional[str]]:

@@ -15,12 +15,19 @@ logger = get_logger("collectors.file_tailer")
 class FileTailer:
     """Reads logs from a file with offset tracking and rotation detection."""
 
-    def __init__(self, file_path: str, source_name: str, host: str):
+    def __init__(
+        self,
+        file_path: str,
+        source_name: str,
+        host: str,
+        current_offset: int = 0,
+        current_inode: Optional[int] = None,
+    ):
         self.file_path = Path(file_path)
         self.source_name = source_name
         self.host = host
-        self.current_offset = 0
-        self.current_inode: Optional[int] = None
+        self.current_offset = current_offset
+        self.current_inode = current_inode
 
     def check_availability(self) -> Tuple[bool, Optional[str]]:
         """Verify file existence and read permissions."""
@@ -47,6 +54,16 @@ class FileTailer:
             logger.warning("Cannot read historical records from %s: %s", self.file_path, reason)
             return
 
+        # If offset is already persisted from a previous run, do not re-read historical lines
+        if self.current_offset > 0:
+            logger.info(
+                "Persisted offset %d detected for %s; skipping historical reload and resuming incrementally.",
+                self.current_offset,
+                self.file_path,
+            )
+            yield from self.read_new()
+            return
+
         stat = self._get_file_stat()
         if not stat:
             return
@@ -65,19 +82,21 @@ class FileTailer:
                 else:
                     f.seek(0)
 
-                lines = f.readlines()
-                self.current_offset = f.tell()
-
-                for idx, line in enumerate(lines[-max_records:]):
+                while True:
+                    line_start_offset = f.tell()
+                    line = f.readline()
+                    if not line:
+                        break
+                    self.current_offset = f.tell()
                     cleaned = line.rstrip("\r\n")
                     if cleaned:
                         yield RawRecord(
                             source=self.source_name,
                             raw_content=cleaned,
-                            timestamp=datetime.now(timezone.utc),
+                            timestamp=None,
                             host=self.host,
                             source_file=str(self.file_path),
-                            source_offset=str(self.current_offset - (len(lines) - idx) * len(line)),
+                            source_offset=str(line_start_offset),
                         )
         except Exception as exc:
             logger.error("Error reading historical records from %s: %s", self.file_path, exc)
@@ -120,7 +139,7 @@ class FileTailer:
                         yield RawRecord(
                             source=self.source_name,
                             raw_content=cleaned,
-                            timestamp=datetime.now(timezone.utc),
+                            timestamp=None,
                             host=self.host,
                             source_file=str(self.file_path),
                             source_offset=str(line_start_offset),

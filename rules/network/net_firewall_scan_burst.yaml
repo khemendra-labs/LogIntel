@@ -1,0 +1,26 @@
+id: network.firewall_scan_burst
+name: UFW Inbound Port Scan Burst
+description: Detects a high volume of firewall blocked connection attempts from a single external IP address within a short window.
+severity: ALERT
+category: NETWORK
+rule_type: THRESHOLD
+enabled: true
+
+conditions:
+  all:
+    - field: summary
+      operator: contains
+      value: UFW Firewall blocked
+    - field: src_ip
+      operator: exists
+      value: true
+
+threshold:
+  count: 5
+  window_seconds: 120
+
+group_by:
+  - src_ip
+  - host
+
+cooldown_seconds: 1800

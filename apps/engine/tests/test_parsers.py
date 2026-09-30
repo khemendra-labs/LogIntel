@@ -119,3 +119,55 @@ def test_malformed_event_resilience():
     assert "\x1b" not in event.raw_message
     assert "\x00" not in event.raw_message
     assert "CRITICAL" in event.raw_message
+
+
+def test_sudo_with_spaces_in_pwd():
+    """Verify that sudo parser handles directory paths containing spaces."""
+    line = "Sep 29 10:15:00 sec-node sudo: analyst : TTY=pts/1 ; PWD=/home/analyst/my special projects/conf ; USER=root ; COMMAND=/usr/bin/cat /etc/shadow"
+    record = RawRecord(source="auth.log", raw_content=line)
+    event, success = parser_registry.parse_record(record)
+    assert success is True
+    assert event.event_type == EventType.SUDO_COMMAND
+    assert event.actor.username == "analyst"
+    assert event.process.command_line == "/usr/bin/cat /etc/shadow"
+    assert event.outcome == Outcome.SUCCESS
+
+
+def test_apparmor_denial_security_event():
+    """Verify that apparmor='DENIED' events are explicitly mapped to SECURITY_ACCESS_DENIED with ALERT and FAILURE."""
+    line = 'Sep 29 10:15:00 sec-node kernel: audit: type=1400 audit(1727600000.123:456): apparmor="DENIED" operation="open" class="file" profile="/usr/bin/evince" name="/etc/shadow" pid=12345 comm="evince" requested_mask="r" denied_mask="r"'
+    record = RawRecord(source="kern.log", raw_content=line)
+    event, success = parser_registry.parse_record(record)
+    assert success is True
+    assert event.event_type == EventType.SECURITY_ACCESS_DENIED
+    assert event.severity == Severity.ALERT
+    assert event.outcome == Outcome.FAILURE
+    assert event.process.name == "evince"
+    assert "AppArmor security policy DENIED" in event.summary
+    assert "/etc/shadow" in event.summary
+
+
+def test_ipv6_ioc_extraction():
+    """Verify that both IPv4 and IPv6 indicators are correctly extracted."""
+    line = "Sep 29 10:15:00 sec-node sshd[123]: Inbound scan from 127.0.0.1 and 192.168.1.20 and ::1 and fe80::1 and 2001:db8::10"
+    record = RawRecord(source="auth.log", raw_content=line)
+    event, success = parser_registry.parse_record(record)
+    assert success is True
+    for expected_ip in ["127.0.0.1", "192.168.1.20", "::1", "fe80::1", "2001:db8::10"]:
+        assert expected_ip in event.iocs
+
+
+def test_historical_timestamp_provenance():
+    """Verify that historical syslog records preserve actual log event time rather than ingestion time."""
+    line = "Sep 01 14:20:10 sec-node sshd[4321]: Accepted publickey for secops from 203.0.113.15 port 4222 ssh2"
+    record = RawRecord(source="auth.log", raw_content=line, timestamp=None)
+    event, success = parser_registry.parse_record(record)
+    assert success is True
+    # Event timestamp recovered from log header
+    assert event.timestamp.month == 9
+    assert event.timestamp.day == 1
+    assert event.timestamp.hour == 14
+    assert event.timestamp.minute == 20
+    assert event.timestamp.second == 10
+    # Ingested_at should be recent (now)
+    assert event.timestamp != event.ingested_at

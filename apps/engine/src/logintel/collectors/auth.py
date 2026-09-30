@@ -12,13 +12,20 @@ from logintel.models import RawRecord
 class AuthLogCollector(Collector):
     """Monitors /var/log/auth.log for authentication and privilege events."""
 
-    def __init__(self, file_path: Optional[str] = None):
+    def __init__(
+        self,
+        file_path: Optional[str] = None,
+        current_offset: int = 0,
+        current_inode: Optional[int] = None,
+    ):
         super().__init__(name="auth.log", source_type="file")
         path = file_path or settings.collectors.auth_log_path
         self.tailer = FileTailer(
             file_path=path,
             source_name="auth.log",
             host=settings.host_name,
+            current_offset=current_offset,
+            current_inode=current_inode,
         )
 
     def check_availability(self) -> Tuple[bool, Optional[str]]:

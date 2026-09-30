@@ -1,0 +1,29 @@
+id: auth.ssh_bruteforce
+name: SSH Authentication Brute Force
+description: Detects repeated failed SSH authentication attempts from a single source IP within a short time window.
+severity: ALERT
+category: AUTH
+rule_type: THRESHOLD
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: AUTH_LOGIN_FAILURE
+    - field: outcome
+      operator: equals
+      value: FAILURE
+    - field: src_ip
+      operator: exists
+      value: true
+
+threshold:
+  count: 5
+  window_seconds: 300
+
+group_by:
+  - src_ip
+  - host
+
+cooldown_seconds: 3600

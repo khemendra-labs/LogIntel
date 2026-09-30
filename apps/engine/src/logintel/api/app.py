@@ -20,8 +20,17 @@ async def lifespan(app: FastAPI):
     setup_logging(log_file=settings.log_file, level=settings.log_level)
     logger.info("Starting LogIntel Engine version %s...", settings.version)
     
+    # Initialize engine auth token
+    from logintel.api.auth import init_engine_token
+    init_engine_token()
+
     # Initialize DB & migrations
     db.initialize()
+
+    # Sync canonical detection rules into catalog table
+    from logintel.storage.alerts_repo import alerts_repo
+    from logintel.detection.loader import load_default_rules
+    alerts_repo.sync_rules(load_default_rules())
 
     # Start live telemetry ingestion
     ingestion_engine.start()
@@ -32,6 +41,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down LogIntel Engine...")
     ingestion_engine.stop()
     db.close()
+    try:
+        if settings.token_path.exists():
+            settings.token_path.unlink()
+    except Exception:
+        pass
     logger.info("LogIntel Engine shutdown complete.")
 
 

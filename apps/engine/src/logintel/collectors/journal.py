@@ -18,9 +18,9 @@ logger = get_logger("collectors.journal")
 class JournalCollector(Collector):
     """Collects systemd journal telemetry using cursor tracking."""
 
-    def __init__(self):
+    def __init__(self, cursor: Optional[str] = None):
         super().__init__(name="journald", source_type="journal")
-        self.cursor: Optional[str] = None
+        self.cursor: Optional[str] = cursor
         self._journalctl_bin: Optional[str] = shutil.which("journalctl")
 
     def check_availability(self) -> Tuple[bool, Optional[str]]:
@@ -48,6 +48,12 @@ class JournalCollector(Collector):
         available, reason = self.check_availability()
         if not available:
             logger.warning("Journal telemetry unavailable: %s", reason)
+            return
+
+        # If a persisted cursor exists from previous runs, resume incrementally instead of re-reading history
+        if self.cursor:
+            logger.info("Restored persisted journald cursor %s; continuing incremental collection.", self.cursor)
+            yield from self.collect_new()
             return
 
         cmd = [self._journalctl_bin, "-o", "json", "-n", str(limit)]
@@ -124,7 +130,28 @@ class JournalCollector(Collector):
             )
             stdout, stderr = proc.communicate(timeout=10)
             if proc.returncode != 0:
-                return
+                if self.cursor:
+                    logger.warning(
+                        "journalctl with cursor '%s' failed (code %d): %s. Cursor may be vacuumed or invalid. Recovering from current tail.",
+                        self.cursor,
+                        proc.returncode,
+                        stderr.strip(),
+                    )
+                    self.cursor = None
+                    recovery_proc = subprocess.run(
+                        [self._journalctl_bin, "-o", "json", "-n", "10"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=5,
+                    )
+                    if recovery_proc.returncode == 0:
+                        stdout = recovery_proc.stdout
+                    else:
+                        return
+                else:
+                    logger.error("journalctl failed: %s", stderr.strip())
+                    return
 
             for line in stdout.splitlines():
                 line = line.strip()

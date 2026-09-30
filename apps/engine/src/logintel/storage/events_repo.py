@@ -30,22 +30,24 @@ class EventsRepository:
             process_name, process_pid, process_ppid, process_executable, process_command_line,
             src_ip, src_port, dst_ip, dst_port, protocol,
             action, outcome, summary, raw_message, iocs_json,
-            parser, source_file, source_offset, metadata_json
+            parser, source_file, source_offset, metadata_json,
+            event_fingerprint
         ) VALUES (
             :id, :timestamp, :ingested_at, :host, :source, :event_type, :severity,
             :username, :uid, :session_id, :terminal,
             :process_name, :process_pid, :process_ppid, :process_executable, :process_command_line,
             :src_ip, :src_port, :dst_ip, :dst_port, :protocol,
             :action, :outcome, :summary, :raw_message, :iocs_json,
-            :parser, :source_file, :source_offset, :metadata_json
+            :parser, :source_file, :source_offset, :metadata_json,
+            :event_fingerprint
         )
         """
         with self.db.connection() as conn:
+            before = conn.total_changes
             cursor = conn.cursor()
             cursor.executemany(sql, rows)
             conn.commit()
-            inserted = cursor.rowcount
-            return inserted if inserted >= 0 else len(rows)
+            return conn.total_changes - before
 
     def get_event_by_id(self, event_id: str) -> Optional[CanonicalEvent]:
         """Fetch a single canonical event by its UUID."""
@@ -224,21 +226,23 @@ class EventsRepository:
         source_name: str,
         cursor: Optional[str] = None,
         byte_offset: int = 0,
+        inode: Optional[int] = None,
         records_delta: int = 0,
         error_count_delta: int = 0,
         last_error: Optional[str] = None,
     ) -> None:
-        """Upsert current cursor, offset, and metrics for a telemetry source."""
+        """Upsert current cursor, offset, inode, and metrics for a telemetry source."""
         now_iso = datetime.now(timezone.utc).isoformat()
         sql = """
         INSERT INTO ingestion_state (
-            source_name, cursor, byte_offset, last_run_at, total_records_ingested, error_count, last_error
+            source_name, cursor, byte_offset, inode, last_run_at, total_records_ingested, error_count, last_error
         ) VALUES (
-            :source_name, :cursor, :byte_offset, :now, :records_delta, :error_count_delta, :last_error
+            :source_name, :cursor, :byte_offset, :inode, :now, :records_delta, :error_count_delta, :last_error
         )
         ON CONFLICT(source_name) DO UPDATE SET
             cursor = coalesce(:cursor, ingestion_state.cursor),
             byte_offset = :byte_offset,
+            inode = coalesce(:inode, ingestion_state.inode),
             last_run_at = :now,
             total_records_ingested = ingestion_state.total_records_ingested + :records_delta,
             error_count = ingestion_state.error_count + :error_count_delta,
@@ -251,6 +255,7 @@ class EventsRepository:
                     "source_name": source_name,
                     "cursor": cursor,
                     "byte_offset": byte_offset,
+                    "inode": inode,
                     "now": now_iso,
                     "records_delta": records_delta,
                     "error_count_delta": error_count_delta,
@@ -264,6 +269,85 @@ class EventsRepository:
         with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM ingestion_state ORDER BY source_name ASC")
+            return [dict(r) for r in cursor.fetchall()]
+
+    def upsert_host(
+        self,
+        hostname: str,
+        os_name: Optional[str] = None,
+        os_version: Optional[str] = None,
+    ) -> None:
+        """Ensure host entry exists and is updated with last_seen."""
+        import hashlib
+        host_id = hashlib.sha256(hostname.encode("utf-8")).hexdigest()[:16]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        sql = """
+        INSERT INTO hosts (id, hostname, os_name, os_version, first_seen, last_seen)
+        VALUES (:id, :hostname, :os_name, :os_version, :now, :now)
+        ON CONFLICT(hostname) DO UPDATE SET
+            last_seen = :now,
+            os_name = coalesce(:os_name, hosts.os_name),
+            os_version = coalesce(:os_version, hosts.os_version)
+        """
+        with self.db.connection() as conn:
+            conn.cursor().execute(
+                sql,
+                {
+                    "id": host_id,
+                    "hostname": hostname,
+                    "os_name": os_name,
+                    "os_version": os_version,
+                    "now": now_iso,
+                },
+            )
+            conn.commit()
+
+    def upsert_source(
+        self,
+        name: str,
+        source_type: str,
+        path: Optional[str] = None,
+        enabled: bool = True,
+    ) -> None:
+        """Ensure source metadata entry exists and is kept in sync."""
+        import hashlib
+        source_id = hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        sql = """
+        INSERT INTO sources (id, name, source_type, path, enabled, created_at, updated_at)
+        VALUES (:id, :name, :source_type, :path, :enabled, :now, :now)
+        ON CONFLICT(name) DO UPDATE SET
+            source_type = :source_type,
+            path = :path,
+            enabled = :enabled,
+            updated_at = :now
+        """
+        with self.db.connection() as conn:
+            conn.cursor().execute(
+                sql,
+                {
+                    "id": source_id,
+                    "name": name,
+                    "source_type": source_type,
+                    "path": path,
+                    "enabled": 1 if enabled else 0,
+                    "now": now_iso,
+                },
+            )
+            conn.commit()
+
+    def get_all_hosts(self) -> List[Dict[str, Any]]:
+        """Fetch all recorded host entities."""
+        with self.db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM hosts ORDER BY hostname ASC")
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_all_sources(self) -> List[Dict[str, Any]]:
+        """Fetch all configured source entities."""
+        with self.db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM sources ORDER BY name ASC")
             return [dict(r) for r in cursor.fetchall()]
 
 

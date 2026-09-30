@@ -1,0 +1,18 @@
+id: account.root_creation
+name: Direct Root-Privilege User Account Created
+description: Detects creation of a new local user account configured with UID 0 (root-equivalent privilege).
+severity: CRITICAL
+category: ACCOUNT
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: USER_CREATE
+    - field: uid
+      operator: equals
+      value: 0
+
+cooldown_seconds: 3600

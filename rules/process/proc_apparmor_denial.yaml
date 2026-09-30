@@ -1,0 +1,21 @@
+id: proc.apparmor_denial
+name: AppArmor Security Policy Violation
+description: Detects security access denial events enforced by Linux AppArmor mandatory access control.
+severity: ALERT
+category: PROCESS
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: SECURITY_ACCESS_DENIED
+    - field: outcome
+      operator: equals
+      value: FAILURE
+    - field: parser
+      operator: equals
+      value: linux_kernel
+
+cooldown_seconds: 1800

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Optional
 from logintel.models import (
@@ -17,9 +18,9 @@ from logintel.normalization.sanitizer import extract_iocs, sanitize_message
 from logintel.normalization.timestamps import parse_syslog_header
 from logintel.parsers.base import BaseParser
 
-# Regex for standard sudo command execution
+# Regex for standard sudo command execution (allows spaces in PWD)
 SUDO_EXEC_RE = re.compile(
-    r"^([^\s:]+)\s*:\s*(?:(?:a password is required|pam_unix|session|authentication failure).*)?TTY=([^\s;]+)\s*;\s*PWD=([^\s;]+)\s*;\s*USER=([^\s;]+)\s*;\s*COMMAND=(.+)$"
+    r"^([^\s:]+)\s*:\s*(?:(?:a password is required|pam_unix|session|authentication failure).*)?TTY=([^\s;]+)\s*;\s*PWD=(.+?)\s*;\s*USER=([^\s;]+)\s*;\s*COMMAND=(.+)$"
 )
 
 SUDO_FAIL_RE = re.compile(
@@ -46,7 +47,7 @@ class SudoParser(BaseParser):
         raw_clean = sanitize_message(record.raw_content)
         ts, host, proc, pid, body = parse_syslog_header(raw_clean)
 
-        final_ts = record.timestamp or ts
+        final_ts = ts or record.timestamp or datetime.now(timezone.utc)
         final_host = record.host or host or "unknown"
         final_proc = proc or "sudo"
         final_pid = pid or (int(record.raw_attributes["_PID"]) if "_PID" in record.raw_attributes else None)

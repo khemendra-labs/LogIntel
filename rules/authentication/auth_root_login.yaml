@@ -1,0 +1,22 @@
+id: auth.root_login
+name: Direct Root Login via SSH
+description: Detects direct interactive root authentication via SSH.
+severity: WARNING
+category: AUTH
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: AUTH_LOGIN_SUCCESS
+    - field: outcome
+      operator: equals
+      value: SUCCESS
+    - field: username
+      operator: equals
+      value: root
+    - field: parser
+      operator: equals
+      value: openssh_auth

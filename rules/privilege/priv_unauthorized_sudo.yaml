@@ -1,0 +1,21 @@
+id: priv.unauthorized_sudo
+name: Unauthorized User Sudo Execution Attempt
+description: Detects unauthorized sudo execution attempts by users not present in the sudoers security policy.
+severity: CRITICAL
+category: PRIVILEGE
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: PRIVILEGE_ELEVATION_FAILURE
+    - field: outcome
+      operator: equals
+      value: FAILURE
+    - field: summary
+      operator: contains
+      value: user NOT in sudoers
+
+cooldown_seconds: 3600

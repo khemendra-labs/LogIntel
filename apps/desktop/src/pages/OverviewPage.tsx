@@ -11,16 +11,20 @@ interface OverviewPageProps {
   stats: EventStatistics | null;
   health: TelemetryHealthReport | null;
   status: SystemStatus | null;
+  openAlertsCount?: number;
   onSelectEvent: (event: CanonicalEvent) => void;
   onNavigateToActivity: (filter?: { severity?: string; source?: string }) => void;
+  onNavigateToAlerts?: (filter?: { status?: string }) => void;
 }
 
 export function OverviewPage({
   stats,
   health,
   status,
+  openAlertsCount = 0,
   onSelectEvent,
   onNavigateToActivity,
+  onNavigateToAlerts,
 }: OverviewPageProps) {
   const totalEvents = stats?.total_events || 0;
   const bySource = stats?.by_source || {};
@@ -39,7 +43,7 @@ export function OverviewPage({
           </span>
         </div>
         <div className="panel-body">
-          <div className="property-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+          <div className="property-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
             <div className="property-item">
               <span className="property-label">Total Telemetry Events</span>
               <span className="property-value mono-cell" style={{ fontSize: "18px", fontWeight: 700 }}>
@@ -64,6 +68,22 @@ export function OverviewPage({
               <span className="property-label">Database Store</span>
               <span className="property-value mono-cell" style={{ fontSize: "12px" }}>
                 SQLite WAL ({(health?.database_size_bytes ? health.database_size_bytes / (1024 * 1024) : 0).toFixed(2)} MB)
+              </span>
+            </div>
+            <div
+              className="property-item"
+              style={{ cursor: "pointer" }}
+              onClick={() => onNavigateToAlerts?.({ status: "OPEN" })}
+              title="View Open Security Alerts"
+            >
+              <span className="property-label">Open Alerts</span>
+              <span className="property-value mono-cell" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ fontSize: "18px", fontWeight: 700, color: openAlertsCount > 0 ? "var(--badge-alert-text)" : "inherit" }}>
+                  {openAlertsCount}
+                </span>
+                <span className={`badge ${openAlertsCount > 0 ? "badge-alert" : "badge-neutral"}`} style={{ fontSize: "10px" }}>
+                  {openAlertsCount > 0 ? "ATTENTION" : "CLEARED"}
+                </span>
               </span>
             </div>
           </div>

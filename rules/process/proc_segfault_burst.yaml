@@ -1,0 +1,29 @@
+id: proc.segfault_burst
+name: Application Segfault Crash Burst
+description: Detects multiple application crashes (segmentation faults) within a short window, which may indicate exploit attempts or memory corruption.
+severity: ALERT
+category: PROCESS
+rule_type: THRESHOLD
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: KERNEL_MESSAGE
+    - field: summary
+      operator: contains
+      value: segfault
+    - field: process_name
+      operator: exists
+      value: true
+
+threshold:
+  count: 3
+  window_seconds: 120
+
+group_by:
+  - process_name
+  - host
+
+cooldown_seconds: 1800

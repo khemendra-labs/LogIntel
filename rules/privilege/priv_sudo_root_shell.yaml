@@ -1,0 +1,21 @@
+id: priv.sudo_root_shell
+name: Privileged Interactive Shell Spawned via Sudo
+description: Detects invocation of an interactive root shell (bash, sh, zsh, su) through sudo privilege elevation.
+severity: WARNING
+category: PRIVILEGE
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: SUDO_COMMAND
+    - field: outcome
+      operator: equals
+      value: SUCCESS
+    - field: process_command_line
+      operator: regex
+      value: '^(\S*/)?(bash|sh|zsh|dash|su|ksh)(\s.*)?$'
+
+cooldown_seconds: 1800

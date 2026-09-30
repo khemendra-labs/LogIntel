@@ -1,16 +1,22 @@
 import React from "react";
-import { ActivityIcon, DatabaseIcon, OverviewIcon, ServerIcon } from "./Icons";
+import { ActivityIcon, AlertIcon, DatabaseIcon, OverviewIcon, RulesIcon, ServerIcon } from "./Icons";
 import { SystemStatus } from "../types/events";
 
-export type NavTab = "overview" | "activity";
+export type NavTab = "overview" | "activity" | "alerts" | "rules";
 
 interface NavigationProps {
   currentTab: NavTab;
   onTabChange: (tab: NavTab) => void;
   status: SystemStatus | null;
+  openAlertsCount?: number;
 }
 
-export function Navigation({ currentTab, onTabChange, status }: NavigationProps) {
+export function Navigation({
+  currentTab,
+  onTabChange,
+  status,
+  openAlertsCount = 0,
+}: NavigationProps) {
   return (
     <aside className="sidebar-nav">
       <div>
@@ -28,6 +34,29 @@ export function Navigation({ currentTab, onTabChange, status }: NavigationProps)
         >
           <ActivityIcon />
           <span>Activity</span>
+        </button>
+
+        <div className="nav-group-title" style={{ marginTop: "16px" }}>Security & Detection</div>
+        <button
+          className={`nav-item ${currentTab === "alerts" ? "active" : ""}`}
+          onClick={() => onTabChange("alerts")}
+        >
+          <AlertIcon />
+          <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+            <span>Alerts</span>
+            {openAlertsCount > 0 && (
+              <span className="badge badge-alert" style={{ fontSize: "10px", padding: "1px 5px", marginLeft: "6px" }}>
+                {openAlertsCount}
+              </span>
+            )}
+          </span>
+        </button>
+        <button
+          className={`nav-item ${currentTab === "rules" ? "active" : ""}`}
+          onClick={() => onTabChange("rules")}
+        >
+          <RulesIcon />
+          <span>Rules Catalog</span>
         </button>
       </div>
 

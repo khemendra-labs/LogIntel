@@ -16,7 +16,7 @@ IPV4_PATTERN = re.compile(
 
 # Regex to detect valid IPv6 addresses
 IPV6_PATTERN = re.compile(
-    r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:|\b:(?::[0-9a-fA-F]{1,4}){1,7}\b"
+    r"(?<![a-zA-Z0-9:])((?:[0-9a-fA-F]{1,4}:){1,7}(?:[0-9a-fA-F]{1,4}|:)|::(?:[0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:)+(?::[0-9a-fA-F]{1,4})+|::1)(?![a-zA-Z0-9:])"
 )
 
 # Maximum allowed raw message length to prevent memory exhaustion / DoS
@@ -57,8 +57,14 @@ def extract_iocs(text: str) -> List[str]:
     # Extract valid IPv4
     for match in IPV4_PATTERN.finditer(text):
         candidate = match.group(0)
-        # Exclude loopback / link-local / broadcast if desired, but keep valid IPs
         if validate_ip(candidate):
             iocs.add(candidate)
+
+    # Extract valid IPv6
+    for match in IPV6_PATTERN.finditer(text):
+        candidate = match.group(0)
+        valid = validate_ip(candidate)
+        if valid and ":" in valid:
+            iocs.add(valid)
 
     return sorted(list(iocs))

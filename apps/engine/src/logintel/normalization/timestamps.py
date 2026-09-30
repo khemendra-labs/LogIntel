@@ -65,8 +65,8 @@ def parse_syslog_header(line: str) -> Tuple[datetime, Optional[str], Optional[st
             remainder = remainder[rfc_match.end():].strip()
 
     # 3. Extract hostname and process[pid]: if present
-    # Example: "Khemendra-labs CRON[5273]: pam_unix..."
-    # or "Khemendra-labs sudo: khemendra-labs..."
+    # Example: "server01 CRON[5273]: pam_unix..."
+    # or "server01 sudo: alice..."
     tokens = remainder.split(None, 2)
     if len(tokens) >= 2 and (":" in tokens[1] or tokens[1].endswith(":")):
         host = tokens[0]

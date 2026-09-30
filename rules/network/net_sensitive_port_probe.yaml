@@ -1,0 +1,24 @@
+id: network.sensitive_port_probe
+name: Probing of High-Value Infrastructure Ports
+description: Detects blocked connection attempts targeting sensitive administrative or database services (SSH, RDP, MySQL, Postgres, Redis, Kubernetes).
+severity: WARNING
+category: NETWORK
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: summary
+      operator: contains
+      value: UFW Firewall blocked
+    - field: dst_port
+      operator: in
+      value:
+        - 22
+        - 3389
+        - 3306
+        - 5432
+        - 6379
+        - 6443
+
+cooldown_seconds: 600

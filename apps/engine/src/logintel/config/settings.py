@@ -74,6 +74,25 @@ class Settings(BaseModel):
     def log_file(self) -> Path:
         return self.log_dir / "engine.log"
 
+    @property
+    def token_path(self) -> Path:
+        return self.data_dir / ".engine_token"
+
+    @property
+    def rules_dir(self) -> Path:
+        env_rules = os.environ.get("LOGINTEL_RULES_DIR")
+        if env_rules:
+            return Path(env_rules)
+        # Search candidate parents for repo root rules directory
+        for parent in Path(__file__).resolve().parents:
+            candidate = parent / "rules"
+            if candidate.is_dir() and (candidate / "authentication").is_dir():
+                return candidate
+        pkg_rules = Path("/usr/share/logintel/rules")
+        if pkg_rules.exists() and pkg_rules.is_dir():
+            return pkg_rules
+        return self.data_dir / "rules"
+
 
 # Global singleton settings instance
 settings = Settings()

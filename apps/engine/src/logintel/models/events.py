@@ -57,6 +57,9 @@ class EventType(str, Enum):
     KERNEL_DEVICE_CHANGE = "KERNEL_DEVICE_CHANGE"
     SYSTEM_SERVICE_STATE = "SYSTEM_SERVICE_STATE"
     
+    # Security & Access Control
+    SECURITY_ACCESS_DENIED = "SECURITY_ACCESS_DENIED"
+    
     # General & Unclassified
     SYSTEM_GENERIC = "SYSTEM_GENERIC"
     UNKNOWN = "UNKNOWN"
@@ -108,14 +111,23 @@ class CanonicalEvent(BaseModel):
     parser: str = "generic"
     source_file: Optional[str] = None
     source_offset: Optional[str] = None
+    event_fingerprint: Optional[str] = None
     
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    def compute_fingerprint(self) -> str:
+        """Derive a stable, deterministic ingestion fingerprint from source provenance and content."""
+        import hashlib
+        seed = f"{self.source}:{self.source_file or ''}:{self.source_offset or ''}:{self.raw_message}"
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
     def to_db_row(self) -> Dict[str, Any]:
         """Convert canonical event to flat dictionary suitable for SQLite insertion."""
         import json
+        fp = self.event_fingerprint or self.compute_fingerprint()
         return {
             "id": self.id,
+            "event_fingerprint": fp,
             "timestamp": self.timestamp.isoformat(),
             "ingested_at": self.ingested_at.isoformat(),
             "host": self.host,
@@ -191,5 +203,6 @@ class CanonicalEvent(BaseModel):
             parser=row.get("parser") or "unknown",
             source_file=row.get("source_file"),
             source_offset=row.get("source_offset"),
+            event_fingerprint=row.get("event_fingerprint"),
             metadata=metadata,
         )

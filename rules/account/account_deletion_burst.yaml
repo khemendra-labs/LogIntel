@@ -1,0 +1,25 @@
+id: account.deletion_burst
+name: Rapid Account Deletion Burst
+description: Detects rapid deletion of multiple local user accounts within a short window, which may indicate anti-forensic activity.
+severity: WARNING
+category: ACCOUNT
+rule_type: THRESHOLD
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: USER_DELETE
+    - field: outcome
+      operator: equals
+      value: SUCCESS
+
+threshold:
+  count: 3
+  window_seconds: 180
+
+group_by:
+  - host
+
+cooldown_seconds: 1800

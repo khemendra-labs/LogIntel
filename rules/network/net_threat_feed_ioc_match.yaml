@@ -1,0 +1,18 @@
+id: network.threat_intel_ioc_match
+name: Known Malicious Threat Indicator Match
+description: Detects events exhibiting indicators of compromise (IOCs) matching known malicious infrastructure.
+severity: CRITICAL
+category: NETWORK
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: iocs
+      operator: in
+      value:
+        - "198.51.100.66"
+        - "203.0.113.199"
+        - "192.0.2.100"
+
+cooldown_seconds: 3600
