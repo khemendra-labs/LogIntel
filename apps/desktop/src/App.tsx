@@ -2,20 +2,26 @@ import React, { useEffect, useState } from "react";
 import { Header } from "./components/Header";
 import { Navigation, NavTab } from "./components/Navigation";
 import { AlertDetailModal } from "./features/AlertDetailModal";
+import { EntityPivotModal } from "./features/EntityPivotModal";
 import { EventDetailModal } from "./features/EventDetailModal";
+import { EventForensicsModal } from "./features/EventForensicsModal";
+import { IncidentWorkspaceModal } from "./features/IncidentWorkspaceModal";
 import { TelemetryHealthModal } from "./features/TelemetryHealthModal";
 import {
   fetchAlerts,
   fetchEventDetail,
   fetchEventStatistics,
+  fetchIncidents,
   fetchSystemStatus,
   fetchTelemetryHealth,
   triggerIngestionCycle,
 } from "./lib/api";
 import { ActivityPage } from "./pages/ActivityPage";
 import { AlertsPage } from "./pages/AlertsPage";
+import { IncidentsPage } from "./pages/IncidentsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RulesPage } from "./pages/RulesPage";
+import { ThreatHuntingPage } from "./pages/ThreatHuntingPage";
 import {
   CanonicalEvent,
   EventStatistics,
@@ -29,30 +35,38 @@ export function App() {
   const [health, setHealth] = useState<TelemetryHealthReport | null>(null);
   const [stats, setStats] = useState<EventStatistics | null>(null);
   const [openAlertsCount, setOpenAlertsCount] = useState<number>(0);
+  const [openIncidentsCount, setOpenIncidentsCount] = useState<number>(0);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
 
   // Modals
   const [selectedEvent, setSelectedEvent] = useState<CanonicalEvent | null>(null);
   const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null);
   const [healthModalOpen, setHealthModalOpen] = useState<boolean>(false);
+  const [selectedEntityKey, setSelectedEntityKey] = useState<string | null>(null);
+  const [forensicEventId, setForensicEventId] = useState<string | null>(null);
 
   // Activity filter passed from Overview
   const [activityFilter, setActivityFilter] = useState<{ severity?: string; source?: string } | null>(null);
 
   const loadData = async () => {
     try {
-      const [sysStatus, telHealth, evtStats, alertsData] = await Promise.all([
+      const [sysStatus, telHealth, evtStats, alertsData, incidentsData] = await Promise.all([
         fetchSystemStatus(),
         fetchTelemetryHealth(),
         fetchEventStatistics(24),
         fetchAlerts({ status: "OPEN", limit: 1 }).catch(() => ({ total: 0 })),
+        fetchIncidents({ status: "OPEN", limit: 1 }).catch(() => ({ total: 0 })),
       ]);
       setStatus(sysStatus);
       setHealth(telHealth);
       setStats(evtStats);
       if (alertsData && typeof alertsData.total === "number") {
         setOpenAlertsCount(alertsData.total);
+      }
+      if (incidentsData && typeof incidentsData.total === "number") {
+        setOpenIncidentsCount(incidentsData.total);
       }
     } catch (err) {
       console.error("Error polling backend engine:", err);
@@ -106,6 +120,7 @@ export function App() {
           }}
           status={status}
           openAlertsCount={openAlertsCount}
+          openIncidentsCount={openIncidentsCount}
         />
 
         <main className="content-pane">
@@ -126,6 +141,20 @@ export function App() {
               initialFilter={activityFilter}
               onSelectEvent={(evt) => setSelectedEvent(evt)}
               refreshTrigger={refreshTrigger}
+            />
+          )}
+
+          {currentTab === "incidents" && (
+            <IncidentsPage
+              onSelectIncident={(id) => setSelectedIncidentId(id)}
+              refreshTrigger={refreshTrigger}
+            />
+          )}
+
+          {currentTab === "hunting" && (
+            <ThreatHuntingPage
+              onSelectEventForensics={(id) => setForensicEventId(id)}
+              onSelectEntityKey={(key) => setSelectedEntityKey(key)}
             />
           )}
 
@@ -165,6 +194,39 @@ export function App() {
               console.error("Failed to load canonical event for evidence:", err);
             }
           }}
+        />
+      )}
+
+      {selectedIncidentId !== null && (
+        <IncidentWorkspaceModal
+          incidentId={selectedIncidentId}
+          onClose={() => setSelectedIncidentId(null)}
+          onStatusUpdated={() => {
+            loadData();
+            setRefreshTrigger((c) => c + 1);
+          }}
+          onSelectAlertId={(alertId) => setSelectedAlertId(alertId)}
+          onSelectEventId={(eventId) => setForensicEventId(eventId)}
+          onSelectEntityKey={(key) => setSelectedEntityKey(key)}
+        />
+      )}
+
+      {selectedEntityKey !== null && (
+        <EntityPivotModal
+          entityKey={selectedEntityKey}
+          onClose={() => setSelectedEntityKey(null)}
+          onSelectEventId={(eventId) => setForensicEventId(eventId)}
+          onSelectIncidentId={(incId) => setSelectedIncidentId(incId)}
+        />
+      )}
+
+      {forensicEventId !== null && (
+        <EventForensicsModal
+          eventId={forensicEventId}
+          onClose={() => setForensicEventId(null)}
+          onSelectEntityKey={(key) => setSelectedEntityKey(key)}
+          onSelectAlertId={(alId) => setSelectedAlertId(alId)}
+          onSelectIncidentId={(incId) => setSelectedIncidentId(incId)}
         />
       )}
 

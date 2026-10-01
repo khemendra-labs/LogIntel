@@ -1,14 +1,15 @@
 import React from "react";
-import { ActivityIcon, AlertIcon, DatabaseIcon, OverviewIcon, RulesIcon, ServerIcon } from "./Icons";
+import { ActivityIcon, AlertIcon, DatabaseIcon, HuntIcon, IncidentIcon, OverviewIcon, RulesIcon, ServerIcon } from "./Icons";
 import { SystemStatus } from "../types/events";
 
-export type NavTab = "overview" | "activity" | "alerts" | "rules";
+export type NavTab = "overview" | "activity" | "incidents" | "alerts" | "hunting" | "rules";
 
 interface NavigationProps {
   currentTab: NavTab;
   onTabChange: (tab: NavTab) => void;
   status: SystemStatus | null;
   openAlertsCount?: number;
+  openIncidentsCount?: number;
 }
 
 export function Navigation({
@@ -16,6 +17,7 @@ export function Navigation({
   onTabChange,
   status,
   openAlertsCount = 0,
+  openIncidentsCount = 0,
 }: NavigationProps) {
   return (
     <aside className="sidebar-nav">
@@ -36,7 +38,28 @@ export function Navigation({
           <span>Activity</span>
         </button>
 
-        <div className="nav-group-title" style={{ marginTop: "16px" }}>Security & Detection</div>
+        <div className="nav-group-title" style={{ marginTop: "16px" }}>Investigation & Hunting</div>
+        <button
+          className={`nav-item ${currentTab === "incidents" ? "active" : ""}`}
+          onClick={() => onTabChange("incidents")}
+        >
+          <IncidentIcon />
+          <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+            <span>Incidents</span>
+            {openIncidentsCount > 0 && (
+              <span className="badge badge-alert" style={{ fontSize: "10px", padding: "1px 5px", marginLeft: "6px" }}>
+                {openIncidentsCount}
+              </span>
+            )}
+          </span>
+        </button>
+        <button
+          className={`nav-item ${currentTab === "hunting" ? "active" : ""}`}
+          onClick={() => onTabChange("hunting")}
+        >
+          <HuntIcon />
+          <span>Threat Hunting</span>
+        </button>
         <button
           className={`nav-item ${currentTab === "alerts" ? "active" : ""}`}
           onClick={() => onTabChange("alerts")}

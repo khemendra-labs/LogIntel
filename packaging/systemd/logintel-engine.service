@@ -8,13 +8,18 @@ Type=simple
 ExecStart=/usr/lib/logintel/engine/.venv/bin/python -m logintel.main --host 127.0.0.1 --port 41721
 Restart=on-failure
 RestartSec=5s
+# Directory and environment configuration
+StateDirectory=logintel
+LogsDirectory=logintel
 Environment=PYTHONUNBUFFERED=1
+Environment=XDG_DATA_HOME=/var/lib
+Environment=XDG_STATE_HOME=/var/log
 WorkingDirectory=/usr/lib/logintel/engine
 
-# Restrict capabilities
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/logintel ~/.local/share/logintel
+# Hardening
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target

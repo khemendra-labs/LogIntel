@@ -44,3 +44,37 @@ export function RuleCategoryBadge({ category }: { category: string }) {
   return <span className={className}>{cat}</span>;
 }
 
+export function IncidentStatusBadge({ status }: { status: string }) {
+  const st = status.toUpperCase();
+  let className = "badge badge-neutral";
+  if (st === "OPEN") className = "badge badge-alert";
+  else if (st === "INVESTIGATING") className = "badge badge-warning";
+  else if (st === "CONTAINED") className = "badge badge-notice";
+  else if (st === "RESOLVED") className = "badge badge-success";
+  else if (st === "FALSE_POSITIVE" || st === "CLOSED") className = "badge badge-neutral";
+
+  return <span className={className}>{st.replace("_", " ")}</span>;
+}
+
+export function ConfidenceBadge({ confidence }: { confidence: string }) {
+  const conf = confidence.toUpperCase();
+  let className = "badge badge-neutral";
+  if (conf === "DIRECT") className = "badge badge-success";
+  else if (conf === "STRONG") className = "badge badge-notice";
+  else if (conf === "CORRELATED") className = "badge badge-warning";
+
+  return <span className={className}>{conf}</span>;
+}
+
+export function EntityTypeBadge({ entityType }: { entityType: string }) {
+  const et = entityType.toUpperCase();
+  let className = "badge badge-neutral";
+  if (et === "HOST") className = "badge badge-notice";
+  else if (et === "USER") className = "badge badge-warning";
+  else if (et === "IP") className = "badge badge-alert";
+  else if (et === "PROCESS") className = "badge badge-neutral";
+
+  return <span className={className}>{et}</span>;
+}
+
+

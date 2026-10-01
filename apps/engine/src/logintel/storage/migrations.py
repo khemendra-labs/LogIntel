@@ -184,6 +184,141 @@ MIGRATIONS: List[Tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_detection_evidence_detection_id ON detection_evidence(detection_id);
         CREATE INDEX IF NOT EXISTS idx_detection_evidence_event_id ON detection_evidence(event_id);
         """
+    ),
+    (
+        4,
+        "m3_incident_correlation_and_graph",
+        """
+        -- Incidents table
+        CREATE TABLE IF NOT EXISTS incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_key TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK (severity IN ('CRITICAL', 'ALERT', 'WARNING', 'NOTICE', 'INFORMATIONAL', 'DEBUG')),
+            status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'INVESTIGATING', 'CONTAINED', 'RESOLVED', 'FALSE_POSITIVE', 'CLOSED')),
+            primary_host TEXT NOT NULL,
+            primary_user TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            alert_count INTEGER NOT NULL DEFAULT 0 CHECK (alert_count >= 0),
+            event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+            resolved_at TEXT,
+            resolution_note TEXT
+        );
+
+        -- Incident alerts association table
+        CREATE TABLE IF NOT EXISTS incident_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+            alert_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE RESTRICT,
+            added_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+            UNIQUE (incident_id, alert_id)
+        );
+
+        -- Incident entities table (attack graph nodes)
+        CREATE TABLE IF NOT EXISTS incident_entities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+            entity_key TEXT NOT NULL,
+            entity_type TEXT NOT NULL CHECK (entity_type IN ('HOST', 'USER', 'IP', 'PROCESS', 'COMMAND', 'FILE', 'SESSION')),
+            display_name TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE (incident_id, entity_key)
+        );
+
+        -- Incident relationships table (attack graph directed edges)
+        CREATE TABLE IF NOT EXISTS incident_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+            source_entity_key TEXT NOT NULL,
+            target_entity_key TEXT NOT NULL,
+            relationship_type TEXT NOT NULL CHECK (relationship_type IN ('AUTHENTICATED_TO', 'EXECUTED', 'SPAWNED', 'CONNECTED_TO', 'ACCESSED_FILE', 'LATERAL_MOVEMENT', 'CO_OCCURRED')),
+            confidence TEXT NOT NULL CHECK (confidence IN ('DIRECT', 'STRONG', 'CORRELATED', 'INFERRED', 'WEAK')),
+            evidence_event_ids_json TEXT NOT NULL DEFAULT '[]',
+            matched_at TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
+        );
+
+        -- Performance indexes for incidents
+        CREATE INDEX IF NOT EXISTS idx_incidents_status_last_seen ON incidents(status, last_seen DESC);
+        CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity, last_seen DESC);
+        CREATE INDEX IF NOT EXISTS idx_incidents_primary_host ON incidents(primary_host);
+        CREATE INDEX IF NOT EXISTS idx_incidents_primary_user ON incidents(primary_user);
+        CREATE INDEX IF NOT EXISTS idx_incidents_last_seen ON incidents(last_seen DESC);
+
+        -- Performance indexes for incident_alerts
+        CREATE INDEX IF NOT EXISTS idx_incident_alerts_incident_id ON incident_alerts(incident_id);
+        CREATE INDEX IF NOT EXISTS idx_incident_alerts_alert_id ON incident_alerts(alert_id);
+
+        -- Performance indexes for incident_entities
+        CREATE INDEX IF NOT EXISTS idx_incident_entities_incident ON incident_entities(incident_id);
+        CREATE INDEX IF NOT EXISTS idx_incident_entities_key ON incident_entities(entity_key);
+        CREATE INDEX IF NOT EXISTS idx_incident_entities_type ON incident_entities(entity_type);
+
+        -- Performance indexes for incident_relationships
+        CREATE INDEX IF NOT EXISTS idx_incident_relationships_incident ON incident_relationships(incident_id);
+        CREATE INDEX IF NOT EXISTS idx_incident_relationships_source ON incident_relationships(source_entity_key);
+        CREATE INDEX IF NOT EXISTS idx_incident_relationships_target ON incident_relationships(target_entity_key);
+        CREATE INDEX IF NOT EXISTS idx_incident_relationships_type ON incident_relationships(relationship_type);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_relationships_unique ON incident_relationships(incident_id, source_entity_key, target_entity_key, relationship_type);
+
+        -- Correlation query accelerating indexes on canonical events
+        CREATE INDEX IF NOT EXISTS idx_events_host_time ON events(host, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_user_time ON events(username, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_src_ip_time ON events(src_ip, timestamp DESC);
+        """
+    ),
+    (
+        5,
+        "m4_investigation_workspace_and_notes",
+        """
+        -- Investigation analyst notes and annotations
+        CREATE TABLE IF NOT EXISTS investigation_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+            author TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            target_type TEXT NOT NULL DEFAULT 'incident' CHECK (target_type IN ('incident', 'event', 'entity', 'alert')),
+            target_id TEXT,
+            is_deleted INTEGER NOT NULL DEFAULT 0,
+            deleted_at TEXT,
+            deleted_by TEXT,
+            deletion_reason TEXT
+        );
+
+        -- Investigation notes immutable audit log
+        CREATE TABLE IF NOT EXISTS investigation_notes_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER NOT NULL,
+            incident_id INTEGER NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('CREATED', 'UPDATED', 'DELETED')),
+            actor TEXT NOT NULL,
+            content TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT,
+            created_at TEXT NOT NULL,
+            action_timestamp TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+            reason TEXT
+        );
+
+        -- Performance indexes for notes queries
+        CREATE INDEX IF NOT EXISTS idx_investigation_notes_incident ON investigation_notes(incident_id);
+        CREATE INDEX IF NOT EXISTS idx_investigation_notes_created ON investigation_notes(created_at);
+        CREATE INDEX IF NOT EXISTS idx_investigation_notes_target ON investigation_notes(target_type, target_id);
+        CREATE INDEX IF NOT EXISTS idx_investigation_notes_audit_incident ON investigation_notes_audit(incident_id);
+        CREATE INDEX IF NOT EXISTS idx_investigation_notes_audit_note ON investigation_notes_audit(note_id);
+
+        -- Threat hunting query accelerating indexes on canonical events
+        CREATE INDEX IF NOT EXISTS idx_events_search_composite ON events(timestamp DESC, event_type, host);
+        CREATE INDEX IF NOT EXISTS idx_events_process_time ON events(process_name, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_lower_host ON events(LOWER(host), timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_upper_event_type ON events(UPPER(event_type), timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_upper_outcome ON events(UPPER(outcome), timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_lower_user ON events(LOWER(username), timestamp DESC);
+        """
     )
 ]
 
@@ -227,3 +362,52 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
                 raise
             finally:
                 conn.isolation_level = old_isolation
+
+    # Ensure idempotency of M3 relationship uniqueness index on existing databases
+    if 4 in applied_versions:
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_relationships_unique "
+            "ON incident_relationships(incident_id, source_entity_key, target_entity_key, relationship_type);"
+        )
+        conn.commit()
+
+    # Ensure idempotency of M4 notes audit table, tombstone columns, and expression indexes on existing databases
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='investigation_notes';")
+    if cursor.fetchone():
+        cursor.execute("PRAGMA table_info(investigation_notes);")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        if "is_deleted" not in existing_cols:
+            cursor.execute("ALTER TABLE investigation_notes ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0;")
+        if "deleted_at" not in existing_cols:
+            cursor.execute("ALTER TABLE investigation_notes ADD COLUMN deleted_at TEXT;")
+        if "deleted_by" not in existing_cols:
+            cursor.execute("ALTER TABLE investigation_notes ADD COLUMN deleted_by TEXT;")
+        if "deletion_reason" not in existing_cols:
+            cursor.execute("ALTER TABLE investigation_notes ADD COLUMN deletion_reason TEXT;")
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS investigation_notes_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                note_id INTEGER NOT NULL,
+                incident_id INTEGER NOT NULL,
+                action TEXT NOT NULL CHECK (action IN ('CREATED', 'UPDATED', 'DELETED')),
+                actor TEXT NOT NULL,
+                content TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT,
+                created_at TEXT NOT NULL,
+                action_timestamp TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                reason TEXT
+            );
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_investigation_notes_audit_incident ON investigation_notes_audit(incident_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_investigation_notes_audit_note ON investigation_notes_audit(note_id);")
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_lower_host ON events(LOWER(host), timestamp DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_upper_event_type ON events(UPPER(event_type), timestamp DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_upper_outcome ON events(UPPER(outcome), timestamp DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_lower_user ON events(LOWER(username), timestamp DESC);")
+        conn.commit()
+

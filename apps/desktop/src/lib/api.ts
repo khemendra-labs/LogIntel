@@ -14,6 +14,30 @@ import type {
   DetectionRuleDetailResponse,
   DetectionRulesQueryResponse,
 } from "../types/detection";
+import type {
+  AttackGraphResponse,
+  CorrelateIncidentsResponse,
+  Incident,
+  IncidentAlertsResponse,
+  IncidentDetailResponse,
+  IncidentQueryParams,
+  IncidentsQueryResponse,
+  IncidentStatus,
+  IncidentTimelineResponse,
+} from "../types/incidents";
+import type {
+  AttackPathReconstruction,
+  CreateNoteRequest,
+  EntityPivotSummary,
+  EventForensics,
+  ExportInvestigationResponse,
+  InvestigationDossier,
+  InvestigationNote,
+  InvestigationNoteAudit,
+  MitreMapping,
+  ThreatHuntFilter,
+  ThreatHuntResponse,
+} from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
 
@@ -234,4 +258,266 @@ export async function fetchDetectionRuleDetail(
   }
   return res.json();
 }
+
+// ============================================================================
+// Incident Management, Correlation & Attack Graph API (Milestone 3)
+// ============================================================================
+
+export async function fetchIncidents(
+  params: IncidentQueryParams = {}
+): Promise<IncidentsQueryResponse> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.severity) query.set("severity", params.severity);
+  if (params.host) query.set("host", params.host);
+  if (params.user) query.set("user", params.user);
+  if (params.limit !== undefined) query.set("limit", params.limit.toString());
+  if (params.offset !== undefined) query.set("offset", params.offset.toString());
+
+  const res = await apiFetch(`/incidents?${query.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Failed to query incidents: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchIncidentDetail(
+  incidentId: number
+): Promise<IncidentDetailResponse> {
+  const res = await apiFetch(`/incidents/${incidentId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch incident detail for #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchIncidentAlerts(
+  incidentId: number
+): Promise<IncidentAlertsResponse> {
+  const res = await apiFetch(`/incidents/${incidentId}/alerts`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch alerts for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateIncidentStatus(
+  incidentId: number,
+  status: IncidentStatus,
+  resolutionNote?: string
+): Promise<Incident> {
+  const res = await apiFetch(`/incidents/${incidentId}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status, resolution_note: resolutionNote }),
+  });
+  if (!res.ok) {
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson.detail) errorDetail = errJson.detail;
+    } catch {}
+    throw new Error(`Failed to update incident status: ${errorDetail}`);
+  }
+  return res.json();
+}
+
+export async function fetchIncidentAttackGraph(
+  incidentId: number
+): Promise<AttackGraphResponse> {
+  const res = await apiFetch(`/incidents/${incidentId}/graph`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch attack graph for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchIncidentTimeline(
+  incidentId: number
+): Promise<IncidentTimelineResponse> {
+  const res = await apiFetch(`/incidents/${incidentId}/timeline`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch timeline for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function triggerIncidentCorrelation(): Promise<CorrelateIncidentsResponse> {
+  const res = await apiFetch("/incidents/correlate", {
+    method: "POST",
+  });
+  if (!res.ok) {
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson.detail) errorDetail = errJson.detail;
+    } catch {}
+    throw new Error(`Failed to trigger incident correlation: ${errorDetail}`);
+  }
+  return res.json();
+}
+
+// ============================================================================
+// Milestone 4 — Investigation Workspace, Threat Hunting & Attack-Path Client
+// ============================================================================
+
+export async function fetchInvestigationDossier(
+  incidentId: number
+): Promise<InvestigationDossier> {
+  const res = await apiFetch(`/investigations/${incidentId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch investigation dossier for #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchAttackPath(
+  incidentId: number
+): Promise<AttackPathReconstruction> {
+  const res = await apiFetch(`/investigations/${incidentId}/attack-path`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch attack path for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchMitreMappings(
+  incidentId: number
+): Promise<{ incident_id: number; items: MitreMapping[]; total: number }> {
+  const res = await apiFetch(`/investigations/${incidentId}/mitre`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch MITRE mappings for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchInvestigationNotes(
+  incidentId: number,
+  includeDeleted: boolean = false
+): Promise<{ incident_id: number; items: InvestigationNote[]; total: number }> {
+  const query = includeDeleted ? "?include_deleted=true" : "";
+  const res = await apiFetch(`/investigations/${incidentId}/notes${query}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch notes for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchInvestigationNotesAudit(
+  incidentId: number
+): Promise<{ incident_id: number; items: InvestigationNoteAudit[]; total: number }> {
+  const res = await apiFetch(`/investigations/${incidentId}/notes/audit`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch notes audit trail for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createInvestigationNote(
+  incidentId: number,
+  req: CreateNoteRequest
+): Promise<InvestigationNote> {
+  const res = await apiFetch(`/investigations/${incidentId}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson.detail) errorDetail = errJson.detail;
+    } catch {}
+    throw new Error(`Failed to add investigation note: ${errorDetail}`);
+  }
+  return res.json();
+}
+
+export async function deleteInvestigationNote(
+  noteId: number,
+  actor?: string,
+  reason?: string
+): Promise<{ deleted: boolean; note_id: number; tombstoned?: boolean }> {
+  const params = new URLSearchParams();
+  if (actor) params.set("actor", actor);
+  if (reason) params.set("reason", reason);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const res = await apiFetch(`/investigations/notes/${noteId}${qs}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to delete note #${noteId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function inspectEventForensics(
+  eventId: string
+): Promise<EventForensics> {
+  const res = await apiFetch(`/investigations/events/${eventId}/inspect`);
+  if (!res.ok) {
+    throw new Error(`Failed to inspect event forensics for ${eventId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function inspectEntityPivot(
+  entityKey: string,
+  incidentId?: number
+): Promise<EntityPivotSummary> {
+  const query = incidentId ? `?incident_id=${incidentId}` : "";
+  const res = await apiFetch(`/investigations/entities/${encodeURIComponent(entityKey)}/pivot${query}`);
+  if (!res.ok) {
+    throw new Error(`Failed to inspect entity pivot for ${entityKey}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function executeThreatHunt(
+  filter: ThreatHuntFilter
+): Promise<ThreatHuntResponse> {
+  const res = await apiFetch("/investigations/hunt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(filter),
+  });
+  if (!res.ok) {
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson.detail) errorDetail = errJson.detail;
+    } catch {}
+    throw new Error(`Threat hunt query failed: ${errorDetail}`);
+  }
+  return res.json();
+}
+
+export async function exportInvestigationReport(
+  incidentId: number,
+  format: "markdown" | "json" | "csv" = "markdown"
+): Promise<ExportInvestigationResponse> {
+  const res = await apiFetch(`/investigations/${incidentId}/export?format=${format}`);
+  if (!res.ok) {
+    throw new Error(`Failed to export investigation report: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// Aliases for M4 investigation components
+export const createIncidentNote = createInvestigationNote;
+export const deleteIncidentNote = deleteInvestigationNote;
+export const exportInvestigation = exportInvestigationReport;
+export const fetchIncidentAttackPath = fetchAttackPath;
+export const fetchIncidentMitre = async (id: number): Promise<MitreMapping[]> => {
+  const res = await fetchMitreMappings(id);
+  return res.items;
+};
+export const fetchIncidentNotes = async (id: number): Promise<InvestigationNote[]> => {
+  const res = await fetchInvestigationNotes(id);
+  return res.items;
+};
+export const huntEvents = executeThreatHunt;
+
+
+
 

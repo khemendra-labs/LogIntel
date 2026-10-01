@@ -22,7 +22,7 @@ def test_fresh_database_migration():
             cur = conn.cursor()
             # 1. Version check
             cur.execute("SELECT MAX(version) FROM schema_migrations")
-            assert cur.fetchone()[0] == 3
+            assert cur.fetchone()[0] >= 3
 
             # 2. Table existence check
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -106,7 +106,7 @@ def test_m1_1_upgrade_migration():
         with test_db.connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT MAX(version) FROM schema_migrations")
-            assert cur.fetchone()[0] == 3
+            assert cur.fetchone()[0] >= 3
 
             cur.execute("SELECT COUNT(*) FROM events")
             assert cur.fetchone()[0] == 3

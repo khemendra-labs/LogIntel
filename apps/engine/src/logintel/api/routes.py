@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from logintel.api.auth import verify_engine_token
 from logintel.config import settings
@@ -286,6 +286,416 @@ def get_detection_rule(rule_id: str) -> Dict[str, Any]:
         "rule": rule.model_dump(mode="json"),
         "yaml_definition": yaml_content,
     }
+
+
+# =========================================================================
+# Incident & Attack Graph Endpoints (Milestone M3.5)
+# =========================================================================
+
+class IncidentsQueryResponse(BaseModel):
+    items: List[Dict[str, Any]]
+    total: int
+    limit: int
+    offset: int
+
+
+class UpdateIncidentStatusRequest(BaseModel):
+    status: str
+    resolution_note: Optional[str] = None
+
+
+class IncidentGraphResponse(BaseModel):
+    incident_id: int
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+
+
+class IncidentTimelineResponse(BaseModel):
+    incident_id: int
+    items: List[Dict[str, Any]]
+    total: int
+
+
+class CorrelateIncidentsResponse(BaseModel):
+    correlated_incidents_count: int
+    incident_ids: List[int]
+
+
+@protected_router.get("/incidents", response_model=IncidentsQueryResponse)
+def list_incidents(
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    host: Optional[str] = None,
+    user: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> IncidentsQueryResponse:
+    from logintel.models.events import Severity
+    from logintel.models.incidents import IncidentStatus
+    from logintel.storage.incidents_repo import incidents_repo
+
+    status_enum: Optional[IncidentStatus] = None
+    if status:
+        try:
+            status_enum = IncidentStatus(status.upper())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid incident status '{status}'. Valid values: {[s.value for s in IncidentStatus]}",
+            )
+
+    sev_enum: Optional[Severity] = None
+    if severity:
+        try:
+            sev_enum = Severity(severity.upper())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid severity '{severity}'. Valid values: {[s.value for s in Severity]}",
+            )
+
+    incidents = incidents_repo.list_incidents(
+        status=status_enum,
+        severity=sev_enum,
+        host=host,
+        user=user,
+        limit=limit,
+        offset=offset,
+    )
+    total = incidents_repo.count_incidents(
+        status=status_enum,
+        severity=sev_enum,
+        host=host,
+        user=user,
+    )
+    return IncidentsQueryResponse(
+        items=[inc.model_dump(mode="json") for inc in incidents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@protected_router.get("/incidents/{incident_id}")
+def get_incident_detail(incident_id: int) -> Dict[str, Any]:
+    from logintel.storage.incidents_repo import incidents_repo
+    details = incidents_repo.get_incident_details(incident_id)
+    if not details:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    return details
+
+
+@protected_router.get("/incidents/{incident_id}/alerts")
+def get_incident_alerts(incident_id: int) -> Dict[str, Any]:
+    from logintel.storage.incidents_repo import incidents_repo
+    incident = incidents_repo.get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    alerts = incidents_repo.get_incident_alerts(incident_id)
+    return {
+        "incident_id": incident_id,
+        "items": [a.model_dump(mode="json") for a in alerts],
+        "total": len(alerts),
+    }
+
+
+@protected_router.patch("/incidents/{incident_id}/status")
+def update_incident_status(incident_id: int, req: UpdateIncidentStatusRequest) -> Dict[str, Any]:
+    from logintel.models.incidents import (
+        IncidentStatus,
+        InvalidIncidentStatusTransitionError,
+    )
+    from logintel.storage.incidents_repo import incidents_repo
+
+    try:
+        new_status = IncidentStatus(req.status.upper())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid incident status '{req.status}'. Must be one of: {[s.value for s in IncidentStatus]}",
+        )
+
+    try:
+        updated = incidents_repo.update_incident_status(
+            incident_id=incident_id,
+            new_status=new_status,
+            resolution_note=req.resolution_note,
+        )
+        return updated.model_dump(mode="json")
+    except InvalidIncidentStatusTransitionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/incidents/{incident_id}/graph", response_model=IncidentGraphResponse)
+def get_incident_attack_graph(incident_id: int) -> IncidentGraphResponse:
+    from logintel.storage.incidents_repo import incidents_repo
+    incident = incidents_repo.get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    graph = incidents_repo.get_attack_graph(incident_id)
+    return IncidentGraphResponse(
+        incident_id=incident_id,
+        nodes=graph["nodes"],
+        edges=graph["edges"],
+    )
+
+
+@protected_router.get("/incidents/{incident_id}/timeline", response_model=IncidentTimelineResponse)
+def get_incident_investigation_timeline(incident_id: int) -> IncidentTimelineResponse:
+    from logintel.storage.incidents_repo import incidents_repo
+    incident = incidents_repo.get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    timeline = incidents_repo.get_incident_timeline(incident_id)
+    return IncidentTimelineResponse(
+        incident_id=incident_id,
+        items=[t.model_dump(mode="json") for t in timeline],
+        total=len(timeline),
+    )
+
+
+@protected_router.post("/incidents/correlate", response_model=CorrelateIncidentsResponse)
+def trigger_incident_correlation() -> CorrelateIncidentsResponse:
+    from logintel.correlation.engine import correlation_engine
+    correlated_incidents = correlation_engine.correlate_unassigned_alerts()
+    inc_ids = [inc.id for inc in correlated_incidents if inc.id is not None]
+    return CorrelateIncidentsResponse(
+        correlated_incidents_count=len(inc_ids),
+        incident_ids=inc_ids,
+    )
+
+
+# =============================================================================
+# Milestone 4 — Investigation Workspace, Threat Hunting & Attack-Path APIs
+# =============================================================================
+
+class CreateNoteApiRequest(BaseModel):
+    author: str = Field(min_length=1, max_length=128)
+    content: str = Field(min_length=1, max_length=4096)
+    target_type: str = "incident"
+    target_id: Optional[str] = None
+
+
+class ThreatHuntApiRequest(BaseModel):
+    search_text: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    host: Optional[str] = None
+    username: Optional[str] = None
+    src_ip: Optional[str] = None
+    dst_ip: Optional[str] = None
+    process_name: Optional[str] = None
+    command: Optional[str] = None
+    event_type: Optional[str] = None
+    source: Optional[str] = None
+    severity: Optional[str] = None
+    outcome: Optional[str] = None
+    rule_id: Optional[str] = None
+    alert_id: Optional[int] = None
+    ioc: Optional[str] = None
+    limit: int = Field(default=50, ge=1, le=500)
+    offset: int = Field(default=0, ge=0)
+
+
+class ExportInvestigationResponse(BaseModel):
+    incident_id: int
+    format: str
+    content: str
+    filename: str
+
+
+@protected_router.get("/investigations/{incident_id}")
+def get_investigation_dossier(incident_id: int) -> Dict[str, Any]:
+    """Retrieve full investigation workspace dossier containing incident, attack path, MITRE, notes, and timeline."""
+    from logintel.storage.investigation_repo import investigation_repo
+    dossier = investigation_repo.get_investigation_dossier(incident_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    return dossier
+
+
+@protected_router.get("/investigations/{incident_id}/attack-path")
+def get_investigation_attack_path(incident_id: int) -> Dict[str, Any]:
+    """Retrieve reconstructed attack progression steps with evidence association."""
+    from logintel.storage.investigation_repo import investigation_repo
+    from logintel.storage.incidents_repo import incidents_repo
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    path = investigation_repo.reconstruct_attack_path(incident_id)
+    return path.model_dump(mode="json")
+
+
+@protected_router.get("/investigations/{incident_id}/mitre")
+def get_investigation_mitre_mappings(incident_id: int) -> Dict[str, Any]:
+    """Retrieve explainable, evidence-backed MITRE ATT&CK technique mappings for an incident."""
+    from logintel.storage.investigation_repo import investigation_repo
+    from logintel.storage.incidents_repo import incidents_repo
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    mappings = investigation_repo.get_incident_mitre_mappings(incident_id)
+    return {
+        "incident_id": incident_id,
+        "items": [m.model_dump(mode="json") for m in mappings],
+        "total": len(mappings),
+    }
+
+
+@protected_router.get("/investigations/{incident_id}/notes")
+@protected_router.get("/investigations/{incident_id}/notes")
+def list_investigation_notes(
+    incident_id: int, include_deleted: bool = Query(default=False)
+) -> Dict[str, Any]:
+    """List all analyst notes and annotations for an investigation. Supports optional tombstone inclusion."""
+    from logintel.storage.investigation_repo import investigation_repo
+    from logintel.storage.incidents_repo import incidents_repo
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    notes = investigation_repo.list_notes(incident_id, include_deleted=include_deleted)
+    return {
+        "incident_id": incident_id,
+        "items": [n.model_dump(mode="json") for n in notes],
+        "total": len(notes),
+    }
+
+
+@protected_router.get("/investigations/{incident_id}/notes/audit")
+def get_investigation_notes_audit(incident_id: int) -> Dict[str, Any]:
+    """Retrieve immutable historical audit ledger for all analyst annotations on an incident."""
+    from logintel.storage.investigation_repo import investigation_repo
+    from logintel.storage.incidents_repo import incidents_repo
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    trail = investigation_repo.get_notes_audit_trail(incident_id)
+    return {
+        "incident_id": incident_id,
+        "items": [a.model_dump(mode="json") for a in trail],
+        "total": len(trail),
+    }
+
+
+@protected_router.post("/investigations/{incident_id}/notes", status_code=status.HTTP_201_CREATED)
+def create_investigation_note(incident_id: int, req: CreateNoteApiRequest) -> Dict[str, Any]:
+    """Create an analyst note associated with an investigation or specific artifact."""
+    from logintel.models.investigation import NoteTargetType
+    from logintel.storage.investigation_repo import investigation_repo
+    from logintel.storage.incidents_repo import incidents_repo
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        ttype = NoteTargetType(req.target_type.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid target_type '{req.target_type}'. Valid values: {[t.value for t in NoteTargetType]}",
+        )
+
+    note = investigation_repo.add_note(
+        incident_id=incident_id,
+        author=req.author,
+        content=req.content,
+        target_type=ttype,
+        target_id=req.target_id,
+    )
+    return note.model_dump(mode="json")
+
+
+@protected_router.delete("/investigations/notes/{note_id}")
+def delete_investigation_note(
+    note_id: int,
+    actor: str = Query(default="Analyst"),
+    reason: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    """Soft delete (tombstone) an analyst note while recording an immutable audit event."""
+    from logintel.storage.investigation_repo import investigation_repo
+    deleted = investigation_repo.delete_note(note_id, actor=actor, reason=reason)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Note {note_id} not found or already deleted")
+    return {"deleted": True, "note_id": note_id, "tombstoned": True}
+
+
+@protected_router.get("/investigations/events/{event_id}/inspect")
+def inspect_event_forensics(event_id: str) -> Dict[str, Any]:
+    """Deep forensic inspection of a canonical event with provenance, detections, and incident lineage."""
+    from logintel.storage.investigation_repo import investigation_repo
+    forensics = investigation_repo.get_event_forensics(event_id)
+    if not forensics:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+    return forensics.model_dump(mode="json")
+
+
+@protected_router.get("/investigations/entities/{entity_key}/pivot")
+def inspect_entity_pivot(entity_key: str, incident_id: Optional[int] = None) -> Dict[str, Any]:
+    """Investigate a specific security entity (IP, Host, User, Process) across telemetry and incidents."""
+    from logintel.storage.investigation_repo import investigation_repo
+    pivot = investigation_repo.get_entity_pivot(entity_key=entity_key, incident_id=incident_id)
+    if not pivot:
+        raise HTTPException(status_code=404, detail=f"Entity '{entity_key}' could not be resolved")
+    return pivot.model_dump(mode="json")
+
+
+@protected_router.post("/investigations/hunt")
+def execute_threat_hunt(req: ThreatHuntApiRequest) -> Dict[str, Any]:
+    """Execute evidence-centric threat hunting query across historical canonical events."""
+    from logintel.models.investigation import ThreatHuntFilter
+    from logintel.storage.investigation_repo import investigation_repo
+
+    filt = ThreatHuntFilter(
+        search_text=req.search_text,
+        start_time=req.start_time,
+        end_time=req.end_time,
+        host=req.host,
+        username=req.username,
+        src_ip=req.src_ip,
+        dst_ip=req.dst_ip,
+        process_name=req.process_name,
+        command=req.command,
+        event_type=req.event_type,
+        source=req.source,
+        severity=req.severity,
+        outcome=req.outcome,
+        rule_id=req.rule_id,
+        alert_id=req.alert_id,
+        ioc=req.ioc,
+        limit=req.limit,
+        offset=req.offset,
+    )
+    result = investigation_repo.search_events(filt)
+    return result.model_dump(mode="json")
+
+
+@protected_router.get("/investigations/{incident_id}/export")
+def export_investigation_report(
+    incident_id: int, format: str = Query(default="markdown", pattern="^(?i)(markdown|json|csv)$")
+) -> ExportInvestigationResponse:
+    """Export an evidence-backed investigation dossier in Markdown, JSON, or CSV format."""
+    from logintel.storage.investigation_repo import investigation_repo
+    from logintel.storage.incidents_repo import incidents_repo
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    fmt = format.lower()
+    content = investigation_repo.export_investigation(incident_id, format=fmt)
+    slug = inc.incident_key.replace(":", "_").replace("-", "_")
+    ext = "md" if fmt == "markdown" else fmt
+    filename = f"investigation_{slug}.{ext}"
+
+    return ExportInvestigationResponse(
+        incident_id=incident_id,
+        format=fmt,
+        content=content,
+        filename=filename,
+    )
 
 
 router.include_router(protected_router)

@@ -247,5 +247,603 @@ describe("Frontend API Client and Authentication", () => {
     const secondHeaders = fetchSpy.mock.calls[1][1]?.headers as Headers;
     expect(secondHeaders.get("Authorization")).toBe("Bearer fresh_token_after_restart");
   });
+
+  it("fetchIncidents constructs proper query parameters and filters", async () => {
+    setEngineToken("inc_token_abc");
+
+    const mockResponse = {
+      items: [
+        {
+          id: 1,
+          incident_key: "INC-2026-001",
+          title: "Multi-stage Brute Force",
+          status: "OPEN",
+          severity: "CRITICAL",
+          primary_host: "srv-db01",
+          alert_count: 3,
+        },
+      ],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockResponse,
+    } as Response);
+
+    const { fetchIncidents } = await import("../lib/api");
+    const result = await fetchIncidents({
+      status: "OPEN",
+      severity: "CRITICAL",
+      host: "srv-db01",
+      user: "root",
+      limit: 20,
+      offset: 0,
+    });
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/incidents?");
+    expect(url).toContain("status=OPEN");
+    expect(url).toContain("severity=CRITICAL");
+    expect(url).toContain("host=srv-db01");
+    expect(url).toContain("user=root");
+    expect(url).toContain("limit=20");
+    expect(url).toContain("offset=0");
+    const headers = init?.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer inc_token_abc");
+    expect(result.items.length).toBe(1);
+    expect(result.total).toBe(1);
+  });
+
+  it("fetchIncidentDetail retrieves complete workspace dossier by ID", async () => {
+    setEngineToken("detail_inc_token");
+
+    const mockDossier = {
+      incident: {
+        id: 42,
+        incident_key: "INC-2026-042",
+        title: "Compromised Database",
+        status: "INVESTIGATING",
+      },
+      alerts: [{ id: 10, title: "SSH Brute Force", severity: "CRITICAL" }],
+      graph: {
+        incident_id: 42,
+        nodes: [{ id: "host:srv-db01", entity_type: "HOST", label: "srv-db01", metadata: {} }],
+        edges: [],
+      },
+      timeline: [
+        {
+          id: "alert-10",
+          timestamp: "2026-09-30T10:00:00Z",
+          item_type: "ALERT",
+          title: "SSH Brute Force",
+          summary: "Alert triggered",
+          entity_keys: ["host:srv-db01"],
+          details: {},
+        },
+      ],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockDossier,
+    } as Response);
+
+    const { fetchIncidentDetail } = await import("../lib/api");
+    const result = await fetchIncidentDetail(42);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/incidents/42",
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      })
+    );
+    expect(result.incident.id).toBe(42);
+    expect(result.alerts.length).toBe(1);
+    expect(result.graph.nodes.length).toBe(1);
+    expect(result.timeline.length).toBe(1);
+  });
+
+  it("fetchIncidentAlerts queries linked operational alerts", async () => {
+    setEngineToken("inc_alerts_token");
+
+    const mockAlerts = {
+      incident_id: 5,
+      items: [
+        { id: 101, title: "Alert 1", status: "ACKNOWLEDGED" },
+        { id: 102, title: "Alert 2", status: "OPEN" },
+      ],
+      total: 2,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockAlerts,
+    } as Response);
+
+    const { fetchIncidentAlerts } = await import("../lib/api");
+    const result = await fetchIncidentAlerts(5);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/incidents/5/alerts",
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      })
+    );
+    expect(result.incident_id).toBe(5);
+    expect(result.items.length).toBe(2);
+    expect(result.total).toBe(2);
+  });
+
+  it("updateIncidentStatus sends PATCH request with new status and resolution note", async () => {
+    setEngineToken("status_patch_token");
+
+    const mockUpdatedIncident = {
+      id: 12,
+      incident_key: "INC-12",
+      status: "CONTAINED",
+      resolution_note: "Isolated network port",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockUpdatedIncident,
+    } as Response);
+
+    const { updateIncidentStatus } = await import("../lib/api");
+    const result = await updateIncidentStatus(12, "CONTAINED", "Isolated network port");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/incidents/12/status",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.any(Headers),
+        body: JSON.stringify({ status: "CONTAINED", resolution_note: "Isolated network port" }),
+      })
+    );
+    expect(result.status).toBe("CONTAINED");
+  });
+
+  it("updateIncidentStatus extracts server detail message on failure", async () => {
+    setEngineToken("status_error_token");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      json: async () => ({ detail: "Invalid incident status transition from 'OPEN' to 'CLOSED'" }),
+    } as Response);
+
+    const { updateIncidentStatus } = await import("../lib/api");
+    await expect(updateIncidentStatus(12, "CLOSED")).rejects.toThrow(
+      "Failed to update incident status: Invalid incident status transition from 'OPEN' to 'CLOSED'"
+    );
+  });
+
+  it("fetchIncidentAttackGraph retrieves nodes and edges topology", async () => {
+    setEngineToken("graph_token");
+
+    const mockGraph = {
+      incident_id: 3,
+      nodes: [
+        { id: "host:srv1", entity_type: "HOST", label: "srv1", metadata: {} },
+        { id: "user:alice", entity_type: "USER", label: "alice", metadata: {} },
+      ],
+      edges: [
+        {
+          id: "1",
+          source: "user:alice",
+          target: "host:srv1",
+          relationship_type: "AUTHENTICATED_TO",
+          confidence: "STRONG",
+          evidence_event_ids: ["ev-01"],
+          matched_at: "2026-09-30T10:00:00Z",
+        },
+      ],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockGraph,
+    } as Response);
+
+    const { fetchIncidentAttackGraph } = await import("../lib/api");
+    const result = await fetchIncidentAttackGraph(3);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/incidents/3/graph",
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      })
+    );
+    expect(result.incident_id).toBe(3);
+    expect(result.nodes.length).toBe(2);
+    expect(result.edges.length).toBe(1);
+    expect(result.edges[0].relationship_type).toBe("AUTHENTICATED_TO");
+  });
+
+  it("fetchIncidentTimeline retrieves chronologically ordered items", async () => {
+    setEngineToken("timeline_token");
+
+    const mockTimeline = {
+      incident_id: 9,
+      items: [
+        {
+          id: "alert-1",
+          timestamp: "2026-09-30T10:00:00Z",
+          item_type: "ALERT",
+          title: "Initial Breach",
+          summary: "First alert",
+          entity_keys: ["host:gateway"],
+          details: {},
+        },
+        {
+          id: "milestone-status-CONTAINED",
+          timestamp: "2026-09-30T10:15:00Z",
+          item_type: "MILESTONE",
+          title: "Incident Contained",
+          summary: "Status transitioned to CONTAINED",
+          entity_keys: [],
+          details: {},
+        },
+      ],
+      total: 2,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockTimeline,
+    } as Response);
+
+    const { fetchIncidentTimeline } = await import("../lib/api");
+    const result = await fetchIncidentTimeline(9);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/incidents/9/timeline",
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      })
+    );
+    expect(result.incident_id).toBe(9);
+    expect(result.items.length).toBe(2);
+    expect(result.items[1].item_type).toBe("MILESTONE");
+  });
+
+  it("triggerIncidentCorrelation executes POST to correlate unassigned alerts", async () => {
+    setEngineToken("correlate_token");
+
+    const mockResponse = {
+      correlated_incidents_count: 2,
+      incident_ids: [101, 102],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockResponse,
+    } as Response);
+
+    const { triggerIncidentCorrelation } = await import("../lib/api");
+    const result = await triggerIncidentCorrelation();
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/incidents/correlate",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.any(Headers),
+      })
+    );
+    expect(result.correlated_incidents_count).toBe(2);
+    expect(result.incident_ids).toEqual([101, 102]);
+  });
+
+  it("triggerIncidentCorrelation throws clear error on API failure", async () => {
+    setEngineToken("correlate_token_fail");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: async () => ({ detail: "Database connection failed during correlation" }),
+    } as Response);
+
+    const { triggerIncidentCorrelation } = await import("../lib/api");
+    await expect(triggerIncidentCorrelation()).rejects.toThrow(
+      "Failed to trigger incident correlation: Database connection failed during correlation"
+    );
+  });
+
+  // ============================================================================
+  // Milestone 4 — Investigation Workspace, Threat Hunting & Attack Path Tests
+  // ============================================================================
+
+  it("fetchInvestigationDossier retrieves full investigation dossier by ID", async () => {
+    setEngineToken("m4_dossier_token");
+
+    const mockDossier = {
+      incident: { id: 7, incident_key: "INC-2026-0007" },
+      alerts: [],
+      entities: [],
+      relationships: [],
+      timeline: [],
+      attack_path: { incident_id: 7, steps: [], root_causes: [], terminal_targets: [], is_multi_host: false, total_steps: 0 },
+      mitre_mappings: [],
+      notes: [],
+      timeline_total: 0,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockDossier,
+    } as Response);
+
+    const { fetchInvestigationDossier } = await import("../lib/api");
+    const result = await fetchInvestigationDossier(7);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/7",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
+    expect(result.incident.id).toBe(7);
+  });
+
+  it("fetchAttackPath retrieves reconstructed attack path with steps", async () => {
+    setEngineToken("m4_path_token");
+
+    const mockPath = {
+      incident_id: 8,
+      steps: [
+        {
+          step_number: 1,
+          source_node: "ip:192.168.1.50",
+          target_node: "host:srv-01",
+          relationship_type: "NETWORK_FLOW",
+          stage: "INITIAL_ACCESS",
+          confidence: "HIGH",
+          nature: "OBSERVED",
+          supporting_event_ids: ["evt-01"],
+          description: "Inbound traffic",
+        },
+      ],
+      root_causes: ["ip:192.168.1.50"],
+      terminal_targets: ["host:srv-01"],
+      is_multi_host: false,
+      total_steps: 1,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockPath,
+    } as Response);
+
+    const { fetchAttackPath } = await import("../lib/api");
+    const result = await fetchAttackPath(8);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/8/attack-path",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
+    expect(result.steps.length).toBe(1);
+    expect(result.steps[0].nature).toBe("OBSERVED");
+  });
+
+  it("fetchMitreMappings retrieves deterministic MITRE mappings", async () => {
+    setEngineToken("m4_mitre_token");
+
+    const mockMitre = {
+      incident_id: 8,
+      items: [
+        {
+          technique_id: "T1110.001",
+          technique_name: "Password Guessing",
+          tactic: "Credential Access",
+          rule_id: "auth.ssh_bruteforce",
+          rule_name: "SSH Brute Force",
+          supporting_alert_ids: [10],
+          supporting_event_ids: ["evt-1"],
+          confidence: "HIGH",
+        },
+      ],
+      total: 1,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockMitre,
+    } as Response);
+
+    const { fetchMitreMappings } = await import("../lib/api");
+    const result = await fetchMitreMappings(8);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/8/mitre",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
+    expect(result.items.length).toBe(1);
+    expect(result.items[0].technique_id).toBe("T1110.001");
+  });
+
+  it("createInvestigationNote sends POST to record analyst annotation", async () => {
+    setEngineToken("m4_note_token");
+
+    const mockNote = {
+      id: 1,
+      incident_id: 9,
+      author: "ForensicAnalyst-1",
+      content: "Suspicious lateral movement confirmed from host telemetry.",
+      created_at: "2026-09-30T12:00:00Z",
+      target_type: "INCIDENT",
+      target_id: null,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockNote,
+    } as Response);
+
+    const { createInvestigationNote } = await import("../lib/api");
+    const result = await createInvestigationNote(9, {
+      author: "ForensicAnalyst-1",
+      content: "Suspicious lateral movement confirmed from host telemetry.",
+      target_type: "INCIDENT",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/9/notes",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.any(Headers),
+        body: JSON.stringify({
+          author: "ForensicAnalyst-1",
+          content: "Suspicious lateral movement confirmed from host telemetry.",
+          target_type: "INCIDENT",
+        }),
+      })
+    );
+    expect(result.id).toBe(1);
+    expect(result.author).toBe("ForensicAnalyst-1");
+  });
+
+  it("deleteInvestigationNote deletes note by ID", async () => {
+    setEngineToken("m4_del_note_token");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true, note_id: 1 }),
+    } as Response);
+
+    const { deleteInvestigationNote } = await import("../lib/api");
+    const result = await deleteInvestigationNote(1);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/notes/1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+    expect(result.deleted).toBe(true);
+  });
+
+  it("inspectEventForensics retrieves deep event forensics lineage", async () => {
+    setEngineToken("m4_forensics_token");
+
+    const mockForensics = {
+      event_id: "evt-uuid-1234",
+      event: { id: "evt-uuid-1234", host: "srv-01", event_type: "auth" },
+      provenance: { raw_message: "Failed password for root", timestamp: "2026-09-30T10:00:00Z" },
+      detections: [],
+      alerts: [],
+      incidents: [],
+      entities: ["user:root", "host:srv-01"],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockForensics,
+    } as Response);
+
+    const { inspectEventForensics } = await import("../lib/api");
+    const result = await inspectEventForensics("evt-uuid-1234");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/events/evt-uuid-1234/inspect",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
+    expect(result.event_id).toBe("evt-uuid-1234");
+    expect(result.entities).toContain("user:root");
+  });
+
+  it("inspectEntityPivot retrieves entity pivot summary", async () => {
+    setEngineToken("m4_pivot_token");
+
+    const mockPivot = {
+      entity_key: "host:srv-01",
+      entity_type: "HOST",
+      display_name: "srv-01",
+      total_events: 15,
+      total_alerts: 2,
+      total_incidents: 1,
+      associated_hosts: ["srv-01"],
+      associated_users: ["root"],
+      associated_ips: ["192.168.1.10"],
+      associated_processes: ["sshd"],
+      related_relationships: [],
+      recent_events: [],
+      alerts: [],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockPivot,
+    } as Response);
+
+    const { inspectEntityPivot } = await import("../lib/api");
+    const result = await inspectEntityPivot("host:srv-01");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/entities/host%3Asrv-01/pivot",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
+    expect(result.entity_key).toBe("host:srv-01");
+    expect(result.associated_users).toContain("root");
+  });
+
+  it("executeThreatHunt executes multi-parameter hunting search", async () => {
+    setEngineToken("m4_hunt_token");
+
+    const mockHunt = {
+      items: [{ id: "evt-01", event_type: "auth", outcome: "failure" }],
+      total: 1,
+      limit: 50,
+      offset: 0,
+      query_summary: "event_type = auth",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockHunt,
+    } as Response);
+
+    const { executeThreatHunt } = await import("../lib/api");
+    const result = await executeThreatHunt({ event_type: "auth", outcome: "failure" });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/hunt",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.any(Headers),
+        body: JSON.stringify({ event_type: "auth", outcome: "failure" }),
+      })
+    );
+    expect(result.items.length).toBe(1);
+    expect(result.total).toBe(1);
+  });
+
+  it("exportInvestigationReport downloads investigation dossier in markdown", async () => {
+    setEngineToken("m4_export_token");
+
+    const mockExport = {
+      incident_id: 11,
+      format: "markdown",
+      content: "# Investigation Dossier",
+      filename: "investigation_incident_11.md",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockExport,
+    } as Response);
+
+    const { exportInvestigationReport } = await import("../lib/api");
+    const result = await exportInvestigationReport(11, "markdown");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/investigations/11/export?format=markdown",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
+    expect(result.filename).toBe("investigation_incident_11.md");
+    expect(result.content).toBe("# Investigation Dossier");
+  });
 });
+
 
