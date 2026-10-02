@@ -134,13 +134,49 @@ def test_m54_sec_002_invalid_bearer_token_rejected(client_app):
 # M54-SEC-003: Cross-investigation data access prevented
 # =========================================================================
 def test_m54_sec_003_cross_investigation_isolation(sec_db):
-    """Verify investigation workspace 1 cannot access incident 2 entities or alerts."""
+    """Verify simultaneous active workspaces (incidents 1 and 2) maintain complete isolation across all state."""
+    from logintel.ai.domain.intelligence import QueryProposal
+
     ws_service = WorkspaceService(database=sec_db)
     ws1 = ws_service.get_or_create_workspace(1)
+    ws2 = ws_service.get_or_create_workspace(2)
 
+    # 1. Scope isolation
     assert "host:srv-alpha" in ws1.scope.selected_entity_ids
+    assert "host:srv-alpha" not in ws2.scope.selected_entity_ids
+    assert "host:srv-beta" in ws2.scope.selected_entity_ids
     assert "host:srv-beta" not in ws1.scope.selected_entity_ids
+    assert 1 in ws1.scope.selected_alert_ids
     assert 2 not in ws1.scope.selected_alert_ids
+    assert 2 in ws2.scope.selected_alert_ids
+    assert 1 not in ws2.scope.selected_alert_ids
+
+    # 2. State transition isolation
+    ws_service.update_state(1, InvestigationState.ACTIVE, "analyst_1", "Analysis 1")
+    ws_service.update_state(2, InvestigationState.ACTIVE, "analyst_2", "Activate 2")
+    ws_service.update_state(2, InvestigationState.PAUSED, "analyst_2", "Pause 2")
+    assert ws1.state == InvestigationState.ACTIVE
+    assert ws2.state == InvestigationState.PAUSED
+
+    # 3. Hypothesis isolation
+    h1 = ws_service.create_hypothesis(1, "Alpha server compromised", created_by="analyst_1")
+    h2 = ws_service.create_hypothesis(2, "Beta server credential spray", created_by="analyst_2")
+    assert [h.hypothesis_id for h in ws_service.list_hypotheses(1)] == [h1.hypothesis_id]
+    assert [h.hypothesis_id for h in ws_service.list_hypotheses(2)] == [h2.hypothesis_id]
+
+    # 4. Evidence candidates isolation
+    prop1 = QueryProposal(proposal_id="qp1", query_template_id="q", host="srv-alpha", rationale="hunt")
+    ws_service.execute_approved_query(1, prop1, "analyst_1")
+    assert len(ws1.evidence_candidates) == 1
+    assert len(ws2.evidence_candidates) == 0
+
+    # 5. Report draft isolation
+    draft1 = ws_service.generate_report_draft(1)
+    draft2 = ws_service.generate_report_draft(2)
+    assert draft1.investigation_id == 1
+    assert draft2.investigation_id == 2
+    assert "Incident 1" in draft1.title
+    assert "Incident 2" in draft2.title
 
 
 # =========================================================================
