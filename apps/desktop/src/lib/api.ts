@@ -65,7 +65,15 @@ import type {
   CaseTimelineItem,
   HypothesisEvidenceAnalysis,
   CaseIntelligenceDossier,
+  CaseInvestigationDossier,
   InvestigationIntelligenceResponse,
+  FindingReviewUpdateRequest,
+  EvidenceMatrixEntry,
+  EvidenceGapAction,
+  RefinedTimelineItem,
+  CaseBriefing,
+  ProvenanceManifestEntry,
+  ReportDraftRequest,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -1371,8 +1379,137 @@ export async function generateCaseIntelligenceSynthesis(
   return res.json();
 }
 
+// ==========================================
+// M5.7 — Investigation Dossier & Operations
+// ==========================================
 
+export async function getInvestigationDossier(
+  caseId: number
+): Promise<CaseInvestigationDossier> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/dossier`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch investigation dossier: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function updateFindingReview(
+  caseId: number,
+  findingId: string,
+  req: FindingReviewUpdateRequest
+): Promise<Record<string, any>> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings/${encodeURIComponent(findingId)}/review`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update finding review: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function getEvidenceMatrix(
+  caseId: number
+): Promise<EvidenceMatrixEntry[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence-matrix`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence matrix: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function getEvidenceGapActions(
+  caseId: number
+): Promise<EvidenceGapAction[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence-gaps/actions`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence gap actions: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function getRefinedTimeline(
+  caseId: number
+): Promise<RefinedTimelineItem[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/intelligence`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch refined timeline: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCaseBriefing(
+  caseId: number
+): Promise<CaseBriefing> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/briefing`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case briefing: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getProvenanceManifest(
+  caseId: number
+): Promise<ProvenanceManifestEntry[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/provenance`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch provenance manifest: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getGovernedThreatHuntResults(
+  caseId: number
+): Promise<Array<Record<string, any>>> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunt-results`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch threat hunt results: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function draftReportFromDossier(
+  caseId: number,
+  req?: ReportDraftRequest
+): Promise<CaseReportVersion> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/report/draft`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req || {}),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to draft report from dossier: ${res.statusText}`);
+  }
+  return res.json();
+}

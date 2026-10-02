@@ -690,4 +690,154 @@ export interface InvestigationIntelligenceResponse {
   provenance: Record<string, any>;
 }
 
+export type FindingReviewState =
+  | "UNREVIEWED"
+  | "UNDER_REVIEW"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "NEEDS_MORE_EVIDENCE";
 
+export type EvidenceMatrixStatus =
+  | "SUPPORTED"
+  | "WEAKLY_SUPPORTED"
+  | "CONTRADICTED"
+  | "INSUFFICIENT"
+  | "UNRESOLVED";
+
+export type EvidenceItemResolution =
+  | "RESOLVED"
+  | "MISSING"
+  | "UNRESOLVED"
+  | "UNAVAILABLE";
+
+export interface EvidenceMatrixItem {
+  citation_tag: string;
+  source_type: string;
+  source_id: string;
+  resolution_status: EvidenceItemResolution;
+  summary?: string;
+  epistemic_status: string;
+}
+
+export interface EvidenceMatrixEntry {
+  hypothesis_id: string;
+  statement: string;
+  status: EvidenceMatrixStatus;
+  supporting_evidence: EvidenceMatrixItem[];
+  contradicting_evidence: EvidenceMatrixItem[];
+  evidence_gaps: string[];
+  resolved_support_count: number;
+  unresolved_support_count: number;
+  assessment_rationale: string;
+}
+
+export interface EvidenceGapAction {
+  gap_id: string;
+  case_id: number;
+  gap_type: string;
+  description: string;
+  suggested_action: string;
+  reason: string;
+  evidence_requirement: string;
+  execution_nature: "ANALYST_CONTROLLED";
+  target_entity?: string | null;
+  target_time_window?: string | null;
+  suggested_query_template_id?: string | null;
+  suggested_parameters?: Record<string, any>;
+  governance_notice: string;
+}
+
+export type RefinedTimelineSourceType =
+  | "OBSERVED_EVENT"
+  | "DETECTION"
+  | "ALERT"
+  | "INCIDENT"
+  | "CORRELATION"
+  | "FINDING"
+  | "ANALYST_NOTE"
+  | "HYPOTHESIS"
+  | "THREAT_HUNT_RESULT"
+  | "AI_INTERPRETATION";
+
+export interface RefinedTimelineItem {
+  item_id: string;
+  case_id: number;
+  timestamp: string;
+  source_type: RefinedTimelineSourceType;
+  source_id: string;
+  title: string;
+  summary: string;
+  epistemic_status: EpistemicStatus | string;
+  is_authoritative: boolean;
+  citation_tag?: string | null;
+  provenance: string;
+  metadata?: Record<string, any>;
+}
+
+export interface CaseBriefing {
+  case_id: number;
+  incident_id: number;
+  case_title: string;
+  scope_summary: Record<string, any>;
+  observed_metrics: Record<string, number>;
+  key_findings_summary: Array<Record<string, any>>;
+  correlations_narrative: string;
+  evidence_gaps_summary: Array<Record<string, any>>;
+  hypotheses_evidence_states: Array<Record<string, any>>;
+  recommended_next_actions: EvidenceGapAction[];
+  generated_at: string;
+  generated_by: string;
+  governance_classification: string;
+}
+
+export interface ProvenanceManifestEntry {
+  entry_id: string;
+  section: string;
+  source_type: string;
+  source_id: string;
+  source_hash_or_reference: string;
+  epistemic_status: string;
+  is_authoritative: boolean;
+  generated_by: string;
+  generated_at: string;
+  case_id: number;
+}
+
+export interface CaseInvestigationDossier {
+  case_id: number;
+  incident_id: number;
+  case_title: string;
+  status: string;
+  owner: string;
+  created_at: string;
+  scope: Record<string, any>;
+  findings: Array<Record<string, any>>;
+  evidence_summary: Record<string, any>;
+  timeline: RefinedTimelineItem[];
+  entities: Array<Record<string, any>>;
+  correlations: Array<Record<string, any>>;
+  evidence_gaps: EvidenceGapAction[];
+  hypotheses: Array<Record<string, any>>;
+  evidence_matrix: EvidenceMatrixEntry[];
+  threat_hunting_results: Array<Record<string, any>>;
+  attack_path: Array<Record<string, any>>;
+  mitre_techniques: Array<Record<string, any>>;
+  analyst_notes: Array<Record<string, any>>;
+  ai_interpretation?: Record<string, any> | null;
+  review_state_summary: Record<string, number>;
+  provenance_manifest: ProvenanceManifestEntry[];
+  generated_at: string;
+}
+
+export interface FindingReviewUpdateRequest {
+  review_state: FindingReviewState;
+  analyst_notes?: string;
+  reviewer?: string;
+}
+
+export interface ReportDraftRequest {
+  title?: string;
+  analyst_notes?: string;
+  is_final?: boolean;
+  actor?: string;
+}

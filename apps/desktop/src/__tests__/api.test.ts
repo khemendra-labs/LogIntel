@@ -1204,6 +1204,141 @@ describe("Frontend API Client and Authentication", () => {
     expect(synthesis.observed_claims.length).toBe(1);
     expect(synthesis.provenance.containment_mode).toBe("APPLICATION_LEVEL_AI_CONTAINMENT");
   });
+
+  it("M5.7 investigation dossier and finding review workflow", async () => {
+    setEngineToken("m57_dossier_token");
+    const mockDossier = {
+      case_id: 601,
+      incident_id: 600,
+      case_title: "Dossier Case",
+      status: "OPEN",
+      owner: "lead-analyst",
+      findings: [{ finding_id: "fnd-601-1", review_state: "UNREVIEWED" }],
+      review_state_summary: { UNREVIEWED: 1, ACCEPTED: 0 },
+      timeline: [],
+      evidence_matrix: [],
+      evidence_gaps: [],
+      provenance_manifest: [],
+    };
+
+    const mockReviewUpdate = {
+      case_id: 601,
+      finding_id: "fnd-601-1",
+      review_state: "ACCEPTED",
+      analyst_notes: "Validated by analyst",
+      reviewed_by: "lead-analyst",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockDossier,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockReviewUpdate,
+      } as Response);
+
+    const { getInvestigationDossier, updateFindingReview } = await import("../lib/api");
+    const dossier = await getInvestigationDossier(601);
+    expect(dossier.case_id).toBe(601);
+    expect(dossier.findings[0].review_state).toBe("UNREVIEWED");
+
+    const reviewRes = await updateFindingReview(601, "fnd-601-1", {
+      review_state: "ACCEPTED",
+      analyst_notes: "Validated by analyst",
+      reviewer: "lead-analyst",
+    });
+    expect(reviewRes.review_state).toBe("ACCEPTED");
+  });
+
+  it("M5.7 evidence matrix, gap actions, refined timeline, and briefing", async () => {
+    setEngineToken("m57_ops_token");
+    const mockMatrix = [
+      {
+        hypothesis_id: "hyp-1",
+        statement: "External attacker",
+        status: "SUPPORTED",
+        supporting_evidence: [],
+        contradicting_evidence: [],
+        evidence_gaps: [],
+      },
+    ];
+
+    const mockGapActions = [
+      {
+        gap_id: "gap-1",
+        case_id: 601,
+        gap_type: "MISSING_PROCESS_TELEMETRY",
+        suggested_action: "Review process logs",
+        execution_nature: "ANALYST_CONTROLLED",
+      },
+    ];
+
+    const mockTimeline = [
+      {
+        item_id: "tl-1",
+        case_id: 601,
+        timestamp: "2026-10-02T12:00:00Z",
+        source_type: "OBSERVED_EVENT",
+        is_authoritative: true,
+        epistemic_status: "OBSERVED",
+      },
+    ];
+
+    const mockBriefing = {
+      case_id: 601,
+      incident_id: 600,
+      case_title: "Case Briefing",
+      scope_summary: {},
+      observed_metrics: { event_count: 5 },
+      key_findings_summary: [],
+      correlations_narrative: "Correlated login burst",
+      recommended_next_actions: mockGapActions,
+      governance_classification: "DFIR_FORENSIC_OBSERVATION",
+    };
+
+    const mockProvenance = [
+      {
+        entry_id: "prov-1",
+        section: "Key Findings",
+        source_type: "event",
+        source_id: "ev-1",
+        epistemic_status: "OBSERVED",
+        is_authoritative: true,
+      },
+    ];
+
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ ok: true, json: async () => mockMatrix } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockGapActions } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockTimeline } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockBriefing } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockProvenance } as Response);
+
+    const {
+      getEvidenceMatrix,
+      getEvidenceGapActions,
+      getRefinedTimeline,
+      getCaseBriefing,
+      getProvenanceManifest,
+    } = await import("../lib/api");
+
+    const matrix = await getEvidenceMatrix(601);
+    expect(matrix[0].status).toBe("SUPPORTED");
+
+    const actions = await getEvidenceGapActions(601);
+    expect(actions[0].execution_nature).toBe("ANALYST_CONTROLLED");
+
+    const timeline = await getRefinedTimeline(601);
+    expect(timeline[0].is_authoritative).toBe(true);
+
+    const briefing = await getCaseBriefing(601);
+    expect(briefing.governance_classification).toBe("DFIR_FORENSIC_OBSERVATION");
+
+    const prov = await getProvenanceManifest(601);
+    expect(prov[0].is_authoritative).toBe(true);
+  });
 });
 
 

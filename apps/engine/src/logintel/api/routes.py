@@ -1691,6 +1691,143 @@ def synthesize_case_intelligence(case_id: int, req: Optional[IntelligenceSynthes
         raise HTTPException(status_code=404, detail=str(e))
 
 
+class ReviewFindingApiRequest(BaseModel):
+    review_state: str
+    analyst_notes: str = ""
+    reviewer: str = "SecAnalyst-1"
+
+
+class DraftReportFromDossierApiRequest(BaseModel):
+    title: Optional[str] = None
+    analyst_notes: Optional[str] = None
+    is_final: bool = False
+    actor: str = "SecAnalyst-1"
+
+
+@protected_router.get("/cases/{case_id}/dossier")
+def get_investigation_dossier_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve complete, deterministic investigation dossier with provenance manifests (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        dossier = case_service.get_investigation_dossier(case_id)
+        return dossier.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.patch("/cases/{case_id}/findings/{finding_id}/review")
+def review_case_finding_endpoint(case_id: int, finding_id: str, req: ReviewFindingApiRequest) -> Dict[str, Any]:
+    """Update analyst review state for an investigation finding and record in audit log (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        review = case_service.update_finding_review(
+            case_id=case_id,
+            finding_id=finding_id,
+            review_state=req.review_state,
+            analyst_notes=req.analyst_notes,
+            reviewer=req.reviewer,
+        )
+        return review
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/evidence-matrix")
+def get_case_evidence_matrix_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve deterministic hypothesis evidence matrix for a case (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        matrix = case_service.get_evidence_matrix(case_id)
+        return [entry.model_dump(mode="json") for entry in matrix]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/evidence-gaps/actions")
+def get_case_evidence_gap_actions_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve actionable, analyst-controlled next steps derived from evidence gaps (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        actions = case_service.get_evidence_gap_actions(case_id)
+        return [a.model_dump(mode="json") for a in actions]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/intelligence")
+def get_case_refined_timeline_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve multi-source chronological timeline with strict provenance demarcation (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        timeline = case_service.get_refined_timeline(case_id)
+        return [item.model_dump(mode="json") for item in timeline]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hunt-results")
+def get_case_hunt_results_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve governed threat hunting executions recorded for a case (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        return case_service.get_threat_hunt_results(case_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/briefing")
+def get_case_briefing_endpoint(case_id: int) -> Dict[str, Any]:
+    """Generate structured incident / case briefing for analyst decision support (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        briefing = case_service.get_case_briefing(case_id)
+        return briefing.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/report/draft")
+def draft_report_from_dossier_endpoint(case_id: int, req: Optional[DraftReportFromDossierApiRequest] = None) -> Dict[str, Any]:
+    """Generate an immutable versioned report derived deterministically from the dossier (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    title = req.title if req else None
+    notes = req.analyst_notes if req else None
+    is_final = req.is_final if req else False
+    actor = req.actor if req else "SecAnalyst-1"
+
+    try:
+        report = case_service.draft_report_from_dossier(
+            case_id=case_id,
+            title=title,
+            analyst_notes=notes,
+            is_final=is_final,
+            actor=actor,
+        )
+        return report.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/provenance")
+def get_case_provenance_manifest_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve verifiable provenance manifest linking statements to sources (M5.7)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        manifest = case_service.get_provenance_manifest(case_id)
+        return [entry.model_dump(mode="json") for entry in manifest]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

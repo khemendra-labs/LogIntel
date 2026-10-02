@@ -199,12 +199,27 @@ class CaseRepository:
                     );
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS case_finding_reviews (
+                        review_id TEXT PRIMARY KEY,
+                        case_id INTEGER NOT NULL REFERENCES investigation_cases(case_id) ON DELETE CASCADE,
+                        finding_id TEXT NOT NULL,
+                        review_state TEXT NOT NULL DEFAULT 'UNREVIEWED',
+                        analyst_notes TEXT NOT NULL DEFAULT '',
+                        reviewed_by TEXT NOT NULL,
+                        reviewed_at TEXT NOT NULL,
+                        UNIQUE (case_id, finding_id)
+                    );
+                    """
+                )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_incident ON investigation_cases(incident_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_status ON investigation_cases(status);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_hypotheses_case ON case_hypotheses(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_evidence_case ON case_evidence_references(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_reports_case ON case_reports(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_audit_case ON case_audit_log(case_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_case_finding_reviews_case ON case_finding_reviews(case_id);")
 
                 # Database-level enforcement of append-only audit log
                 conn.execute(
@@ -1045,25 +1060,33 @@ class CaseRepository:
                 status = ResolutionStatus.MISSING
 
                 try:
-                    if ref.source_type == "event":
+                    if ref.source_type in ("event", "events"):
                         row = conn.execute("SELECT * FROM events WHERE id = ?", (ref.source_id,)).fetchone()
                         if row:
                             found_record = dict(row)
                             status = ResolutionStatus.AVAILABLE
-                    elif ref.source_type == "alert":
+                    elif ref.source_type in ("alert", "alerts"):
                         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (ref.source_id,)).fetchone()
                         if row:
                             found_record = dict(row)
                             status = ResolutionStatus.AVAILABLE
-                    elif ref.source_type == "detection":
+                    elif ref.source_type in ("detection", "detections"):
                         row = conn.execute("SELECT * FROM detections WHERE id = ?", (ref.source_id,)).fetchone()
                         if row:
                             found_record = dict(row)
                             status = ResolutionStatus.AVAILABLE
-                    elif ref.source_type == "entity":
+                    elif ref.source_type in ("entity", "entities", "incident_entity", "incident_entities", "incident_entitie"):
                         row = conn.execute(
-                            "SELECT * FROM incident_entities WHERE incident_id = ? AND entity_key = ?",
-                            (ref.case_id, ref.source_id),
+                            "SELECT * FROM incident_entities WHERE entity_key = ?",
+                            (ref.source_id,),
+                        ).fetchone()
+                        if row:
+                            found_record = dict(row)
+                            status = ResolutionStatus.AVAILABLE
+                    elif ref.source_type in ("incident", "incidents"):
+                        row = conn.execute(
+                            "SELECT * FROM incidents WHERE id = ? OR incident_key = ?",
+                            (ref.source_id, str(ref.source_id)),
                         ).fetchone()
                         if row:
                             found_record = dict(row)
@@ -1085,4 +1108,95 @@ class CaseRepository:
         """Fetch audit log records for a case."""
         case = self.get_case(case_id, resolve_evidence=False)
         return case.audit_history if case else []
+
+    def upsert_finding_review(
+        self,
+        case_id: int,
+        finding_id: str,
+        review_state: str,
+        analyst_notes: str = "",
+        reviewed_by: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Persist an analyst review decision for an investigation finding and record in audit log."""
+        case = self.get_case(case_id, resolve_evidence=False)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        valid_states = {"UNREVIEWED", "UNDER_REVIEW", "ACCEPTED", "REJECTED", "NEEDS_MORE_EVIDENCE"}
+        if review_state not in valid_states:
+            raise ValueError(f"Invalid review state '{review_state}'. Must be one of: {sorted(valid_states)}")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        review_id = f"rev-{case_id}-{finding_id}"
+
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                existing = conn.execute(
+                    "SELECT review_state FROM case_finding_reviews WHERE case_id = ? AND finding_id = ?",
+                    (case_id, finding_id),
+                ).fetchone()
+
+                old_state = existing["review_state"] if existing else "UNREVIEWED"
+
+                conn.execute(
+                    """
+                    INSERT INTO case_finding_reviews (
+                        review_id, case_id, finding_id, review_state, analyst_notes, reviewed_by, reviewed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(case_id, finding_id) DO UPDATE SET
+                        review_state = excluded.review_state,
+                        analyst_notes = excluded.analyst_notes,
+                        reviewed_by = excluded.reviewed_by,
+                        reviewed_at = excluded.reviewed_at
+                    """,
+                    (review_id, case_id, finding_id, review_state, analyst_notes, reviewed_by, now_iso),
+                )
+
+                # Record in immutable audit log
+                conn.execute(
+                    """
+                    INSERT INTO case_audit_log (
+                        case_id, timestamp, actor, action, previous_value, new_value, reason, details_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        case_id,
+                        now_iso,
+                        reviewed_by,
+                        "REVIEW_FINDING",
+                        old_state,
+                        review_state,
+                        analyst_notes or f"Finding {finding_id} review state updated to {review_state}",
+                        json.dumps({"finding_id": finding_id, "review_state": review_state, "analyst_notes": analyst_notes}),
+                    ),
+                )
+
+        return {
+            "review_id": review_id,
+            "case_id": case_id,
+            "finding_id": finding_id,
+            "review_state": review_state,
+            "analyst_notes": analyst_notes,
+            "reviewed_by": reviewed_by,
+            "reviewed_at": now_iso,
+        }
+
+    def get_finding_reviews(self, case_id: int) -> Dict[str, Dict[str, Any]]:
+        """Retrieve all finding review records for a case keyed by finding_id."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT * FROM case_finding_reviews WHERE case_id = ? ORDER BY reviewed_at ASC",
+            (case_id,),
+        ).fetchall()
+        return {r["finding_id"]: dict(r) for r in rows}
+
+    def get_finding_review(self, case_id: int, finding_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific finding review record."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM case_finding_reviews WHERE case_id = ? AND finding_id = ?",
+            (case_id, finding_id),
+        ).fetchone()
+        return dict(row) if row else None
 

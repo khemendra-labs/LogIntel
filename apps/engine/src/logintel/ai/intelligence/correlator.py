@@ -195,9 +195,10 @@ class DeterministicCorrelator:
         for ip, citations in ip_clusters.items():
             unique_citations = list(set(citations))
             if len(unique_citations) >= 2:
+                clean_ip = ip.replace(".", "-").replace(":", "-")
                 findings.append(
                     InvestigationFinding(
-                        finding_id=f"fnd-{case.case_id}-infra-{uuid.uuid4().hex[:6]}",
+                        finding_id=f"fnd-{case.case_id}-infra-{clean_ip}",
                         case_id=case.case_id,
                         finding_type="SHARED_INFRASTRUCTURE_PIVOT",
                         title=f"Infrastructure Convergence on IP {ip}",
@@ -220,7 +221,7 @@ class DeterministicCorrelator:
                 finding_type="INVESTIGATION_SCOPE_BASELINE",
                 title=f"Active Case Scope: {case.title}",
                 description=f"Case bound to incident {case.incident_id} with declared entity scope: {scope_entities}.",
-                epistemic_status=EpistemicStatus.OBSERVED,
+                epistemic_status=EpistemicStatus.INFERRED,
                 confidence_basis="Declared analyst investigation scope.",
                 source_references=[f"[incident:{case.incident_id}]"],
                 related_entities=scope_entities,
@@ -236,6 +237,9 @@ class DeterministicCorrelator:
         if not val:
             return None
         try:
-            return datetime.fromisoformat(val.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except Exception:
             return None

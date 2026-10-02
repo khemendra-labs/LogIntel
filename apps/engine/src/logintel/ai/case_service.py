@@ -41,6 +41,17 @@ from logintel.ai.domain.investigation_intel import (
     InvestigationIntelligenceResponse,
     TemporalWindowAnalysis,
 )
+from logintel.ai.domain.investigation_dossier import (
+    CaseBriefing,
+    EvidenceGapAction,
+    EvidenceMatrixEntry,
+    FindingReviewState,
+    FindingReviewUpdate,
+    InvestigationDossier,
+    ProvenanceManifestEntry,
+    RefinedTimelineItem,
+)
+from logintel.ai.dossier.dossier_builder import DossierBuilder
 from logintel.ai.intelligence.service import InvestigationIntelligenceService
 from logintel.ai.evidence.retriever import EvidenceRetriever
 from logintel.logging import get_logger
@@ -71,6 +82,11 @@ class CaseService:
             database=self.forensic_db,
             case_repository=self.case_repo,
             investigation_repository=self.investigation_repo,
+        )
+        self.dossier_builder = DossierBuilder(
+            forensic_db=self.forensic_db,
+            case_repo=self.case_repo,
+            investigation_repo=self.investigation_repo,
         )
 
     def create_or_open_case(
@@ -126,9 +142,9 @@ class CaseService:
 
         return self.case_repo.get_case(case.case_id)  # type: ignore
 
-    def get_case(self, case_id: int) -> Optional[InvestigationCase]:
+    def get_case(self, case_id: int, resolve_evidence: bool = True) -> Optional[InvestigationCase]:
         """Fetch investigation case with dynamic evidence resolution."""
-        return self.case_repo.get_case(case_id, resolve_evidence=True)
+        return self.case_repo.get_case(case_id, resolve_evidence=resolve_evidence)
 
     def list_cases(
         self,
@@ -764,6 +780,127 @@ class CaseService:
                 for h in dossier.hypotheses_analysis
             },
             provenance=provenance,
+        )
+
+    def get_investigation_dossier(self, case_id: int) -> InvestigationDossier:
+        """Assemble comprehensive, section-by-section investigation dossier (M5.7)."""
+        case = self.get_case(case_id, resolve_evidence=True)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        findings, correlations = self.intelligence.correlator.correlate_case_evidence(case)
+        gaps = self.intelligence.gap_engine.identify_evidence_gaps(case)
+        return self.dossier_builder.build_dossier(
+            case=case,
+            findings=[f.model_dump() for f in findings],
+            correlations=correlations,
+            gaps=gaps,
+        )
+
+    def update_finding_review(
+        self,
+        case_id: int,
+        finding_id: str,
+        review_state: str,
+        analyst_notes: str = "",
+        reviewer: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Record analyst review state for an investigation finding (M5.7)."""
+        case = self.get_case(case_id, resolve_evidence=False)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        return self.case_repo.upsert_finding_review(
+            case_id=case_id,
+            finding_id=finding_id,
+            review_state=review_state,
+            analyst_notes=analyst_notes,
+            reviewed_by=reviewer,
+        )
+
+    def get_evidence_matrix(self, case_id: int) -> List[EvidenceMatrixEntry]:
+        """Retrieve deterministic hypothesis evidence matrix for a case (M5.7)."""
+        case = self.get_case(case_id, resolve_evidence=True)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        return self.dossier_builder.matrix_builder.build_matrix(case)
+
+    def get_evidence_gap_actions(self, case_id: int) -> List[EvidenceGapAction]:
+        """Retrieve actionable next steps derived from evidence gaps (M5.7)."""
+        case = self.get_case(case_id, resolve_evidence=True)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        gaps = self.intelligence.gap_engine.identify_evidence_gaps(case)
+        return self.dossier_builder.briefing_builder.build_gap_actions(gaps)
+
+    def get_refined_timeline(self, case_id: int) -> List[RefinedTimelineItem]:
+        """Retrieve multi-source refined timeline with provenance demarcation (M5.7)."""
+        case = self.get_case(case_id, resolve_evidence=True)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        findings, correlations = self.intelligence.correlator.correlate_case_evidence(case)
+        reviews = self.case_repo.get_finding_reviews(case_id)
+        f_dicts = []
+        for f in findings:
+            fd = f.model_dump()
+            if fd.get("finding_id") in reviews:
+                fd["review_state"] = reviews[fd["finding_id"]]["review_state"]
+            f_dicts.append(fd)
+        return self.dossier_builder.timeline_builder.build_refined_timeline(
+            case=case,
+            findings=f_dicts,
+            correlations=correlations,
+        )
+
+    def get_case_briefing(self, case_id: int) -> CaseBriefing:
+        """Generate structured incident / case briefing (M5.7)."""
+        case = self.get_case(case_id, resolve_evidence=True)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        findings, correlations = self.intelligence.correlator.correlate_case_evidence(case)
+        gaps = self.intelligence.gap_engine.identify_evidence_gaps(case)
+        reviews = self.case_repo.get_finding_reviews(case_id)
+        f_dicts = []
+        for f in findings:
+            fd = f.model_dump()
+            if fd.get("finding_id") in reviews:
+                fd["review_state"] = reviews[fd["finding_id"]]["review_state"]
+            f_dicts.append(fd)
+        return self.dossier_builder.briefing_builder.build_briefing(
+            case=case,
+            findings=f_dicts,
+            gaps=gaps,
+            correlations=correlations,
+        )
+
+    def get_provenance_manifest(self, case_id: int) -> List[ProvenanceManifestEntry]:
+        """Retrieve complete provenance manifest for an investigation (M5.7)."""
+        dossier = self.get_investigation_dossier(case_id)
+        return dossier.provenance_manifest
+
+    def get_threat_hunt_results(self, case_id: int) -> List[Dict[str, Any]]:
+        """Retrieve all governed threat hunting executions for a case (M5.7)."""
+        case = self.get_case(case_id, resolve_evidence=False)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        return [q.model_dump(mode="json") for q in case.query_history]
+
+    def draft_report_from_dossier(
+        self,
+        case_id: int,
+        title: Optional[str] = None,
+        analyst_notes: Optional[str] = None,
+        is_final: bool = False,
+        actor: str = "SecAnalyst-1",
+    ) -> CaseReportVersion:
+        """Generate an immutable versioned investigation report derived deterministically from the dossier (M5.7)."""
+        dossier = self.get_investigation_dossier(case_id)
+        report_title = title or f"Investigation Dossier Report — {dossier.case_title}"
+
+        return self.draft_or_revise_report(
+            case_id=case_id,
+            title=report_title,
+            analyst_notes=analyst_notes,
+            is_final=is_final,
+            actor=actor,
         )
 
 
