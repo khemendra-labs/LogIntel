@@ -17,6 +17,11 @@ def get_default_data_dir() -> Path:
         base = Path.home() / ".local" / "share"
     logintel_dir = base / "logintel"
     logintel_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if (logintel_dir.stat().st_mode & 0o777) != 0o700:
+            logintel_dir.chmod(0o700)
+    except OSError:
+        pass
     return logintel_dir
 
 

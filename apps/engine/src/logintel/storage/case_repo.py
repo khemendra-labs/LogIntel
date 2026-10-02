@@ -46,11 +46,32 @@ class CaseRepository:
         self.forensic_db = forensic_db or default_forensic_db
         self._local = threading.local()
         self._lock = threading.RLock()
+        self._enforce_storage_permissions()
         self._initialize_schema()
+        self._enforce_storage_permissions()
+
+    def _enforce_storage_permissions(self) -> None:
+        """Enforce owner-private 0600 on cases.db and 0700 on parent data directory."""
+        try:
+            if self.db_path.parent.exists():
+                parent_mode = self.db_path.parent.stat().st_mode & 0o777
+                if parent_mode != 0o700:
+                    self.db_path.parent.chmod(0o700)
+            if self.db_path.exists():
+                db_mode = self.db_path.stat().st_mode & 0o777
+                if db_mode != 0o600:
+                    self.db_path.chmod(0o600)
+            for extra in (f"{self.db_path.name}-wal", f"{self.db_path.name}-shm"):
+                extra_path = self.db_path.parent / extra
+                if extra_path.exists() and (extra_path.stat().st_mode & 0o777) != 0o600:
+                    extra_path.chmod(0o600)
+        except OSError as e:
+            logger.warning("Could not enforce storage permissions on %s: %s", self.db_path, e)
 
     def _get_connection(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._enforce_storage_permissions()
             conn = sqlite3.connect(
                 str(self.db_path),
                 timeout=30.0,
@@ -62,6 +83,7 @@ class CaseRepository:
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute("PRAGMA busy_timeout = 10000;")
             self._local.conn = conn
+            self._enforce_storage_permissions()
         return self._local.conn
 
     def _initialize_schema(self) -> None:
