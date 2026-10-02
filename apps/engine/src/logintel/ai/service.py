@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 
 from logintel.ai.config import AIConfig, AIProviderType
 from logintel.ai.context.assembler import InvestigationContextAssembler
+from logintel.ai.domain.bundle import EvidenceCoverage, InvestigationEvidenceBundle
+from logintel.ai.domain.intelligence import InvestigationIntent, QueryProposal
 from logintel.ai.domain.provider import LocalAIProvider, ProviderHealth, ProviderResult
 from logintel.ai.domain.response import AIInvestigationResponse
 from logintel.ai.errors import (
@@ -27,6 +29,8 @@ from logintel.ai.errors import (
     ModelUnavailable,
     ProviderUnavailable,
 )
+from logintel.ai.evidence.retriever import EvidenceRetriever
+from logintel.ai.intelligence.classifier import QuestionClassifier
 from logintel.ai.parser import ResponseParser
 from logintel.ai.provider.mock import MockAIProvider
 from logintel.ai.provider.ollama import OllamaProvider
@@ -90,6 +94,8 @@ class AIService:
         self.config = config or AIConfig()
         self.database = database or default_db
         self.assembler = InvestigationContextAssembler(database=self.database)
+        self.retriever = EvidenceRetriever(database=self.database)
+        self.classifier = QuestionClassifier()
 
         # Initialize provider based on configuration or injection
         if provider:
@@ -320,6 +326,296 @@ class AIService:
         if incident_id is not None:
             return [e for e in self._audit_log if e.incident_id == incident_id]
         return list(self._audit_log)
+
+    def get_evidence_bundle(
+        self,
+        incident_id: int,
+        target_entity: Optional[str] = None,
+        intent: Optional[InvestigationIntent] = None,
+    ) -> InvestigationEvidenceBundle:
+        """Retrieve deterministic evidence bundle for an incident."""
+        return self.retriever.retrieve_bundle(
+            incident_id=incident_id,
+            target_entity=target_entity,
+            intent=intent,
+        )
+
+    def get_evidence_coverage(self, incident_id: int) -> EvidenceCoverage:
+        """Retrieve deterministic evidence coverage metadata for an incident."""
+        bundle = self.retriever.retrieve_bundle(incident_id=incident_id)
+        return bundle.coverage
+
+    def preview_query_proposal(
+        self,
+        incident_id: int,
+        proposal: QueryProposal,
+    ) -> Dict[str, Any]:
+        """Safely preview a structured query proposal without autonomous execution.
+        
+        Uses parameter-driven SELECT queries with strict column whitelisting to eliminate SQL injection risks.
+        """
+        # Ensure proposal is not marked as executed
+        proposal.is_executed = False
+
+        # Whitelist of filterable column names
+        allowed_columns = {"severity", "action", "outcome", "source", "event_type", "host"}
+
+        conditions = ["1=1"]
+        params: List[Any] = []
+
+        if proposal.target_entity:
+            # Check host or raw message
+            entity_val = proposal.target_entity.split(":")[-1] if ":" in proposal.target_entity else proposal.target_entity
+            conditions.append("(host = ? OR raw_message LIKE ?)")
+            params.extend([entity_val, f"%{entity_val}%"])
+
+        if proposal.source:
+            conditions.append("source = ?")
+            params.append(proposal.source)
+
+        if proposal.event_types:
+            placeholders = ",".join("?" for _ in proposal.event_types)
+            conditions.append(f"event_type IN ({placeholders})")
+            params.extend(proposal.event_types)
+
+        if proposal.filters:
+            for k, v in proposal.filters.items():
+                if k.lower() in allowed_columns and isinstance(v, (str, int, float)):
+                    conditions.append(f"{k.lower()} = ?")
+                    params.append(v)
+
+        limit = min(max(1, proposal.limit), 50)
+        params.append(limit)
+
+        sql = f"""
+            SELECT id, timestamp, source, event_type, severity, action, outcome, summary, host, raw_message
+            FROM events
+            WHERE {' AND '.join(conditions)}
+            ORDER BY timestamp DESC, id DESC
+            LIMIT ?
+        """
+
+        with self.database.connection() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+
+        events = [
+            {
+                "id": str(r["id"]),
+                "timestamp": r["timestamp"],
+                "source": r["source"],
+                "event_type": r["event_type"],
+                "severity": r["severity"],
+                "action": r["action"],
+                "outcome": r["outcome"],
+                "summary": r["summary"],
+                "host": r["host"],
+                "raw_message": r["raw_message"],
+            }
+            for r in rows
+        ]
+
+        return {
+            "proposal_id": proposal.proposal_id,
+            "intent": proposal.intent,
+            "rationale": proposal.rationale,
+            "executed": False,
+            "is_preview_only": True,
+            "matched_count": len(events),
+            "events": events,
+        }
+
+    async def ask_question(
+        self,
+        incident_id: int,
+        question: str,
+        user_id: str = "analyst",
+        session_id: Optional[str] = None,
+        strict_citations: bool = True,
+    ) -> AIInvestigationResponse:
+        """Execute full evidence-grounded question pipeline for an incident."""
+        if not self.config.enabled:
+            raise AIError("AI subsystem is disabled in configuration", error_code="AI_DISABLED")
+
+        if not question or not question.strip():
+            raise AIError("Question cannot be empty or whitespace-only", error_code="INVALID_QUESTION")
+
+        if len(question) > 4000:
+            raise AIError("Question exceeds maximum length limit of 4000 characters", error_code="OVERSIZED_QUESTION")
+
+        # 1. Deterministic Question Classification
+        intent, target_entity = self.classifier.classify(question)
+
+        req_id = f"ai-req-{uuid.uuid4().hex[:12]}"
+        t_start = time.perf_counter()
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Ephemeral session scoping
+        session = self.get_session(user_id=user_id, incident_id=incident_id, session_id=session_id)
+
+        # Enforce concurrency boundary
+        try:
+            if self.config.concurrency_timeout_seconds <= 0.0:
+                if self._semaphore.locked() and self.config.max_concurrent_generations == 1:
+                    raise AIConcurrencyLimit("Another AI generation request is currently executing")
+                await asyncio.wait_for(self._semaphore.acquire(), timeout=0.1)
+            else:
+                await asyncio.wait_for(
+                    self._semaphore.acquire(),
+                    timeout=self.config.concurrency_timeout_seconds,
+                )
+        except asyncio.TimeoutError:
+            raise AIConcurrencyLimit(
+                f"Exceeded maximum concurrent generation wait deadline of {self.config.concurrency_timeout_seconds}s"
+            )
+
+        validation_status = "UNKNOWN"
+        citation_count = 0
+        invalid_citation_count = 0
+        error_code = None
+        result: Optional[ProviderResult] = None
+        context_hash = "none"
+
+        try:
+            # 2. Formulate Analytical Task with Intent
+            analytical_task = (
+                f"Analyst Question ({intent.value}): {question}\n"
+                f"Investigate based strictly on the provided context. "
+                f"Formulate evidence-grounded claims citing specific tags ([event:...], [alert:...], etc.). "
+                f"Distinguish OBSERVED facts from INFERRED deductions. "
+                f"Identify any evidence gaps, conflicts, and suggested next queries."
+            )
+            if target_entity:
+                analytical_task += f"\nFocus on entity: {target_entity}"
+
+            # 3. Deterministic Evidence Bundle & Context Retrieval with Adaptive Budgeting
+            bundle = self.retriever.retrieve_bundle(
+                incident_id=incident_id,
+                target_entity=target_entity,
+                intent=intent,
+                max_items=25,
+            )
+
+            from logintel.ai.context.budget import ContextBudget
+            budget_tiers = [
+                {"events": 4, "entities": 4, "rels": 2, "alerts": 2},
+                {"events": 2, "entities": 2, "rels": 1, "alerts": 1},
+                {"events": 1, "entities": 1, "rels": 0, "alerts": 1},
+            ]
+
+            context = None
+            request_bundle = None
+
+            for tier in budget_tiers:
+                tier_budget = ContextBudget(
+                    max_supporting_events=tier["events"],
+                    max_contextual_events=1,
+                    max_alerts=tier["alerts"],
+                    max_attack_path_steps=2,
+                    max_entities=tier["entities"],
+                    max_relationships=tier["rels"],
+                    max_notes=1,
+                )
+                cand_ctx = self.assembler.assemble(incident_id=incident_id, budget=tier_budget)
+                cand_req = RequestBuilder.build_request(context=cand_ctx, task=analytical_task)
+                total_text = (cand_req["system_prompt"] or "") + cand_req["prompt"]
+                est_tokens = self.config.model.estimate_tokens(total_text) + self.config.model.reserved_output_tokens
+                if est_tokens <= self.config.model.context_window_tokens:
+                    context = cand_ctx
+                    request_bundle = cand_req
+                    break
+
+            if not context or not request_bundle:
+                fallback_budget = ContextBudget(
+                    max_supporting_events=1,
+                    max_contextual_events=0,
+                    max_alerts=1,
+                    max_attack_path_steps=1,
+                    max_entities=1,
+                    max_relationships=0,
+                    max_notes=0,
+                )
+                context = self.assembler.assemble(incident_id=incident_id, budget=fallback_budget)
+                request_bundle = RequestBuilder.build_request(context=context, task=analytical_task)
+
+            context_hash = context.canonical_content_hash
+
+            # 4. Model Context Budget Enforcement
+            ModelContextBudgetGuard.validate_request_budget(
+                prompt=request_bundle["prompt"],
+                system_prompt=request_bundle["system_prompt"],
+                model_config=self.config.model,
+            )
+
+            # 5. Local Model Invocation
+            result = await self.provider.generate(
+                prompt=request_bundle["prompt"],
+                system_prompt=request_bundle["system_prompt"],
+                request_id=req_id,
+            )
+
+            # 6. Strict Response Parsing, Epistemic Validation, and Citation Checking
+            response = ResponseParser.parse_and_validate(
+                result=result,
+                manifest=context.citation_manifest,
+                strict_citations=strict_citations,
+                investigation_id=context.investigation_id,
+                global_checker=self._is_tag_in_global_db,
+            )
+
+            # Enrich response with M5.3 metadata
+            response.intent = intent
+            response.evidence_coverage = bundle.coverage
+            if not response.conflicts and bundle.conflicts:
+                response.conflicts = bundle.conflicts
+            if not response.evidence_gaps and bundle.gaps:
+                response.evidence_gaps = bundle.gaps
+
+            validation_status = "PASSED" if not response.has_unverified_claims else "UNVERIFIED_CLAIMS"
+            citation_count = len(response.citations)
+            invalid_citation_count = len(response.unverified_citations)
+
+            # Record Ephemeral Session History
+            session.messages.append(SessionMessage(role="user", content=question, timestamp=now_iso))
+            session.messages.append(SessionMessage(role="assistant", content=response.answer_markdown, timestamp=now_iso))
+
+            return response
+
+        except asyncio.CancelledError:
+            validation_status = "CANCELLED"
+            error_code = "REQUEST_CANCELLED"
+            raise AIRequestCancelled("AI inference generation was cancelled")
+        except AIError as e:
+            validation_status = "FAILED"
+            error_code = e.error_code
+            raise
+        except Exception as e:
+            validation_status = "FAILED"
+            error_code = "INTERNAL_AI_ERROR"
+            raise AIError(f"Internal AI processing error: {str(e)}", error_code="INTERNAL_AI_ERROR") from e
+        finally:
+            self._semaphore.release()
+            duration_ms = (time.perf_counter() - t_start) * 1000
+
+            audit_entry = AIAuditEntry(
+                request_id=req_id,
+                timestamp=now_iso,
+                incident_id=incident_id,
+                user_id=user_id,
+                provider_id=self.provider.provider_id,
+                model_id=self.provider.model_id,
+                runtime_version=result.runtime_version if result else None,
+                model_digest=result.model_digest if result else None,
+                input_context_hash=context_hash,
+                latency_ms=round(duration_ms, 2),
+                output_validation_status=validation_status,
+                citation_count=citation_count,
+                invalid_citation_count=invalid_citation_count,
+                prompt_tokens=result.prompt_tokens if result else None,
+                completion_tokens=result.completion_tokens if result else None,
+                termination_reason=result.termination_reason if result else None,
+                error_code=error_code,
+            )
+            self._audit_log.append(audit_entry)
 
 
 # Global singleton instance

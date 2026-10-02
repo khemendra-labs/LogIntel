@@ -765,6 +765,143 @@ async def analyze_investigation_with_ai(
         raise HTTPException(status_code=500, detail={"error": e.error_code, "message": e.message, "details": e.details})
 
 
+# -------------------------------------------------------------------------
+# Evidence-Grounded Investigation Intelligence (Milestone 5.3)
+# -------------------------------------------------------------------------
+
+class AIQuestionRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=4000, description="Analyst investigation question")
+    session_id: Optional[str] = Field(default=None, description="Optional ephemeral session ID")
+    strict_citations: bool = Field(default=True, description="Strictly enforce that all citations exist in context")
+
+
+@protected_router.post("/ai/investigations/{incident_id}/question")
+async def ask_investigation_question(
+    incident_id: int,
+    req: AIQuestionRequest,
+) -> Dict[str, Any]:
+    """Ask an evidence-grounded investigation question with deterministic retrieval and epistemic validation."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.service import ai_service
+    from logintel.ai.errors import (
+        ModelUnavailable,
+        ProviderUnavailable,
+        ProviderTimeout,
+        ProviderMalformedResponse,
+        CrossInvestigationCitation,
+        InvalidCitation,
+        InvalidEpistemicClaim,
+        AIConcurrencyLimit,
+        AIError,
+    )
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        response = await ai_service.ask_question(
+            incident_id=incident_id,
+            question=req.question,
+            session_id=req.session_id,
+            strict_citations=req.strict_citations,
+        )
+        return response.model_dump(mode="json")
+    except ModelUnavailable as e:
+        raise HTTPException(status_code=503, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except ProviderUnavailable as e:
+        raise HTTPException(status_code=503, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except ProviderTimeout as e:
+        raise HTTPException(status_code=504, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except AIConcurrencyLimit as e:
+        raise HTTPException(status_code=429, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except (CrossInvestigationCitation, InvalidCitation, InvalidEpistemicClaim, ProviderMalformedResponse) as e:
+        raise HTTPException(status_code=502, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except AIError as e:
+        if e.error_code in ("INVALID_QUESTION", "OVERSIZED_QUESTION"):
+            raise HTTPException(status_code=400, detail={"error": e.error_code, "message": e.message, "details": e.details})
+        raise HTTPException(status_code=500, detail={"error": e.error_code, "message": e.message, "details": e.details})
+
+
+@protected_router.get("/ai/investigations/{incident_id}/evidence")
+def get_investigation_evidence_bundle(
+    incident_id: int,
+    target_entity: Optional[str] = Query(default=None, description="Optional entity filter (e.g. 'ip:192.168.1.5')"),
+    intent: Optional[str] = Query(default=None, description="Optional investigation intent to bias relevance"),
+) -> Dict[str, Any]:
+    """Retrieve the deterministic structured evidence bundle for an incident."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.service import ai_service
+    from logintel.ai.domain.intelligence import InvestigationIntent
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    inv_intent = None
+    if intent:
+        try:
+            inv_intent = InvestigationIntent(intent.upper())
+        except ValueError:
+            pass
+
+    bundle = ai_service.get_evidence_bundle(
+        incident_id=incident_id,
+        target_entity=target_entity,
+        intent=inv_intent,
+    )
+    return bundle.model_dump(mode="json")
+
+
+@protected_router.get("/ai/investigations/{incident_id}/coverage")
+def get_investigation_evidence_coverage(
+    incident_id: int,
+) -> Dict[str, Any]:
+    """Retrieve deterministic evidence coverage metadata and telemetry gap audits for an incident."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.service import ai_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    coverage = ai_service.get_evidence_coverage(incident_id=incident_id)
+    return coverage.model_dump(mode="json")
+
+
+@protected_router.post("/ai/investigations/{incident_id}/query/preview")
+def preview_investigation_query(
+    incident_id: int,
+    proposal: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Safely preview a structured query proposal without executing autonomous actions or raw SQL."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.service import ai_service
+    from logintel.ai.domain.intelligence import QueryProposal
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        valid_keys = {
+            "title", "description", "intent", "rationale", "target_entity",
+            "entity_key", "source", "filters", "event_types", "host",
+            "username", "src_ip", "dst_ip", "process_name", "search_text",
+            "relative_time_range"
+        }
+        if not any(k in proposal for k in valid_keys):
+            raise ValueError("Proposal missing identifiable query specification")
+        query_proposal = QueryProposal.model_validate(proposal)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid query proposal structure: {str(e)}")
+
+    return ai_service.preview_query_proposal(
+        incident_id=incident_id,
+        proposal=query_proposal,
+    )
+
+
 router.include_router(protected_router)
 
 

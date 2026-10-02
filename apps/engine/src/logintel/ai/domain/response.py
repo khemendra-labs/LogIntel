@@ -10,8 +10,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from logintel.ai.domain.bundle import EvidenceConflict, EvidenceCoverage, EvidenceGap
 from logintel.ai.domain.epistemic import EpistemicStatus
 from logintel.ai.domain.evidence import EvidenceRef, EvidenceType
+from logintel.ai.domain.intelligence import Hypothesis, InvestigationIntent, QueryProposal
 
 
 class Claim(BaseModel):
@@ -69,3 +71,12 @@ class AIInvestigationResponse(BaseModel):
     unverified_citations: List[str] = Field(default_factory=list)
     model_identifier: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    # M5.3 Investigation Intelligence extensions
+    intent: Optional[InvestigationIntent] = None
+    evidence_coverage: Optional[EvidenceCoverage] = None
+    hypotheses: List[Hypothesis] = Field(default_factory=list)
+    evidence_gaps: List[EvidenceGap] = Field(default_factory=list)
+    conflicts: List[EvidenceConflict] = Field(default_factory=list)
+    suggested_query_proposals: List[QueryProposal] = Field(default_factory=list)
+

@@ -129,6 +129,35 @@ class ResponseParser:
             for ref in claim.evidence_refs:
                 cited_tags.add(ref.citation_tag)
 
+        def _get_tag(r: Any) -> Optional[str]:
+            if isinstance(r, str):
+                return r
+            if isinstance(r, dict):
+                return r.get("citation_tag") or r.get("tag")
+            return getattr(r, "citation_tag", None)
+
+        # Collect citations from hypotheses (M5.3)
+        for hyp in response.hypotheses:
+            for ref in hyp.supporting_evidence:
+                t = _get_tag(ref)
+                if t:
+                    cited_tags.add(t)
+            for ref in hyp.contradicting_evidence:
+                t = _get_tag(ref)
+                if t:
+                    cited_tags.add(t)
+
+        # Collect citations from conflicts (M5.3)
+        for conf in response.conflicts:
+            if conf.evidence_tag_a:
+                cited_tags.add(conf.evidence_tag_a)
+            if conf.evidence_tag_b:
+                cited_tags.add(conf.evidence_tag_b)
+
+        # Invariant enforcement: AI never executes queries
+        for qp in response.suggested_query_proposals:
+            qp.is_executed = False
+
         # Validate each citation against the context manifest
         for tag in cited_tags:
             if not manifest.is_citation_valid(tag):

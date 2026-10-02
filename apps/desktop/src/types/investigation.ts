@@ -182,3 +182,140 @@ export interface ExportInvestigationResponse {
   content: string;
   filename: string;
 }
+
+// -------------------------------------------------------------------------
+// M5.3 AI Investigation Intelligence Types
+// -------------------------------------------------------------------------
+
+export type EpistemicStatus = "OBSERVED" | "INFERRED" | "UNKNOWN";
+export type EvidenceType = "event" | "alert" | "detection" | "entity" | "relationship" | "mitre_mapping" | "incident" | "timeline_step";
+export type EvidenceRole = "PRIMARY" | "SUPPORTING" | "CONTEXTUAL" | "CORROBORATING" | "CONTRADICTING" | "TEMPORAL" | "ENTITY_LINK";
+export type InvestigationIntent = "SUMMARY" | "TIMELINE" | "ENTITY_ANALYSIS" | "ALERT_EXPLANATION" | "DETECTION_EXPLANATION" | "ATTACK_PATH_EXPLANATION" | "MITRE_EXPLANATION" | "HYPOTHESIS" | "EVIDENCE_GAP" | "NEXT_QUERY";
+
+export interface CitationRef {
+  evidence_type: EvidenceType;
+  evidence_id: string;
+  citation_tag: string;
+}
+
+export interface Claim {
+  claim_text: string;
+  status: EpistemicStatus;
+  evidence_refs: CitationRef[];
+  rationale?: string | null;
+}
+
+export interface Hypothesis {
+  statement: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  supporting_evidence: CitationRef[];
+  contradicting_evidence: CitationRef[];
+  rationale?: string | null;
+  unknowns: string[];
+}
+
+export interface EvidenceConflict {
+  conflict_id: string;
+  evidence_tag_a: string;
+  evidence_tag_b: string;
+  conflict_type: string;
+  explanation: string;
+}
+
+export interface EvidenceGap {
+  gap_id: string;
+  category: string;
+  description: string;
+  impact: string;
+  suggested_data_source?: string | null;
+}
+
+export interface EvidenceCoverage {
+  required_evidence_types: string[];
+  available_evidence_types: string[];
+  missing_evidence_types: string[];
+  selected_count: number;
+  omitted_count: number;
+  truncation_reasons: string[];
+}
+
+export interface QueryProposal {
+  proposal_id: string;
+  intent: string;
+  target_entity?: string | null;
+  time_range?: string | null;
+  event_types: string[];
+  source?: string | null;
+  filters: Record<string, any>;
+  limit: number;
+  rationale?: string | null;
+  is_executed: boolean;
+}
+
+export interface EvidenceItem {
+  evidence_id: string;
+  evidence_type: EvidenceType;
+  source_id: string;
+  source_table: string;
+  timestamp: string;
+  relevance_score: number;
+  role: EvidenceRole;
+  citation_tag: string;
+  summary: string;
+  metadata: Record<string, any>;
+}
+
+export interface InvestigationEvidenceBundle {
+  investigation_id: number;
+  generated_at: string;
+  items: EvidenceItem[];
+  conflicts: EvidenceConflict[];
+  gaps: EvidenceGap[];
+  coverage: EvidenceCoverage;
+  metadata: Record<string, any>;
+}
+
+export interface AIInvestigationResponse {
+  answer_markdown: string;
+  epistemic_status: EpistemicStatus;
+  intent: InvestigationIntent;
+  claims: Claim[];
+  citations: CitationRef[];
+  timeline_summary: string[];
+  evidence_summary: string[];
+  hypotheses: Hypothesis[];
+  evidence_gaps: EvidenceGap[];
+  conflicts: EvidenceConflict[];
+  suggested_query_proposals: QueryProposal[];
+  evidence_coverage?: EvidenceCoverage | null;
+  suggested_queries: string[];
+  identified_unknowns: string[];
+  unverified_citations: string[];
+  has_unverified_claims: boolean;
+  model_identifier?: string | null;
+  metadata: Record<string, any>;
+}
+
+export interface AIStatusResponse {
+  enabled: boolean;
+  provider_id: string;
+  runtime_healthy: boolean;
+  runtime_version?: string | null;
+  configured_model: string;
+  active_model?: string | null;
+  active_model_available: boolean;
+  installed_models: string[];
+  latency_ms: number;
+  error?: string | null;
+}
+
+export interface QueryPreviewResponse {
+  proposal_id: string;
+  intent: string;
+  rationale?: string | null;
+  executed: boolean;
+  is_preview_only: boolean;
+  matched_count: number;
+  events: Array<Record<string, any>>;
+}
+

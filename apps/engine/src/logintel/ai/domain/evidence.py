@@ -22,7 +22,9 @@ class EvidenceType(str, Enum):
     ENTITY = "entity"
     RELATIONSHIP = "relationship"
     ATTACK_PATH_STEP = "step"
+    TIMELINE_STEP = "step"
     MITRE = "mitre"
+    MITRE_MAPPING = "mitre"
     NOTE = "note"
 
     def __str__(self) -> str:

@@ -37,6 +37,12 @@ import type {
   MitreMapping,
   ThreatHuntFilter,
   ThreatHuntResponse,
+  AIInvestigationResponse,
+  AIStatusResponse,
+  EvidenceCoverage,
+  InvestigationEvidenceBundle,
+  QueryPreviewResponse,
+  QueryProposal,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -517,6 +523,135 @@ export const fetchIncidentNotes = async (id: number): Promise<InvestigationNote[
   return res.items;
 };
 export const huntEvents = executeThreatHunt;
+
+// -------------------------------------------------------------------------
+// M5.3 AI Investigation Intelligence API Client
+// -------------------------------------------------------------------------
+
+export async function getAIStatus(): Promise<AIStatusResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/status`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch AI subsystem status: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function analyzeInvestigationWithAI(
+  incidentId: number,
+  task?: string,
+  sessionId?: string,
+  strictCitations = true,
+): Promise<AIInvestigationResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/analyze`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      task: task || null,
+      session_id: sessionId || null,
+      strict_citations: strictCitations,
+    }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    const message = errorData.detail?.message || errorData.detail || res.statusText;
+    throw new Error(`AI investigation analysis failed: ${message}`);
+  }
+  return res.json();
+}
+
+export async function askInvestigationQuestion(
+  incidentId: number,
+  question: string,
+  sessionId?: string,
+  strictCitations = true,
+): Promise<AIInvestigationResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/question`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      question,
+      session_id: sessionId || null,
+      strict_citations: strictCitations,
+    }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    const message = errorData.detail?.message || errorData.detail || res.statusText;
+    throw new Error(`AI investigation question failed: ${message}`);
+  }
+  return res.json();
+}
+
+export async function getInvestigationEvidenceBundle(
+  incidentId: number,
+  targetEntity?: string,
+  intent?: string,
+): Promise<InvestigationEvidenceBundle> {
+  const token = await getEngineToken();
+  const params = new URLSearchParams();
+  if (targetEntity) params.append("target_entity", targetEntity);
+  if (intent) params.append("intent", intent);
+
+  const url = `${API_BASE}/ai/investigations/${incidentId}/evidence${params.toString() ? `?${params.toString()}` : ""}`;
+  const res = await fetch(url, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence bundle: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getInvestigationEvidenceCoverage(
+  incidentId: number,
+): Promise<EvidenceCoverage> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/coverage`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence coverage: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function previewInvestigationQuery(
+  incidentId: number,
+  proposal: Partial<QueryProposal>,
+): Promise<QueryPreviewResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/query/preview`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(proposal),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    const message = errorData.detail?.message || errorData.detail || res.statusText;
+    throw new Error(`Query preview failed: ${message}`);
+  }
+  return res.json();
+}
 
 
 

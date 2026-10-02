@@ -6,9 +6,11 @@ import {
   GraphIcon,
   MitreIcon,
   NoteIcon,
+  SearchIcon,
   TimelineIcon,
   TrashIcon,
 } from "../components/Icons";
+import { InvestigationIntelligencePanel } from "./InvestigationIntelligencePanel";
 import {
   AlertStatusBadge,
   ConfidenceBadge,
@@ -65,7 +67,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "ai"
   >("graph");
 
   // Attack Path state
@@ -537,6 +539,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("notes")}
                 >
                   <NoteIcon /> Notes & Annotations ({notes.length})
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "ai" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "ai" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "ai" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("ai")}
+                >
+                  <SearchIcon /> AI Intelligence
                 </button>
               </div>
 
@@ -1187,6 +1202,16 @@ export function IncidentWorkspaceModal({
                       )}
                     </div>
                   </div>
+                )}
+
+                {/* 8. AI Investigation Intelligence Tab */}
+                {activeTab === "ai" && (
+                  <InvestigationIntelligencePanel
+                    incidentId={incidentId}
+                    onSelectEventId={onSelectEventId}
+                    onSelectAlertId={onSelectAlertId}
+                    onSelectEntityKey={onSelectEntityKey}
+                  />
                 )}
               </div>
             </>
