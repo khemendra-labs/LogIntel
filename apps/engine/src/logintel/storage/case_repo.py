@@ -204,6 +204,37 @@ class CaseRepository:
                     """
                 )
 
+                # Database-level enforcement that investigation cases cannot be physically deleted (ARCHIVED is retention state)
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_case_delete
+                    BEFORE DELETE ON investigation_cases
+                    BEGIN
+                        SELECT RAISE(ABORT, 'investigation_cases cannot be physically deleted; ARCHIVED is the retention state');
+                    END;
+                    """
+                )
+
+                # Database-level enforcement of immutable historical report versions
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_case_report_update
+                    BEFORE UPDATE ON case_reports
+                    BEGIN
+                        SELECT RAISE(ABORT, 'case_reports are immutable versioned records and cannot be updated');
+                    END;
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_case_report_delete
+                    BEFORE DELETE ON case_reports
+                    BEGIN
+                        SELECT RAISE(ABORT, 'case_reports are immutable versioned records and cannot be deleted');
+                    END;
+                    """
+                )
+
     def create_case(
         self,
         incident_id: int,

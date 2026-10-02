@@ -241,11 +241,16 @@ def test_m55_cor_006_case_audit_log_governed_immutability(isolated_cases_db):
     assert len(audit_after) == len(audit_records)
     assert audit_after[0].action == "CASE_CREATED"
 
-    # 5. Case isolation on audit log
-    case_b = service.create_or_open_case(incident_id=102, title="Case B", actor="analyst-2")
-    audit_b = repo.get_audit_log(case_b.case_id)
-    assert all(a.case_id == case_b.case_id for a in audit_b)
-    assert all(a.case_id != case.case_id for a in audit_b)
+    # 6. C09: Verify physical case deletion is rejected and audit log cannot be cascade-deleted
+    with sqlite3.connect(str(db_path)) as conn:
+        with pytest.raises(sqlite3.DatabaseError) as exc_case_delete:
+            conn.execute("DELETE FROM investigation_cases WHERE case_id = ?", (case.case_id,))
+        assert "cannot be physically deleted" in str(exc_case_delete.value).lower()
+
+    # Verify case and audit trail remain completely present
+    case_recheck = service.get_case(case.case_id)
+    assert case_recheck is not None
+    assert len(repo.get_audit_log(case.case_id)) == len(audit_records)
 
 
 def test_m55_cor_007_cases_db_persistence_and_restart():
@@ -342,6 +347,40 @@ def test_m55_cor_007_cases_db_persistence_and_restart():
         assert reloaded_case.reports[0].version == 1
         assert reloaded_case.reports[0].title == "APT Interim Report v1"
         assert reloaded_case.reports[0].generated_by == ContentOrigin.ANALYST_AUTHORED
+
+        # C10: Direct UPDATE on historical report version must abort due to database trigger
+        with sqlite3.connect(str(db_path)) as conn:
+            with pytest.raises(sqlite3.DatabaseError) as exc_rep_up:
+                conn.execute(
+                    "UPDATE case_reports SET title = 'Tampered' WHERE case_id = ? AND version = 1",
+                    (case_id,),
+                )
+            assert "immutable" in str(exc_rep_up.value).lower()
+
+        # C10: Direct DELETE on historical report version must abort due to database trigger
+        with sqlite3.connect(str(db_path)) as conn:
+            with pytest.raises(sqlite3.DatabaseError) as exc_rep_del:
+                conn.execute(
+                    "DELETE FROM case_reports WHERE case_id = ? AND version = 1",
+                    (case_id,),
+                )
+            assert "immutable" in str(exc_rep_del.value).lower()
+
+        # Revision creates a distinct new version and preserves previous version
+        report2 = service2.draft_or_revise_report(
+            case_id=case_id,
+            title="APT Interim Report v2",
+            analyst_notes="Followup observations...",
+            is_final=False,
+            actor="analyst-p1",
+        )
+        reloaded_case2 = service2.get_case(case_id)
+        assert reloaded_case2 is not None
+        assert len(reloaded_case2.reports) == 2
+        # reports are sorted version DESC
+        versions = {r.version: r.title for r in reloaded_case2.reports}
+        assert 1 in versions and versions[1] == "APT Interim Report v1"
+        assert 2 in versions and versions[2] == "APT Interim Report v2"
 
         # Verify audit trail survived
         reloaded_audit = repo2.get_audit_log(case_id)
