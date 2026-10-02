@@ -241,6 +241,7 @@ export interface EvidenceCoverage {
 
 export interface QueryProposal {
   proposal_id: string;
+  title?: string | null;
   intent: string;
   target_entity?: string | null;
   time_range?: string | null;
@@ -317,5 +318,101 @@ export interface QueryPreviewResponse {
   is_preview_only: boolean;
   matched_count: number;
   events: Array<Record<string, any>>;
+}
+
+export type InvestigationState = "OPEN" | "ACTIVE" | "PAUSED" | "READY_FOR_REVIEW" | "CLOSED";
+
+export interface InvestigationScope {
+  investigation_id: number;
+  time_start?: string | null;
+  time_end?: string | null;
+  subject_type: string;
+  subject_id: string;
+  selected_entity_ids: string[];
+  selected_alert_ids: number[];
+  selected_detection_ids: number[];
+  selected_event_ids: string[];
+}
+
+export type HypothesisStatus = "OPEN" | "SUPPORTED" | "WEAKENED" | "UNRESOLVED" | "REJECTED";
+
+export interface AnalystHypothesis {
+  hypothesis_id: string;
+  investigation_id: number;
+  statement: string;
+  status: HypothesisStatus;
+  supporting_evidence_tags: string[];
+  contradicting_evidence_tags: string[];
+  evidence_gaps: string[];
+  analyst_assessment?: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+}
+
+export interface InvestigationWorkspace {
+  investigation_id: number;
+  incident_id: number;
+  state: InvestigationState;
+  scope: InvestigationScope;
+  hypotheses: AnalystHypothesis[];
+  evidence_candidates: EvidenceItem[];
+  notes: Array<Record<string, any>>;
+  state_history: Array<{
+    timestamp: string;
+    actor: string;
+    previous_state: string;
+    new_state: string;
+    reason?: string | null;
+  }>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvestigationSummary {
+  investigation_id: number;
+  scope: Record<string, any>;
+  subject: Record<string, any>;
+  key_observations: string[];
+  timeline: Array<Record<string, any>>;
+  entities: Array<Record<string, any>>;
+  detections: Array<Record<string, any>>;
+  alerts: Array<Record<string, any>>;
+  attack_path: Record<string, any>;
+  hypotheses: Array<Record<string, any>>;
+  evidence_supporting: Array<Record<string, any>>;
+  evidence_contradicting: Array<Record<string, any>>;
+  evidence_gaps: Array<Record<string, any>>;
+  mitre_context: Array<Record<string, any>>;
+  analyst_notes: Array<Record<string, any>>;
+  ai_assisted_analysis: Record<string, any>;
+  open_questions: string[];
+}
+
+export interface ReportDraft {
+  report_id: string;
+  investigation_id: number;
+  generated_at: string;
+  title: string;
+  executive_summary: string;
+  facts: Array<Record<string, any>>;
+  inferences: Array<Record<string, any>>;
+  hypotheses: Array<Record<string, any>>;
+  unknowns: string[];
+  recommendations: string[];
+  is_draft: boolean;
+}
+
+export interface ClaimTrace {
+  claim_text: string;
+  epistemic_status: string;
+  citation_tag: string;
+  evidence_type: string;
+  evidence_id: string;
+  source_table: string;
+  source_id: string;
+  timestamp?: string | null;
+  summary?: string | null;
+  raw_evidence?: Record<string, any> | null;
 }
 

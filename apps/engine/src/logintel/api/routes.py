@@ -902,6 +902,280 @@ def preview_investigation_query(
     )
 
 
+# =========================================================================
+# Milestone 5.4 — Analyst Investigation Workspace & Explainability APIs
+# =========================================================================
+
+class UpdateInvestigationStateRequest(BaseModel):
+    state: str
+    actor: str = "SecAnalyst-1"
+    reason: Optional[str] = None
+
+
+class CreateHypothesisRequest(BaseModel):
+    statement: str
+    status: Optional[str] = "OPEN"
+    supporting_tags: Optional[List[str]] = None
+    contradicting_tags: Optional[List[str]] = None
+    gaps: Optional[List[str]] = None
+    assessment: Optional[str] = None
+    author: str = "SecAnalyst-1"
+
+
+class UpdateHypothesisRequest(BaseModel):
+    status: Optional[str] = None
+    assessment: Optional[str] = None
+    supporting_tags: Optional[List[str]] = None
+    contradicting_tags: Optional[List[str]] = None
+    gaps: Optional[List[str]] = None
+
+
+class ExplainabilityTraceRequest(BaseModel):
+    claim_text: str
+    citation_tags: List[str]
+
+
+@protected_router.get("/ai/investigations/{incident_id}/workspace")
+def get_investigation_workspace(incident_id: int) -> Dict[str, Any]:
+    """Retrieve full analyst investigation workspace state, scope, hypotheses, and evidence candidates."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    ws = workspace_service.get_or_create_workspace(incident_id)
+    return ws.model_dump(mode="json")
+
+
+@protected_router.patch("/ai/investigations/{incident_id}/state")
+def update_investigation_state(
+    incident_id: int,
+    req: UpdateInvestigationStateRequest,
+) -> Dict[str, Any]:
+    """Explicitly transition investigation state with deterministic validation and audit logging."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.domain.workspace import InvestigationState
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        target_state = InvestigationState(req.state.upper())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid investigation state: '{req.state}'")
+
+    try:
+        ws = workspace_service.update_state(
+            incident_id=incident_id,
+            target_state=target_state,
+            actor=req.actor,
+            reason=req.reason,
+        )
+        return ws.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.put("/ai/investigations/{incident_id}/scope")
+def update_investigation_scope(
+    incident_id: int,
+    scope: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Update explicit reproducible scope bounds for an investigation."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.domain.workspace import InvestigationScope
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        inv_scope = InvestigationScope.model_validate(scope)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid scope format: {str(e)}")
+
+    ws = workspace_service.set_scope(incident_id=incident_id, scope=inv_scope)
+    return ws.model_dump(mode="json")
+
+
+@protected_router.get("/ai/investigations/{incident_id}/hypotheses")
+def list_investigation_hypotheses(incident_id: int) -> Dict[str, Any]:
+    """List all analyst-owned investigative hypotheses registered for an investigation."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    hyps = workspace_service.list_hypotheses(incident_id)
+    return {
+        "investigation_id": incident_id,
+        "items": [h.model_dump(mode="json") for h in hyps],
+        "total": len(hyps),
+    }
+
+
+@protected_router.post("/ai/investigations/{incident_id}/hypotheses")
+def create_investigation_hypothesis(
+    incident_id: int,
+    req: CreateHypothesisRequest,
+) -> Dict[str, Any]:
+    """Create a new analyst hypothesis with associated supporting/contradicting evidence and gaps."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.domain.workspace import HypothesisStatus
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    h_status = HypothesisStatus.OPEN
+    if req.status:
+        try:
+            h_status = HypothesisStatus(req.status.upper())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid hypothesis status: {req.status}")
+
+    hyp = workspace_service.create_hypothesis(
+        incident_id=incident_id,
+        statement=req.statement,
+        status=h_status,
+        supporting_tags=req.supporting_tags,
+        contradicting_tags=req.contradicting_tags,
+        gaps=req.gaps,
+        assessment=req.assessment,
+        created_by=req.author,
+    )
+    return hyp.model_dump(mode="json")
+
+
+@protected_router.patch("/ai/investigations/{incident_id}/hypotheses/{hypothesis_id}")
+def update_investigation_hypothesis(
+    incident_id: int,
+    hypothesis_id: str,
+    req: UpdateHypothesisRequest,
+) -> Dict[str, Any]:
+    """Update hypothesis status, assessment, or evidence linkages."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.domain.workspace import HypothesisStatus
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    h_status = None
+    if req.status:
+        try:
+            h_status = HypothesisStatus(req.status.upper())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid hypothesis status: {req.status}")
+
+    try:
+        updated = workspace_service.update_hypothesis(
+            incident_id=incident_id,
+            hypothesis_id=hypothesis_id,
+            status=h_status,
+            assessment=req.assessment,
+            supporting_tags=req.supporting_tags,
+            contradicting_tags=req.contradicting_tags,
+            gaps=req.gaps,
+        )
+        return updated.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/ai/investigations/{incident_id}/query/execute")
+def execute_approved_investigation_query(
+    incident_id: int,
+    proposal: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Execute analyst-approved threat hunting query deterministically and collect evidence candidates."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.domain.intelligence import QueryProposal
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        query_proposal = QueryProposal.model_validate(proposal)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid query proposal structure: {str(e)}")
+
+    return workspace_service.execute_approved_query(
+        incident_id=incident_id,
+        proposal=query_proposal,
+    )
+
+
+@protected_router.get("/ai/investigations/{incident_id}/summary")
+def get_investigation_summary(incident_id: int) -> Dict[str, Any]:
+    """Retrieve complete deterministic structured investigation summary."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        summary = workspace_service.generate_investigation_summary(incident_id)
+        return summary.model_dump(mode="json")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to assemble summary: {str(e)}")
+
+
+@protected_router.post("/ai/investigations/{incident_id}/report/draft")
+def generate_investigation_report_draft(incident_id: int) -> Dict[str, Any]:
+    """Generate an explainable AI report draft distinguishing facts, inferences, hypotheses, and unknowns."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    try:
+        draft = workspace_service.generate_report_draft(incident_id)
+        return draft.model_dump(mode="json")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report draft: {str(e)}")
+
+
+@protected_router.post("/ai/investigations/{incident_id}/explainability")
+def trace_claim_explainability(
+    incident_id: int,
+    req: ExplainabilityTraceRequest,
+) -> Dict[str, Any]:
+    """Trace cited evidence tags to their authoritative database origin."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.workspace_service import workspace_service
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    traces = workspace_service.trace_claim_explainability(
+        incident_id=incident_id,
+        claim_text=req.claim_text,
+        citation_tags=req.citation_tags,
+    )
+    return {
+        "incident_id": incident_id,
+        "claim_text": req.claim_text,
+        "traces": [t.model_dump(mode="json") for t in traces],
+    }
+
+
 router.include_router(protected_router)
 
 

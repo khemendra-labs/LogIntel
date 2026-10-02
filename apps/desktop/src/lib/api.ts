@@ -43,6 +43,12 @@ import type {
   InvestigationEvidenceBundle,
   QueryPreviewResponse,
   QueryProposal,
+  InvestigationWorkspace,
+  InvestigationScope,
+  AnalystHypothesis,
+  InvestigationSummary,
+  ReportDraft,
+  ClaimTrace,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -652,6 +658,206 @@ export async function previewInvestigationQuery(
   }
   return res.json();
 }
+
+export async function getInvestigationWorkspace(
+  incidentId: number
+): Promise<InvestigationWorkspace> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/workspace`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch investigation workspace: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateInvestigationState(
+  incidentId: number,
+  state: string,
+  actor: string = "SecAnalyst-1",
+  reason?: string
+): Promise<InvestigationWorkspace> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/state`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ state, actor, reason }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    const msg = errorData.detail || res.statusText;
+    throw new Error(`Failed to update investigation state: ${msg}`);
+  }
+  return res.json();
+}
+
+export async function updateInvestigationScope(
+  incidentId: number,
+  scope: InvestigationScope
+): Promise<InvestigationWorkspace> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/scope`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(scope),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update investigation scope: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchInvestigationHypotheses(
+  incidentId: number
+): Promise<{ investigation_id: number; items: AnalystHypothesis[]; total: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/hypotheses`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch hypotheses: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createInvestigationHypothesis(
+  incidentId: number,
+  req: {
+    statement: string;
+    status?: string;
+    supporting_tags?: string[];
+    contradicting_tags?: string[];
+    gaps?: string[];
+    assessment?: string;
+    author?: string;
+  }
+): Promise<AnalystHypothesis> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/hypotheses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(`Failed to create hypothesis: ${errorData.detail || res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateInvestigationHypothesis(
+  incidentId: number,
+  hypothesisId: string,
+  req: {
+    status?: string;
+    assessment?: string;
+    supporting_tags?: string[];
+    contradicting_tags?: string[];
+    gaps?: string[];
+  }
+): Promise<AnalystHypothesis> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/hypotheses/${hypothesisId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(`Failed to update hypothesis: ${errorData.detail || res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function executeApprovedInvestigationQuery(
+  incidentId: number,
+  proposal: Partial<QueryProposal>
+): Promise<any> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/query/execute`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(proposal),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(`Query execution failed: ${errorData.detail || res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchInvestigationSummary(
+  incidentId: number
+): Promise<InvestigationSummary> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/summary`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch investigation summary: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function generateInvestigationReportDraft(
+  incidentId: number
+): Promise<ReportDraft> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/report/draft`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to generate report draft: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function traceClaimExplainability(
+  incidentId: number,
+  claimText: string,
+  citationTags: string[]
+): Promise<{ incident_id: number; claim_text: string; traces: ClaimTrace[] }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/ai/investigations/${incidentId}/explainability`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ claim_text: claimText, citation_tags: citationTags }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to trace claim explainability: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 
 
 
