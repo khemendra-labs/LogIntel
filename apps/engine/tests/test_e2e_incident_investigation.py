@@ -30,10 +30,29 @@ from logintel.storage.incidents_repo import incidents_repo
 
 
 @pytest.fixture(scope="module")
-def initialized_db():
+def initialized_db(tmp_path_factory):
+    temp_dir = tmp_path_factory.mktemp("e2e_db")
+    temp_db_path = temp_dir / "e2e_test.db"
+    orig_db_path = db.db_path
+    db.close()
+    db.db_path = temp_db_path
+    db._initialized = False
     db.initialize()
     alerts_repo.sync_rules(load_default_rules())
+
+    from logintel.ingestion import ingestion_engine
+    orig_start = ingestion_engine.start
+    orig_stop = ingestion_engine.stop
+    ingestion_engine.start = lambda: None
+    ingestion_engine.stop = lambda: None
+
     yield db
+
+    db.close()
+    db.db_path = orig_db_path
+    db._initialized = False
+    ingestion_engine.start = orig_start
+    ingestion_engine.stop = orig_stop
 
 
 @pytest.fixture(scope="module")

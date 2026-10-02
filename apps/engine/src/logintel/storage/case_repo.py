@@ -184,6 +184,26 @@ class CaseRepository:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_reports_case ON case_reports(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_audit_case ON case_audit_log(case_id);")
 
+                # Database-level enforcement of append-only audit log
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_case_audit_update
+                    BEFORE UPDATE ON case_audit_log
+                    BEGIN
+                        SELECT RAISE(ABORT, 'case_audit_log is append-only and cannot be modified');
+                    END;
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_case_audit_delete
+                    BEFORE DELETE ON case_audit_log
+                    BEGIN
+                        SELECT RAISE(ABORT, 'case_audit_log is append-only and records cannot be deleted');
+                    END;
+                    """
+                )
+
     def create_case(
         self,
         incident_id: int,

@@ -14,12 +14,31 @@ from logintel.storage.alerts_repo import alerts_repo
 
 
 @pytest.fixture(scope="module")
-def client():
-    """Test client with database and rules initialized."""
+def client(tmp_path_factory):
+    """Test client with isolated temporary database and rules initialized."""
+    temp_dir = tmp_path_factory.mktemp("detection_api_db")
+    temp_db_path = temp_dir / "detection_api_test.db"
+    orig_db_path = db.db_path
+    db.close()
+    db.db_path = temp_db_path
+    db._initialized = False
     db.initialize()
     alerts_repo.sync_rules(load_default_rules())
+
+    from logintel.ingestion import ingestion_engine
+    orig_start = ingestion_engine.start
+    orig_stop = ingestion_engine.stop
+    ingestion_engine.start = lambda: None
+    ingestion_engine.stop = lambda: None
+
     with TestClient(app) as test_client:
         yield test_client
+
+    db.close()
+    db.db_path = orig_db_path
+    db._initialized = False
+    ingestion_engine.start = orig_start
+    ingestion_engine.stop = orig_stop
 
 
 @pytest.fixture(scope="module")
