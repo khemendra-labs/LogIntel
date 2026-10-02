@@ -36,6 +36,7 @@ from logintel.ai.case_service import CaseService
 from logintel.ai.domain.case import ContentOrigin, ResolutionStatus
 from logintel.ai.domain.investigation_intel import (
     EpistemicStatus,
+    GovernedThreatHuntProposal,
     QueryResultStatus,
     TimelineSourceType,
 )
@@ -269,10 +270,10 @@ def test_m56_sec_008_unapproved_query_execution_rejection(m56_sec_setup):
 
 
 def test_m56_sec_009_query_parameter_injection_rejection(m56_sec_setup):
-    """M56-SEC-009: SQL injection payloads in parameters must be caught and rejected."""
+    """M56-SEC-009: SQL injection payloads in parameters must be caught and parameterized (C03)."""
     _, _, case_svc, c1_id, _ = m56_sec_setup
 
-    # Parameter with SQL escape injection
+    # Parameter with SQL escape injection caught by defense-in-depth pattern rejection
     injected_param = "alice' OR '1'='1"
     proposal = case_svc.create_hunt_proposal(
         case_id=c1_id,
@@ -290,6 +291,24 @@ def test_m56_sec_009_query_parameter_injection_rejection(m56_sec_setup):
     )
     assert execution.result_status == QueryResultStatus.INVALID
     assert execution.result_count == 0
+
+    # C03: Parameterized binding is the primary security boundary.
+    # Even if an unflagged string with SQL quotes/delimiters enters the query,
+    # the engine uses parameterized placeholders (?) so it is treated purely as a data literal.
+    safe_prop = GovernedThreatHuntProposal(
+        proposal_id="test-param-binding",
+        case_id=c1_id,
+        template_id="search_auth_failures",
+        parameters={"username": "user'; SELECT 1; --"},
+        rationale="Parameterized binding test",
+        validation_status="VALID",
+        preview_query_description="Test",
+        suggested_by="analyst-1",
+    )
+    # Execution executes safely with parameter binding without executing arbitrary SQL
+    safe_exec = case_svc.execute_hunt_query(safe_prop, approved_by="analyst-1")
+    assert safe_exec.result_status == QueryResultStatus.NO_MATCH
+    assert safe_exec.result_count == 0
 
 
 def test_m56_sec_010_prompt_injection_containment(m56_sec_setup):
@@ -453,11 +472,17 @@ def test_m56_sec_019_attack_path_observed_inferred_boundary(m56_sec_setup):
 
 
 def test_m56_sec_020_mitre_mapping_provenance(m56_sec_setup):
-    """M56-SEC-020: Every MITRE technique in the dossier must be traceable to detections or attack path."""
+    """M56-SEC-020: Every MITRE technique in the dossier must be traceable to detections or attack path (C06)."""
     _, _, case_svc, c1_id, _ = m56_sec_setup
 
     dossier = case_svc.get_case_intelligence_dossier(c1_id)
     for mapping in dossier.mitre_mappings:
-        # Must have technique_id and name
+        # Must have valid technique_id and name
         assert "technique_id" in mapping
         assert mapping["technique_id"].startswith("T")
+        assert "technique_name" in mapping and mapping["technique_name"]
+        # Provenance traceability: Must trace back to detection rule ID or supporting alert/event IDs
+        has_rule = bool(mapping.get("rule_id"))
+        has_alerts = bool(mapping.get("supporting_alert_ids"))
+        has_events = bool(mapping.get("supporting_event_ids"))
+        assert has_rule or has_alerts or has_events, f"Untraceable MITRE mapping: {mapping}"

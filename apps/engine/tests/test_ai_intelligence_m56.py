@@ -145,7 +145,7 @@ def test_m56_intel_002_multi_attribute_correlation(m56_setup):
 
 
 def test_m56_intel_003_temporal_window_analysis(m56_setup):
-    """M56-INTEL-003: BEFORE, DURING, and AFTER time-window partition with anomaly tracking."""
+    """M56-INTEL-003: BEFORE, DURING, and AFTER time-window partition with anomaly tracking (C04)."""
     case_svc, case_id, _ = m56_setup
     analysis = case_svc.analyze_temporal_window(
         case_id=case_id,
@@ -160,6 +160,57 @@ def test_m56_intel_003_temporal_window_analysis(m56_setup):
     assert len(analysis.before_items) >= 2  # events at 12:00:00, 12:00:15, 12:00:30 precede 12:00:35
     assert isinstance(analysis.temporal_anomalies, list)
     assert isinstance(analysis.state_contradictions, list)
+
+    # C04-1: Normal lifecycle sequence (PROCESS_STARTED -> PROCESS_EXITED -> PROCESS_STARTED)
+    # Must NOT produce contradiction or anomaly (temporal ordering != logical contradiction)
+    normal_seq_items = [
+        {"id": "ev-p1", "timestamp": "2026-10-02T12:00:00Z", "action": "PROCESS_STARTED", "username": "deployer", "host": "srv-app-01"},
+        {"id": "ev-p2", "timestamp": "2026-10-02T12:00:15Z", "action": "PROCESS_EXITED", "username": "deployer", "host": "srv-app-01"},
+        {"id": "ev-p3", "timestamp": "2026-10-02T12:00:30Z", "action": "PROCESS_STARTED", "username": "deployer", "host": "srv-app-01"},
+    ]
+    norm_analysis = case_svc.intelligence.temporal_engine.analyze_temporal_window(
+        case_id=case_id,
+        anchor_type="event",
+        anchor_id="ev-p2",
+        anchor_timestamp="2026-10-02T12:00:15Z",
+        items=normal_seq_items,
+        window_seconds=60,
+    )
+    assert len(norm_analysis.temporal_anomalies) == 0
+    assert len(norm_analysis.state_contradictions) == 0
+
+    # C04-2: Temporal Anomaly (event in the future relative to system clock)
+    future_items = [
+        {"id": "ev-fut", "timestamp": "2099-01-01T00:00:00Z", "action": "login", "username": "deployer", "host": "srv-app-01"},
+    ]
+    fut_analysis = case_svc.intelligence.temporal_engine.analyze_temporal_window(
+        case_id=case_id,
+        anchor_type="event",
+        anchor_id="ev-p2",
+        anchor_timestamp="2026-10-02T12:00:15Z",
+        items=future_items,
+        window_seconds=60,
+    )
+    assert len(fut_analysis.temporal_anomalies) >= 1
+    assert any("TEMPORAL_ANOMALY" in a for a in fut_analysis.temporal_anomalies)
+    assert len(fut_analysis.state_contradictions) == 0
+
+    # C04-3: State Contradiction (same user simultaneously operating on two distinct hosts within 2 seconds)
+    contra_items = [
+        {"id": "ev-h1", "timestamp": "2026-10-02T12:00:00Z", "username": "deployer", "host": "srv-app-01"},
+        {"id": "ev-h2", "timestamp": "2026-10-02T12:00:02Z", "username": "deployer", "host": "srv-db-99"},
+    ]
+    contra_analysis = case_svc.intelligence.temporal_engine.analyze_temporal_window(
+        case_id=case_id,
+        anchor_type="event",
+        anchor_id="ev-h1",
+        anchor_timestamp="2026-10-02T12:00:00Z",
+        items=contra_items,
+        window_seconds=60,
+    )
+    assert len(contra_analysis.state_contradictions) >= 1
+    assert any("STATE_CONTRADICTION" in c for c in contra_analysis.state_contradictions)
+    assert len(contra_analysis.temporal_anomalies) == 0
 
 
 def test_m56_intel_004_evidence_gap_detection(m56_setup):
@@ -180,10 +231,10 @@ def test_m56_intel_004_evidence_gap_detection(m56_setup):
 
 
 def test_m56_intel_005_governed_threat_hunting_workflow(m56_setup):
-    """M56-INTEL-005: Governed threat hunting proposal, validation, execution, and candidate findings."""
+    """M56-INTEL-005: Governed threat hunting proposal, validation, execution, and candidate findings (C05)."""
     case_svc, case_id, _ = m56_setup
 
-    # 1. Valid proposal
+    # 1. MATCHED: Valid proposal matching events
     proposal = case_svc.create_hunt_proposal(
         case_id=case_id,
         template_id="search_auth_failures",
@@ -193,14 +244,53 @@ def test_m56_intel_005_governed_threat_hunting_workflow(m56_setup):
     assert proposal.validation_status == "VALID"
     assert len(proposal.validation_errors) == 0
 
-    # 2. Approved execution
     execution = case_svc.execute_hunt_query(proposal, approved_by="lead-analyst")
-    assert execution.result_status in (QueryResultStatus.MATCHED, QueryResultStatus.NO_MATCH)
+    assert execution.result_status == QueryResultStatus.MATCHED
     assert execution.result_count >= 1
     assert execution.approved_by == "lead-analyst"
     assert len(execution.candidate_findings) >= 1
 
-    # 3. Logged to persistent case query history
+    # 2. NO_MATCH: Valid proposal against existing telemetry finding zero matching records
+    # C05: NO_MATCH != UNAVAILABLE and NO_MATCH != proof that event never occurred
+    proposal_nomatch = case_svc.create_hunt_proposal(
+        case_id=case_id,
+        template_id="search_auth_failures",
+        parameters={"host": "srv-app-01", "username": "nonexistent_ghost_user_xyz", "limit": 20},
+        rationale="Hunt for nonexistent user",
+    )
+    assert proposal_nomatch.validation_status == "VALID"
+    exec_nomatch = case_svc.execute_hunt_query(proposal_nomatch, approved_by="lead-analyst")
+    assert exec_nomatch.result_status == QueryResultStatus.NO_MATCH
+    assert exec_nomatch.result_status != QueryResultStatus.UNAVAILABLE
+    assert exec_nomatch.result_count == 0
+
+    # 3. PARTIAL: Result boundary reached (limit=1 with multiple candidates)
+    proposal_partial = case_svc.create_hunt_proposal(
+        case_id=case_id,
+        template_id="search_auth_failures",
+        parameters={"host": "srv-app-01", "username": "deployer", "limit": 1},
+        rationale="Hunt with limit boundary reached",
+    )
+    exec_partial = case_svc.execute_hunt_query(proposal_partial, approved_by="lead-analyst")
+    assert exec_partial.result_status == QueryResultStatus.PARTIAL
+    assert exec_partial.result_count == 1
+
+    # 4. UNAVAILABLE: Unapproved execution attempt
+    exec_unavail = case_svc.execute_hunt_query(proposal, approved_by="")
+    assert exec_unavail.result_status == QueryResultStatus.UNAVAILABLE
+
+    # 5. INVALID: Validation failure
+    proposal_invalid = case_svc.create_hunt_proposal(
+        case_id=case_id,
+        template_id="search_auth_failures",
+        parameters={"username": "alice' OR 1=1;--"},
+        rationale="Adversarial parameter",
+    )
+    assert proposal_invalid.validation_status == "INVALID"
+    exec_invalid = case_svc.execute_hunt_query(proposal_invalid, approved_by="lead-analyst")
+    assert exec_invalid.result_status == QueryResultStatus.INVALID
+
+    # 6. Logged to persistent case query history
     reloaded_case = case_svc.get_case(case_id)
     assert len(reloaded_case.query_history) >= 1
     last_query = reloaded_case.query_history[-1]
