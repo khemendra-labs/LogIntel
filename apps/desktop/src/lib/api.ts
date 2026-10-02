@@ -49,6 +49,13 @@ import type {
   InvestigationSummary,
   ReportDraft,
   ClaimTrace,
+  InvestigationCase,
+  CaseStatus,
+  CaseHypothesis,
+  CaseEvidenceReference,
+  CaseQueryRecord,
+  CaseReportVersion,
+  CaseAuditRecord,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -857,6 +864,336 @@ export async function traceClaimExplainability(
   }
   return res.json();
 }
+
+// -------------------------------------------------------------
+// M5.5 Investigation Case Continuity & Handoff API Client
+// -------------------------------------------------------------
+
+export async function fetchCases(
+  status?: string,
+  limit: number = 50
+): Promise<InvestigationCase[]> {
+  const token = await getEngineToken();
+  const params = new URLSearchParams();
+  if (status) params.append("status", status);
+  if (limit) params.append("limit", limit.toString());
+
+  const res = await fetch(`${API_BASE}/cases?${params.toString()}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch investigation cases: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createOrOpenCase(
+  incidentId: number,
+  title?: string,
+  description?: string
+): Promise<InvestigationCase> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      incident_id: incidentId,
+      title,
+      description,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to open/create investigation case: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCase(caseId: number): Promise<InvestigationCase> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case ${caseId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseStatus(
+  caseId: number,
+  targetStatus: CaseStatus,
+  reason?: string
+): Promise<InvestigationCase> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/state`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      target_status: targetStatus,
+      reason,
+    }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(`Failed to update case state: ${errorData.detail || res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseScope(
+  caseId: number,
+  scope: InvestigationScope
+): Promise<InvestigationCase> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/scope`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(scope),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update case scope: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function handoffCase(
+  caseId: number,
+  newOwner: string,
+  handoffNotes?: string
+): Promise<InvestigationCase> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/handoff`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      new_owner: newOwner,
+      handoff_notes: handoffNotes,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to handoff case: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseHypotheses(caseId: number): Promise<CaseHypothesis[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch hypotheses: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createCaseHypothesis(
+  caseId: number,
+  statement: string,
+  tags?: string[]
+): Promise<CaseHypothesis> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      statement,
+      supporting_evidence_tags: tags || [],
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create hypothesis: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseHypothesis(
+  caseId: number,
+  hypothesisId: string,
+  updates: Partial<CaseHypothesis>
+): Promise<CaseHypothesis> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/${hypothesisId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update hypothesis: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function addCaseEvidenceReference(
+  caseId: number,
+  ref: {
+    source_type: string;
+    source_id: string;
+    role?: string;
+    epistemic_status?: string;
+    citation_tag: string;
+    analyst_annotation?: string;
+  }
+): Promise<CaseEvidenceReference> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(ref),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to add evidence reference: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function removeCaseEvidenceReference(
+  caseId: number,
+  referenceId: string
+): Promise<{ status: string; reference_id: string }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/${referenceId}`, {
+    method: "DELETE",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to remove evidence reference: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function executeCaseApprovedQuery(
+  caseId: number,
+  proposal: QueryProposal
+): Promise<any> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/queries/execute`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(proposal),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(`Case query execution failed: ${errorData.detail || res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function generateCaseReportDraft(
+  caseId: number,
+  title?: string
+): Promise<CaseReportVersion> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to generate case report draft: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseReports(caseId: number): Promise<CaseReportVersion[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case reports: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function compareCaseReportVersions(
+  caseId: number,
+  v1: number,
+  v2: number
+): Promise<{
+  case_id: number;
+  version_a: number;
+  version_b: number;
+  summary_diff: string[];
+  facts_added: string[];
+  facts_removed: string[];
+  recommendations_diff: string[];
+}> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/compare?v1=${v1}&v2=${v2}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to compare report versions: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseAuditLog(caseId: number): Promise<CaseAuditRecord[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/audit`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case audit log: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseAIContext(caseId: number): Promise<any> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/ai-context`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch reconstructed AI context: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 
 
 

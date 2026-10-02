@@ -705,6 +705,10 @@ def test_investigation_rest_apis(seeded_db, monkeypatch):
     monkeypatch.setattr(incidents_repo, "db", seeded_db)
     monkeypatch.setattr(alerts_repo, "db", seeded_db)
 
+    from logintel.ingestion import ingestion_engine
+    monkeypatch.setattr(ingestion_engine, "start", lambda: None)
+    monkeypatch.setattr(ingestion_engine, "stop", lambda: None)
+
     app = create_app()
     client = TestClient(app)
 

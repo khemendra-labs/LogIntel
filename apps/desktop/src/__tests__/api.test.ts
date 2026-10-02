@@ -844,6 +844,148 @@ describe("Frontend API Client and Authentication", () => {
     expect(result.filename).toBe("investigation_incident_11.md");
     expect(result.content).toBe("# Investigation Dossier");
   });
+  it("createOrOpenCase sends POST to /cases with incident_id and title", async () => {
+    setEngineToken("m55_case_token");
+    const mockCase = {
+      case_id: 301,
+      incident_id: 301,
+      title: "Case 301",
+      status: "OPEN",
+      version: 1,
+      owner: "SecAnalyst-1",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockCase,
+    } as Response);
+
+    const { createOrOpenCase } = await import("../lib/api");
+    const result = await createOrOpenCase(301, "Case 301");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer m55_case_token" }),
+        body: JSON.stringify({ incident_id: 301, title: "Case 301" }),
+      })
+    );
+    expect(result.case_id).toBe(301);
+    expect(result.status).toBe("OPEN");
+  });
+
+  it("updateCaseStatus sends state transition request", async () => {
+    setEngineToken("m55_state_token");
+    const mockUpdatedCase = {
+      case_id: 301,
+      incident_id: 301,
+      status: "ACTIVE",
+      version: 2,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockUpdatedCase,
+    } as Response);
+
+    const { updateCaseStatus } = await import("../lib/api");
+    const result = await updateCaseStatus(301, "ACTIVE", "Starting investigation");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases/301/state",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer m55_state_token" }),
+        body: JSON.stringify({ target_status: "ACTIVE", reason: "Starting investigation" }),
+      })
+    );
+    expect(result.status).toBe("ACTIVE");
+    expect(result.version).toBe(2);
+  });
+
+  it("handoffCase transfers ownership and records handoff notes", async () => {
+    setEngineToken("m55_handoff_token");
+    const mockHandoff = {
+      case_id: 301,
+      owner: "SecAnalyst-2",
+      version: 3,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockHandoff,
+    } as Response);
+
+    const { handoffCase } = await import("../lib/api");
+    const result = await handoffCase(301, "SecAnalyst-2", "Shift handoff");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases/301/handoff",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer m55_handoff_token" }),
+        body: JSON.stringify({ new_owner: "SecAnalyst-2", handoff_notes: "Shift handoff" }),
+      })
+    );
+    expect(result.owner).toBe("SecAnalyst-2");
+  });
+
+  it("compareCaseReportVersions queries diff endpoint with version parameters", async () => {
+    setEngineToken("m55_diff_token");
+    const mockDiff = {
+      case_id: 301,
+      version_a: 1,
+      version_b: 2,
+      summary_diff: ["+ Added conclusion"],
+      facts_added: ["[event:101]"],
+      facts_removed: [],
+      recommendations_diff: [],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockDiff,
+    } as Response);
+
+    const { compareCaseReportVersions } = await import("../lib/api");
+    const result = await compareCaseReportVersions(301, 1, 2);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases/301/reports/compare?v1=1&v2=2",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer m55_diff_token" }),
+      })
+    );
+    expect(result.version_a).toBe(1);
+    expect(result.version_b).toBe(2);
+    expect(result.facts_added).toContain("[event:101]");
+  });
+
+  it("fetchCaseAuditLog retrieves immutable audit trail records", async () => {
+    setEngineToken("m55_audit_token");
+    const mockAudit = [
+      { audit_id: 1, case_id: 301, timestamp: "2026-10-02T10:00:00Z", actor: "analyst", action: "CASE_CREATED" },
+    ];
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockAudit,
+    } as Response);
+
+    const { fetchCaseAuditLog } = await import("../lib/api");
+    const result = await fetchCaseAuditLog(301);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases/301/audit",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer m55_audit_token" }),
+      })
+    );
+    expect(result.length).toBe(1);
+    expect(result[0].action).toBe("CASE_CREATED");
+  });
 });
+
 
 

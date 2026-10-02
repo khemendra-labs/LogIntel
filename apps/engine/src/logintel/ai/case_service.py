@@ -1,0 +1,580 @@
+"""Case Service orchestrating persistent analyst investigations, versioning, handoff, and explainability.
+
+Maintains strict separation between protected authoritative forensic SQLite tables (logintel.db)
+and persistent analyst-controlled investigation cases (cases.db).
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+from typing import Any, Dict, List, Optional
+import uuid
+
+from logintel.ai.domain.bundle import EvidenceItem, EvidenceRole
+from logintel.ai.domain.case import (
+    AIReconstructedContext,
+    CaseAuditRecord,
+    CaseEvidenceReference,
+    CaseHypothesis,
+    CaseQueryRecord,
+    CaseReportVersion,
+    CaseStatus,
+    ContentOrigin,
+    InvestigationCase,
+    ResolutionStatus,
+)
+from logintel.ai.domain.evidence import EvidenceType
+from logintel.ai.domain.intelligence import QueryProposal
+from logintel.ai.domain.workspace import HypothesisStatus, InvestigationScope
+from logintel.ai.evidence.retriever import EvidenceRetriever
+from logintel.logging import get_logger
+from logintel.storage.case_repo import CaseRepository
+from logintel.storage.db import Database, db as default_forensic_db
+from logintel.storage.incidents_repo import IncidentsRepository
+
+logger = get_logger("ai.case_service")
+
+
+class CaseService:
+    """Service providing persistent investigation case lifecycle, handoff, report versioning, and AI continuity."""
+
+    def __init__(
+        self,
+        case_repository: Optional[CaseRepository] = None,
+        forensic_database: Optional[Database] = None,
+        incidents_repository: Optional[IncidentsRepository] = None,
+    ) -> None:
+        self.forensic_db = forensic_database or default_forensic_db
+        self.case_repo = case_repository or CaseRepository(forensic_db=self.forensic_db)
+        self.incidents_repo = incidents_repository or IncidentsRepository(self.forensic_db)
+        self.retriever = EvidenceRetriever(database=self.forensic_db)
+
+    def create_or_open_case(
+        self,
+        incident_id: int,
+        title: Optional[str] = None,
+        description: str = "",
+        actor: str = "SecAnalyst-1",
+    ) -> InvestigationCase:
+        """Retrieve existing persistent case for incident or create a new persistent case."""
+        existing = self.case_repo.get_case_by_incident(incident_id)
+        if existing:
+            return existing
+
+        inc = self.incidents_repo.get_incident(incident_id)
+        case_title = title or (f"Investigation: {inc.title}" if inc else f"Investigation INC-{incident_id}")
+        case_desc = description or (inc.summary if inc else "")
+
+        time_start_str = inc.first_seen.isoformat() if inc and hasattr(inc.first_seen, "isoformat") else str(inc.first_seen) if inc and inc.first_seen else None
+        time_end_str = inc.last_seen.isoformat() if inc and hasattr(inc.last_seen, "isoformat") else str(inc.last_seen) if inc and inc.last_seen else None
+
+        scope = InvestigationScope(
+            investigation_id=incident_id,
+            time_start=time_start_str,
+            time_end=time_end_str,
+            subject_type="incident",
+            subject_id=str(incident_id),
+            selected_entity_ids=[inc.primary_host] if inc and inc.primary_host else [],
+        )
+
+        case = self.case_repo.create_case(
+            incident_id=incident_id,
+            title=case_title,
+            description=case_desc,
+            created_by=actor,
+            scope=scope,
+        )
+
+        # Pre-seed initial authoritative evidence references from incident detections/alerts
+        bundle = self.retriever.retrieve_bundle(incident_id=incident_id)
+        for item in bundle.items[:10]:
+            self.case_repo.add_evidence_reference(
+                case_id=case.case_id,
+                source_type=item.source_table.rstrip("s"),  # event, alert, detection
+                source_id=item.source_id,
+                role=item.role.value if hasattr(item.role, "value") else str(item.role),
+                epistemic_status="OBSERVED",
+                citation_tag=item.citation_tag,
+                analyst_annotation=f"Authoritative forensic evidence from {item.source_table}",
+                actor=actor,
+                bump_version=False,
+            )
+
+        return self.case_repo.get_case(case.case_id)  # type: ignore
+
+    def get_case(self, case_id: int) -> Optional[InvestigationCase]:
+        """Fetch investigation case with dynamic evidence resolution."""
+        return self.case_repo.get_case(case_id, resolve_evidence=True)
+
+    def list_cases(
+        self,
+        status: Optional[CaseStatus] = None,
+        owner: Optional[str] = None,
+    ) -> List[InvestigationCase]:
+        """List persistent investigation cases."""
+        return self.case_repo.list_cases(status=status, owner=owner)
+
+    def transition_case_state(
+        self,
+        case_id: int,
+        target_status: CaseStatus,
+        actor: str = "SecAnalyst-1",
+        reason: Optional[str] = None,
+    ) -> InvestigationCase:
+        """Execute validated state transition with audit trail."""
+        return self.case_repo.update_case_status(
+            case_id=case_id,
+            target_status=target_status,
+            actor=actor,
+            reason=reason,
+        )
+
+    def update_scope(
+        self,
+        case_id: int,
+        scope: InvestigationScope,
+        actor: str = "SecAnalyst-1",
+    ) -> InvestigationCase:
+        """Update explicit scope boundaries."""
+        return self.case_repo.update_case_scope(
+            case_id=case_id,
+            scope=scope,
+            actor=actor,
+        )
+
+    def associate_evidence(
+        self,
+        case_id: int,
+        source_type: str,
+        source_id: str,
+        role: str = "SUPPORTING",
+        epistemic_status: str = "OBSERVED",
+        citation_tag: Optional[str] = None,
+        annotation: Optional[str] = None,
+        actor: str = "SecAnalyst-1",
+    ) -> CaseEvidenceReference:
+        """Associate an authoritative evidence reference."""
+        tag = citation_tag or f"[{source_type}:{source_id}]"
+        return self.case_repo.add_evidence_reference(
+            case_id=case_id,
+            source_type=source_type,
+            source_id=source_id,
+            role=role,
+            epistemic_status=epistemic_status,
+            citation_tag=tag,
+            analyst_annotation=annotation,
+            actor=actor,
+        )
+
+    def disassociate_evidence(
+        self,
+        case_id: int,
+        reference_id: str,
+        actor: str = "SecAnalyst-1",
+    ) -> bool:
+        """Disassociate an evidence reference."""
+        return self.case_repo.remove_evidence_reference(
+            case_id=case_id,
+            reference_id=reference_id,
+            actor=actor,
+        )
+
+    def create_hypothesis(
+        self,
+        case_id: int,
+        statement: str,
+        status: HypothesisStatus = HypothesisStatus.OPEN,
+        supporting_tags: Optional[List[str]] = None,
+        contradicting_tags: Optional[List[str]] = None,
+        gaps: Optional[List[str]] = None,
+        assessment: Optional[str] = None,
+        actor: str = "SecAnalyst-1",
+    ) -> CaseHypothesis:
+        """Create and persist an analyst-owned hypothesis."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        hyp_id = f"hyp-{case_id}-{len(case.hypotheses) + 1}"
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        hypothesis = CaseHypothesis(
+            hypothesis_id=hyp_id,
+            case_id=case_id,
+            statement=statement.strip(),
+            status=status,
+            supporting_evidence_tags=supporting_tags or [],
+            contradicting_evidence_tags=contradicting_tags or [],
+            evidence_gaps=gaps or [],
+            analyst_assessment=assessment,
+            created_at=now_iso,
+            updated_at=now_iso,
+            created_by=actor,
+            version=1,
+        )
+        return self.case_repo.upsert_hypothesis(case_id, hypothesis, actor=actor)
+
+    def update_hypothesis(
+        self,
+        case_id: int,
+        hypothesis_id: str,
+        statement: Optional[str] = None,
+        status: Optional[HypothesisStatus] = None,
+        supporting_tags: Optional[List[str]] = None,
+        contradicting_tags: Optional[List[str]] = None,
+        gaps: Optional[List[str]] = None,
+        assessment: Optional[str] = None,
+        actor: str = "SecAnalyst-1",
+    ) -> CaseHypothesis:
+        """Update an existing persistent hypothesis."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        target = next((h for h in case.hypotheses if h.hypothesis_id == hypothesis_id), None)
+        if not target:
+            raise ValueError(f"Hypothesis {hypothesis_id} not found in case {case_id}")
+
+        updated = target.model_copy()
+        if statement is not None:
+            updated.statement = statement.strip()
+        if status is not None:
+            updated.status = status
+        if supporting_tags is not None:
+            updated.supporting_evidence_tags = supporting_tags
+        if contradicting_tags is not None:
+            updated.contradicting_evidence_tags = contradicting_tags
+        if gaps is not None:
+            updated.evidence_gaps = gaps
+        if assessment is not None:
+            updated.analyst_assessment = assessment
+
+        return self.case_repo.upsert_hypothesis(case_id, updated, actor=actor)
+
+    def execute_approved_query(
+        self,
+        case_id: int,
+        proposal: QueryProposal,
+        actor: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Execute analyst-approved threat hunting query and persist to case query history."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        conditions: List[str] = []
+        params: List[Any] = []
+
+        if proposal.host:
+            conditions.append("host = ?")
+            params.append(proposal.host)
+        if proposal.username:
+            conditions.append("username = ?")
+            params.append(proposal.username)
+        if proposal.src_ip:
+            conditions.append("src_ip = ?")
+            params.append(proposal.src_ip)
+        if proposal.dst_ip:
+            conditions.append("dst_ip = ?")
+            params.append(proposal.dst_ip)
+        if proposal.process_name:
+            conditions.append("process_name = ?")
+            params.append(proposal.process_name)
+        if proposal.event_types:
+            ph = ",".join("?" for _ in proposal.event_types)
+            conditions.append(f"event_type IN ({ph})")
+            params.extend(proposal.event_types)
+        if proposal.search_text:
+            conditions.append("(summary LIKE ? OR raw_message LIKE ?)")
+            params.append(f"%{proposal.search_text}%")
+            params.append(f"%{proposal.search_text}%")
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        sql = f"""
+            SELECT id, timestamp, source, event_type, severity, host, username,
+                   process_name, src_ip, dst_ip, action, outcome, summary, raw_message
+            FROM events
+            WHERE {where_clause}
+            ORDER BY timestamp DESC
+            LIMIT 50
+        """
+
+        with self.forensic_db.connection() as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute(sql, params).fetchall()
+
+        matched_records = [dict(r) for r in rows]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        q_id = f"query-{case_id}-{uuid.uuid4().hex[:8]}"
+
+        q_template = (
+            getattr(proposal, "query_template_id", None)
+            or getattr(proposal, "intent", None)
+            or getattr(proposal, "title", None)
+            or "query_events"
+        )
+        params = getattr(proposal, "parameters", None) or getattr(proposal, "filters", None) or {
+            "host": getattr(proposal, "host", None),
+            "username": getattr(proposal, "username", None),
+            "src_ip": getattr(proposal, "src_ip", None),
+            "search_text": getattr(proposal, "search_text", None),
+        }
+
+        # Record in persistent query history
+        query_record = CaseQueryRecord(
+            query_id=q_id,
+            case_id=case_id,
+            proposal_id=proposal.proposal_id,
+            query_template_id=q_template,
+            parameters=params,
+            rationale=proposal.rationale,
+            executed_by=actor,
+            executed_at=now_iso,
+            result_count=len(matched_records),
+            execution_status="SUCCESS" if matched_records else "NO_RESULTS",
+            evidence_candidates_count=len(matched_records),
+        )
+        self.case_repo.record_query(case_id, query_record)
+
+        # Stage matching events as evidence references (with role=SUPPORTING)
+        for r in matched_records[:5]:
+            ev_id = str(r["id"])
+            self.case_repo.add_evidence_reference(
+                case_id=case_id,
+                source_type="event",
+                source_id=ev_id,
+                role="SUPPORTING",
+                epistemic_status="INFERRED",
+                citation_tag=f"[event:{ev_id}]",
+                analyst_annotation=f"Discovered via approved threat query {proposal.proposal_id}",
+                actor=actor,
+            )
+
+        return {
+            "case_id": case_id,
+            "query_id": q_id,
+            "proposal_id": proposal.proposal_id,
+            "executed_at": now_iso,
+            "result_count": len(matched_records),
+            "matched_events": matched_records,
+            "query_record": query_record.model_dump(mode="json"),
+        }
+
+    def draft_or_revise_report(
+        self,
+        case_id: int,
+        title: Optional[str] = None,
+        analyst_notes: Optional[str] = None,
+        is_final: bool = False,
+        actor: str = "SecAnalyst-1",
+    ) -> CaseReportVersion:
+        """Generate or revise a persistent versioned investigation report."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        inc = self.incidents_repo.get_incident(case.incident_id)
+        report_title = title or f"Investigation Report — {case.title}"
+        report_id = f"rep-{case_id}"
+
+        # Deterministically extract facts from available evidence references
+        facts: List[Dict[str, Any]] = []
+        for ref in case.evidence_references:
+            if ref.resolution_status == ResolutionStatus.AVAILABLE:
+                facts.append({
+                    "citation_tag": ref.citation_tag,
+                    "statement": f"Verified {ref.source_type} {ref.source_id} in authoritative forensic state.",
+                    "source": ref.source_type,
+                    "epistemic_status": "OBSERVED",
+                })
+            else:
+                facts.append({
+                    "citation_tag": ref.citation_tag,
+                    "statement": f"Evidence reference {ref.citation_tag} cannot be resolved in current forensic state (status: {ref.resolution_status.value}).",
+                    "source": ref.source_type,
+                    "epistemic_status": "UNKNOWN",
+                })
+
+        # Inferences from hypotheses
+        inferences: List[Dict[str, Any]] = []
+        for hyp in case.hypotheses:
+            if hyp.status in (HypothesisStatus.SUPPORTED, HypothesisStatus.WEAKENED):
+                inferences.append({
+                    "hypothesis_id": hyp.hypothesis_id,
+                    "statement": hyp.statement,
+                    "status": hyp.status.value,
+                    "supporting_evidence": hyp.supporting_evidence_tags,
+                    "assessment": hyp.analyst_assessment or "Pending further telemetry",
+                })
+
+        hypotheses_summary = [
+            {
+                "hypothesis_id": h.hypothesis_id,
+                "statement": h.statement,
+                "status": h.status.value,
+                "evidence_gaps": h.evidence_gaps,
+            }
+            for h in case.hypotheses
+        ]
+
+        unknowns = [
+            f"Gap in hypothesis {h.hypothesis_id}: {gap}"
+            for h in case.hypotheses
+            for gap in h.evidence_gaps
+        ]
+        if not unknowns:
+            unknowns = ["No critical evidence gaps documented in active hypotheses."]
+
+        recommendations = [
+            "Preserve underlying auth.log, syslog, and auditd forensic snapshots.",
+            "Verify credential rotation for compromised accounts identified in case evidence.",
+            "Review query history and validate containment across related host nodes.",
+        ]
+
+        exec_summary = (
+            f"Forensic investigation case {case_id} regarding {case.title}. "
+            f"Status is {case.status.value}. Evaluated {len(case.evidence_references)} evidence references "
+            f"and {len(case.hypotheses)} hypotheses under case version {case.version}."
+        )
+
+        # Calculate model digest / provenance signature
+        provenance_str = f"qwen2.5:0.5b:{case_id}:{case.version}:{len(facts)}"
+        model_digest = hashlib.sha256(provenance_str.encode()).hexdigest()[:16]
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        report_version = CaseReportVersion(
+            report_id=report_id,
+            case_id=case_id,
+            version=1,  # will be assigned next version by case_repo
+            title=report_title,
+            executive_summary=exec_summary,
+            facts=facts,
+            inferences=inferences,
+            hypotheses=hypotheses_summary,
+            unknowns=unknowns,
+            recommendations=recommendations,
+            analyst_notes=analyst_notes,
+            generated_by=ContentOrigin.AI_GENERATED if not is_final else ContentOrigin.ANALYST_AUTHORED,
+            model_id="qwen2.5:0.5b",
+            model_digest=model_digest,
+            context_version=case.version,
+            created_at=now_iso,
+            is_final=is_final,
+        )
+
+        return self.case_repo.save_report_version(case_id, report_version, actor=actor)
+
+    def compare_report_versions(
+        self,
+        case_id: int,
+        report_id: str,
+        v1: int,
+        v2: int,
+    ) -> Dict[str, Any]:
+        """Compare two historical report draft versions, highlighting additions, removals, and changes."""
+        rep1 = self.case_repo.get_report_version(case_id, report_id, v1)
+        rep2 = self.case_repo.get_report_version(case_id, report_id, v2)
+
+        if not rep1:
+            raise ValueError(f"Report version {v1} not found")
+        if not rep2:
+            raise ValueError(f"Report version {v2} not found")
+
+        facts1 = {f.get("citation_tag"): f.get("statement") for f in rep1.facts}
+        facts2 = {f.get("citation_tag"): f.get("statement") for f in rep2.facts}
+
+        added_facts = [f for tag, f in facts2.items() if tag not in facts1]
+        removed_facts = [f for tag, f in facts1.items() if tag not in facts2]
+
+        return {
+            "case_id": case_id,
+            "report_id": report_id,
+            "version_older": v1,
+            "version_newer": v2,
+            "title_changed": rep1.title != rep2.title,
+            "summary_changed": rep1.executive_summary != rep2.executive_summary,
+            "added_facts_count": len(added_facts),
+            "removed_facts_count": len(removed_facts),
+            "added_facts": added_facts,
+            "removed_facts": removed_facts,
+            "hypotheses_v1_count": len(rep1.hypotheses),
+            "hypotheses_v2_count": len(rep2.hypotheses),
+            "analyst_notes_v1": rep1.analyst_notes,
+            "analyst_notes_v2": rep2.analyst_notes,
+            "is_final_v1": rep1.is_final,
+            "is_final_v2": rep2.is_final,
+        }
+
+    def transfer_case(
+        self,
+        case_id: int,
+        new_owner: str,
+        actor: str = "SecAnalyst-1",
+        handoff_notes: Optional[str] = None,
+    ) -> InvestigationCase:
+        """Transfer case ownership during analyst handoff."""
+        return self.case_repo.transfer_case(
+            case_id=case_id,
+            new_owner=new_owner,
+            actor=actor,
+            handoff_notes=handoff_notes,
+        )
+
+    def reconstruct_ai_context(self, case_id: int) -> AIReconstructedContext:
+        """Deterministically reconstruct context for local AI operations without cross-case memory."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        resolved_count = sum(1 for r in case.evidence_references if r.resolution_status == ResolutionStatus.AVAILABLE)
+        stale_count = sum(1 for r in case.evidence_references if r.resolution_status != ResolutionStatus.AVAILABLE)
+
+        hyp_summary = [
+            {
+                "hypothesis_id": h.hypothesis_id,
+                "statement": h.statement,
+                "status": h.status.value,
+                "supporting_evidence_count": len(h.supporting_evidence_tags),
+                "assessment": h.analyst_assessment,
+            }
+            for h in case.hypotheses
+        ]
+
+        query_summary = [
+            {
+                "query_id": q.query_id,
+                "template": q.query_template_id,
+                "result_count": q.result_count,
+                "executed_at": q.executed_at,
+            }
+            for q in case.query_history[-5:]
+        ]
+
+        latest_rep = case.reports[0].executive_summary if case.reports else None
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        return AIReconstructedContext(
+            case_id=case.case_id,
+            incident_id=case.incident_id,
+            case_version=case.version,
+            status=case.status.value,
+            scope=case.scope,
+            resolved_evidence_count=resolved_count,
+            stale_evidence_count=stale_count,
+            hypotheses=hyp_summary,
+            query_history_summary=query_summary,
+            latest_report_summary=latest_rep,
+            reconstructed_at=now_iso,
+        )
+
+    def get_audit_history(self, case_id: int) -> List[CaseAuditRecord]:
+        """Fetch complete chronological audit trail of case modifications."""
+        case = self.case_repo.get_case(case_id, resolve_evidence=False)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        return case.audit_history
+
+
+# Singleton case service instance
+case_service = CaseService()

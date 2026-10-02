@@ -14,6 +14,13 @@ import {
   generateInvestigationReportDraft,
   traceClaimExplainability,
   createInvestigationNote,
+  createOrOpenCase,
+  updateCaseStatus,
+  handoffCase,
+  fetchCaseReports,
+  generateCaseReportDraft,
+  compareCaseReportVersions,
+  fetchCaseAuditLog,
 } from "../lib/api";
 import {
   AIInvestigationResponse,
@@ -27,6 +34,10 @@ import {
   QueryPreviewResponse,
   QueryProposal,
   ReportDraft,
+  InvestigationCase,
+  CaseStatus,
+  CaseReportVersion,
+  CaseAuditRecord,
 } from "../types/investigation";
 
 interface InvestigationIntelligencePanelProps {
@@ -42,10 +53,24 @@ export function InvestigationIntelligencePanel({
   onSelectAlertId,
   onSelectEntityKey,
 }: InvestigationIntelligencePanelProps) {
-  // Navigation sub-tabs for M5.4
-  const [subTab, setSubTab] = useState<"ask" | "hypotheses" | "queries" | "summary" | "report">("ask");
+  // Navigation sub-tabs for M5.4 & M5.5
+  const [subTab, setSubTab] = useState<"ask" | "hypotheses" | "queries" | "summary" | "report" | "audit">("ask");
 
-  // Workspace state
+  // Persistent Case State (M5.5 Continuity)
+  const [caseData, setCaseData] = useState<InvestigationCase | null>(null);
+  const [caseLoading, setCaseLoading] = useState(false);
+  const [handoffModalOpen, setHandoffModalOpen] = useState(false);
+  const [handoffOwner, setHandoffOwner] = useState("");
+  const [handoffNotes, setHandoffNotes] = useState("");
+  const [handoffLoading, setHandoffLoading] = useState(false);
+  const [reportVersions, setReportVersions] = useState<CaseReportVersion[]>([]);
+  const [selectedReportVersion, setSelectedReportVersion] = useState<CaseReportVersion | null>(null);
+  const [comparingVersions, setComparingVersions] = useState(false);
+  const [versionDiff, setVersionDiff] = useState<any | null>(null);
+  const [auditLog, setAuditLog] = useState<CaseAuditRecord[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  // Workspace state (M5.4)
   const [workspace, setWorkspace] = useState<InvestigationWorkspace | null>(null);
   const [wsLoading, setWsLoading] = useState(false);
   const [stateTransitioning, setStateTransitioning] = useState(false);
@@ -86,9 +111,29 @@ export function InvestigationIntelligencePanel({
   const [noteSavedNotice, setNoteSavedNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    loadCase();
     loadWorkspace();
     loadHypotheses();
   }, [incidentId]);
+
+  const loadCase = async () => {
+    setCaseLoading(true);
+    try {
+      const c = await createOrOpenCase(incidentId);
+      setCaseData(c);
+      if (c.report_versions && c.report_versions.length > 0) {
+        setReportVersions(c.report_versions);
+        setSelectedReportVersion(c.report_versions[c.report_versions.length - 1]);
+      }
+      if (c.audit_history) {
+        setAuditLog(c.audit_history);
+      }
+    } catch (err: any) {
+      // Non-fatal fallback
+    } finally {
+      setCaseLoading(false);
+    }
+  };
 
   const loadWorkspace = async () => {
     setWsLoading(true);
@@ -111,12 +156,57 @@ export function InvestigationIntelligencePanel({
     }
   };
 
+  const handleCaseTransition = async (newStatus: CaseStatus) => {
+    setStateTransitioning(true);
+    setError(null);
+    try {
+      const updated = await updateCaseStatus(incidentId, newStatus, `Analyst manual transition to ${newStatus}`);
+      setCaseData(updated);
+      if (["OPEN", "ACTIVE", "PAUSED", "READY_FOR_REVIEW", "CLOSED"].includes(newStatus)) {
+        try {
+          const ws = await updateInvestigationState(incidentId, newStatus as any, "SecAnalyst-1", `Case transition to ${newStatus}`);
+          setWorkspace(ws);
+        } catch (_) {}
+      }
+    } catch (err: any) {
+      setError(err.message || `Failed to transition case state to ${newStatus}`);
+    } finally {
+      setStateTransitioning(false);
+    }
+  };
+
+  const handleHandoff = async () => {
+    if (!handoffOwner.trim()) return;
+    setHandoffLoading(true);
+    setError(null);
+    try {
+      const updated = await handoffCase(incidentId, handoffOwner.trim(), handoffNotes.trim() || undefined);
+      setCaseData(updated);
+      setHandoffModalOpen(false);
+      setHandoffOwner("");
+      setHandoffNotes("");
+      setNoteSavedNotice(`Case successfully transferred to analyst ${updated.owner}`);
+      setTimeout(() => setNoteSavedNotice(null), 4000);
+      loadCase();
+    } catch (err: any) {
+      setError(err.message || "Failed to transfer case ownership");
+    } finally {
+      setHandoffLoading(false);
+    }
+  };
+
   const handleStateTransition = async (newState: InvestigationState) => {
     setStateTransitioning(true);
     setError(null);
     try {
       const updated = await updateInvestigationState(incidentId, newState, "SecAnalyst-1", `Manual transition to ${newState}`);
       setWorkspace(updated);
+      if (["OPEN", "ACTIVE", "PAUSED", "READY_FOR_REVIEW", "CLOSED"].includes(newState)) {
+        try {
+          const c = await updateCaseStatus(incidentId, newState as any, `Sync from workspace: ${newState}`);
+          setCaseData(c);
+        } catch (_) {}
+      }
     } catch (err: any) {
       setError(err.message || `Failed to transition state to ${newState}`);
     } finally {
@@ -282,17 +372,18 @@ export function InvestigationIntelligencePanel({
     }
   };
 
-  const stateColors: Record<InvestigationState, { bg: string; text: string; border: string }> = {
+  const stateColors: Record<string, { bg: string; text: string; border: string }> = {
     OPEN: { bg: "#edf2f7", text: "#4a5568", border: "#cbd5e0" },
     ACTIVE: { bg: "#feebc8", text: "#744210", border: "#fbd38d" },
     PAUSED: { bg: "#edf2f7", text: "#718096", border: "#e2e8f0" },
     READY_FOR_REVIEW: { bg: "#e6fffa", text: "#234e52", border: "#81e6d9" },
     CLOSED: { bg: "#e2e8f0", text: "#2d3748", border: "#a0aec0" },
+    ARCHIVED: { bg: "#f1f5f9", text: "#64748b", border: "#cbd5e1" },
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "16px 0" }}>
-      {/* Investigation Workspace Header */}
+      {/* Persistent Investigation Case Header (M5.5 Continuity) */}
       <div
         style={{
           padding: "12px 16px",
@@ -306,68 +397,118 @@ export function InvestigationIntelligencePanel({
           gap: "12px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px", color: "var(--text-primary, #1a202c)" }}>
-            INVESTIGATION WORKSPACE
+            CASE #{caseData?.case_id ?? incidentId}
           </div>
-          {workspace && (
-            <div
-              style={{
-                fontSize: "11px",
-                fontWeight: 700,
-                textTransform: "uppercase",
-                padding: "3px 8px",
-                borderRadius: "3px",
-                background: stateColors[workspace.state]?.bg || "#edf2f7",
-                color: stateColors[workspace.state]?.text || "#4a5568",
-                border: `1px solid ${stateColors[workspace.state]?.border || "#cbd5e0"}`,
-              }}
-            >
-              STATE: {workspace.state}
-            </div>
-          )}
-          {workspace && (
-            <div style={{ fontSize: "11px", color: "#718096", fontFamily: "var(--font-mono, monospace)" }}>
-              Scope: {workspace.scope.time_start?.slice(0, 10)} to {workspace.scope.time_end?.slice(0, 10)} • Entities: {workspace.scope.selected_entity_ids.length} • Alerts: {workspace.scope.selected_alert_ids.length}
-            </div>
-          )}
+          <div style={{ fontSize: "11px", fontWeight: 700, padding: "2px 6px", background: "#edf2f7", borderRadius: "3px", color: "#4a5568" }}>
+            v{caseData?.version ?? 1}
+          </div>
+          <div
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              padding: "3px 8px",
+              borderRadius: "3px",
+              background: stateColors[(caseData?.status as any) || workspace?.state || "OPEN"]?.bg || "#edf2f7",
+              color: stateColors[(caseData?.status as any) || workspace?.state || "OPEN"]?.text || "#4a5568",
+              border: `1px solid ${stateColors[(caseData?.status as any) || workspace?.state || "OPEN"]?.border || "#cbd5e0"}`,
+            }}
+          >
+            STATUS: {caseData?.status || workspace?.state || "OPEN"}
+          </div>
+          <div style={{ fontSize: "11px", color: "#4a5568", background: "#f7fafc", padding: "2px 6px", borderRadius: "3px", border: "1px solid #e2e8f0" }}>
+            Owner: <strong>{caseData?.owner || "SecAnalyst-1"}</strong>
+          </div>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: "10px", padding: "2px 6px" }}
+            onClick={() => setHandoffModalOpen(!handoffModalOpen)}
+          >
+            {handoffModalOpen ? "Close Handoff" : "Handoff Case"}
+          </button>
+          <div style={{ fontSize: "11px", color: "#718096", fontFamily: "var(--font-mono, monospace)" }}>
+            Scope: {caseData?.scope?.time_start?.slice(0, 10) || workspace?.scope?.time_start?.slice(0, 10)} to {caseData?.scope?.time_end?.slice(0, 10) || workspace?.scope?.time_end?.slice(0, 10)} • Evidence: {caseData?.evidence_references?.length ?? workspace?.evidence_candidates?.length ?? 0}
+          </div>
         </div>
 
-        {/* State Transition Actions */}
+        {/* Governed State Transition Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <span style={{ fontSize: "11px", color: "#718096" }}>Transition:</span>
-          {workspace?.state === "OPEN" && (
-            <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleStateTransition("ACTIVE")} disabled={stateTransitioning}>
+          {(caseData?.status === "OPEN" || (!caseData && workspace?.state === "OPEN")) && (
+            <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleCaseTransition("ACTIVE")} disabled={stateTransitioning}>
               Start Investigation (Active)
             </button>
           )}
-          {workspace?.state === "ACTIVE" && (
+          {(caseData?.status === "ACTIVE" || (!caseData && workspace?.state === "ACTIVE")) && (
             <>
-              <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleStateTransition("PAUSED")} disabled={stateTransitioning}>
+              <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleCaseTransition("PAUSED")} disabled={stateTransitioning}>
                 Pause
               </button>
-              <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleStateTransition("READY_FOR_REVIEW")} disabled={stateTransitioning}>
+              <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleCaseTransition("READY_FOR_REVIEW")} disabled={stateTransitioning}>
                 Mark Ready for Review
               </button>
             </>
           )}
-          {workspace?.state === "PAUSED" && (
-            <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleStateTransition("ACTIVE")} disabled={stateTransitioning}>
+          {(caseData?.status === "PAUSED" || (!caseData && workspace?.state === "PAUSED")) && (
+            <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleCaseTransition("ACTIVE")} disabled={stateTransitioning}>
               Resume (Active)
             </button>
           )}
-          {workspace?.state === "READY_FOR_REVIEW" && (
-            <button className="btn btn-primary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleStateTransition("CLOSED")} disabled={stateTransitioning}>
-              Approve & Close Investigation
+          {(caseData?.status === "READY_FOR_REVIEW" || (!caseData && workspace?.state === "READY_FOR_REVIEW")) && (
+            <button className="btn btn-primary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleCaseTransition("CLOSED")} disabled={stateTransitioning}>
+              Approve & Close Case
             </button>
           )}
-          {workspace?.state === "CLOSED" && (
-            <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleStateTransition("ACTIVE")} disabled={stateTransitioning}>
-              Reopen Investigation
-            </button>
+          {(caseData?.status === "CLOSED" || (!caseData && workspace?.state === "CLOSED")) && (
+            <>
+              <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleCaseTransition("ACTIVE")} disabled={stateTransitioning}>
+                Reopen Case
+              </button>
+              <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "2px 8px" }} onClick={() => handleCaseTransition("ARCHIVED")} disabled={stateTransitioning}>
+                Archive Case
+              </button>
+            </>
+          )}
+          {caseData?.status === "ARCHIVED" && (
+            <span style={{ fontSize: "11px", color: "#a0aec0", fontStyle: "italic" }}>Archived (Read-Only)</span>
           )}
         </div>
       </div>
+
+      {/* Case Handoff Inline Form */}
+      {handoffModalOpen && (
+        <div style={{ padding: "12px 16px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "4px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={{ fontSize: "12px", fontWeight: 700, color: "#1e293b" }}>ANALYST CASE HANDOFF</div>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <input
+              type="text"
+              className="input-field"
+              placeholder="Target Analyst Owner (e.g. SecAnalyst-2)"
+              value={handoffOwner}
+              onChange={(e) => setHandoffOwner(e.target.value)}
+              style={{ fontSize: "11px", padding: "4px 8px", width: "240px" }}
+            />
+            <input
+              type="text"
+              className="input-field"
+              placeholder="Handoff notes or transfer context"
+              value={handoffNotes}
+              onChange={(e) => setHandoffNotes(e.target.value)}
+              style={{ fontSize: "11px", padding: "4px 8px", flex: 1, minWidth: "220px" }}
+            />
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: "11px", padding: "4px 12px" }}
+              onClick={handleHandoff}
+              disabled={handoffLoading || !handoffOwner.trim()}
+            >
+              {handoffLoading ? "Transferring..." : "Confirm Handoff"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Sub-Navigation Bar */}
       <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-color, #e2e8f0)", paddingBottom: "4px" }}>
@@ -376,7 +517,8 @@ export function InvestigationIntelligencePanel({
           { id: "hypotheses", label: `Hypothesis Workbench (${hypotheses.length})` },
           { id: "queries", label: "Query Execution & Evidence Candidates" },
           { id: "summary", label: "Structured Summary" },
-          { id: "report", label: "Explainable Report Draft" },
+          { id: "report", label: `Report Versions (${reportVersions.length || 1})` },
+          { id: "audit", label: `Audit Trail (${auditLog.length || caseData?.audit_history?.length || 0})` },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -830,41 +972,153 @@ export function InvestigationIntelligencePanel({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 5: EXPLAINABLE REPORT DRAFT */}
+      {/* TAB 5: EXPLAINABLE REPORT DRAFT & CONTINUITY VERSIONS */}
       {/* ========================================================================= */}
       {subTab === "report" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: "12px", fontWeight: 700 }}>CITATION-GROUNDED REPORT DRAFT</div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "4px 10px" }} onClick={handleGenerateReportDraft} disabled={reportLoading}>
-                {reportLoading ? "Drafting..." : "Regenerate Draft"}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+            <div style={{ fontSize: "12px", fontWeight: 700 }}>CITATION-GROUNDED REPORT VERSIONS</div>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: "11px", padding: "4px 10px" }}
+                onClick={async () => {
+                  setReportLoading(true);
+                  try {
+                    const r = await generateCaseReportDraft(incidentId, `Investigation Dossier - Case #${incidentId}`);
+                    const vers = await fetchCaseReports(incidentId);
+                    setReportVersions(vers);
+                    setSelectedReportVersion(r);
+                    loadCase();
+                  } catch (err: any) {
+                    setError(`Failed to draft report: ${err.message}`);
+                  } finally {
+                    setReportLoading(false);
+                  }
+                }}
+                disabled={reportLoading}
+              >
+                {reportLoading ? "Drafting..." : "Draft New Version"}
               </button>
-              {reportDraft && (
+              {selectedReportVersion && selectedReportVersion.version > 1 && (
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: "11px", padding: "4px 10px" }}
+                  onClick={async () => {
+                    setComparingVersions(true);
+                    try {
+                      const diff = await compareCaseReportVersions(incidentId, selectedReportVersion.version - 1, selectedReportVersion.version);
+                      setVersionDiff(diff);
+                    } catch (err: any) {
+                      setError(`Failed to compare report versions: ${err.message}`);
+                    } finally {
+                      setComparingVersions(false);
+                    }
+                  }}
+                  disabled={comparingVersions}
+                >
+                  {comparingVersions ? "Comparing..." : `Compare with v${selectedReportVersion.version - 1}`}
+                </button>
+              )}
+              {selectedReportVersion && (
                 <button
                   className="btn btn-primary"
                   style={{ fontSize: "11px", padding: "4px 10px" }}
-                  onClick={() => handlePromoteToAnalystNote(reportDraft.executive_summary, "REPORT DRAFT")}
+                  onClick={() => handlePromoteToAnalystNote(selectedReportVersion.executive_summary, `REPORT v${selectedReportVersion.version}`)}
                 >
-                  Save as Investigation Note
+                  Save as Note
                 </button>
               )}
             </div>
           </div>
 
-          {reportDraft ? (
+          {/* Version Pills */}
+          {reportVersions.length > 0 && (
+            <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "11px", color: "#718096" }}>Available Versions:</span>
+              {reportVersions.map((v) => (
+                <button
+                  key={v.version}
+                  style={{
+                    fontSize: "11px",
+                    padding: "3px 8px",
+                    borderRadius: "3px",
+                    cursor: "pointer",
+                    background: selectedReportVersion?.version === v.version ? "var(--text-primary, #1a202c)" : "#edf2f7",
+                    color: selectedReportVersion?.version === v.version ? "#ffffff" : "#4a5568",
+                    border: "1px solid #cbd5e0",
+                  }}
+                  onClick={() => {
+                    setSelectedReportVersion(v);
+                    setVersionDiff(null);
+                  }}
+                >
+                  v{v.version} ({v.origin === "ANALYST_AUTHORED" ? "Analyst" : "AI"})
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Version Comparison Diff Panel */}
+          {versionDiff && (
+            <div style={{ padding: "14px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "4px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                <strong style={{ fontSize: "12px", color: "#1e293b" }}>
+                  VERSION COMPARISON: v{versionDiff.version_a} vs v{versionDiff.version_b}
+                </strong>
+                <button className="btn btn-secondary" style={{ fontSize: "10px", padding: "2px 6px" }} onClick={() => setVersionDiff(null)}>
+                  Close Diff
+                </button>
+              </div>
+              <div style={{ fontSize: "11px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                <div>
+                  <span style={{ color: "#047857", fontWeight: 600 }}>Facts Added:</span> {versionDiff.facts_added.length > 0 ? versionDiff.facts_added.join(", ") : "None"}
+                </div>
+                <div>
+                  <span style={{ color: "#b91c1c", fontWeight: 600 }}>Facts Removed:</span> {versionDiff.facts_removed.length > 0 ? versionDiff.facts_removed.join(", ") : "None"}
+                </div>
+                <div>
+                  <span style={{ fontWeight: 600 }}>Summary Differences:</span>
+                  <div style={{ background: "#ffffff", padding: "6px 8px", borderRadius: "3px", border: "1px solid #e2e8f0", marginTop: "4px", maxHeight: "120px", overflowY: "auto", fontFamily: "var(--font-mono, monospace)", fontSize: "11px" }}>
+                    {versionDiff.summary_diff.map((line: string, lIdx: number) => (
+                      <div key={lIdx} style={{ color: line.startsWith("+") ? "#047857" : line.startsWith("-") ? "#b91c1c" : "#475569" }}>
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Selected Report Version Content */}
+          {selectedReportVersion ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
               <div style={{ padding: "16px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
-                <div style={{ fontSize: "14px", fontWeight: 700, marginBottom: "8px" }}>{reportDraft.title}</div>
-                <div style={{ fontSize: "12px", color: "#718096", marginBottom: "12px" }}>Draft Generated: {reportDraft.generated_at}</div>
-                <div style={{ fontSize: "13px", lineHeight: "1.6", color: "#2d3748" }}>{reportDraft.executive_summary}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                  <div>
+                    <div style={{ fontSize: "14px", fontWeight: 700 }}>{selectedReportVersion.title} (v{selectedReportVersion.version})</div>
+                    <div style={{ fontSize: "11px", color: "#718096" }}>Created: {selectedReportVersion.created_at} by {selectedReportVersion.created_by}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <span style={{ fontSize: "10px", padding: "2px 6px", background: selectedReportVersion.origin === "ANALYST_AUTHORED" ? "#dcfce7" : "#e0e7ff", color: selectedReportVersion.origin === "ANALYST_AUTHORED" ? "#166534" : "#3730a3", borderRadius: "3px", fontWeight: 600 }}>
+                      ORIGIN: {selectedReportVersion.origin}
+                    </span>
+                    {selectedReportVersion.model_name && (
+                      <span style={{ fontSize: "10px", padding: "2px 6px", background: "#f1f5f9", color: "#475569", borderRadius: "3px", fontFamily: "var(--font-mono, monospace)" }}>
+                        {selectedReportVersion.model_name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ fontSize: "13px", lineHeight: "1.6", color: "#2d3748" }}>{selectedReportVersion.executive_summary}</div>
               </div>
 
               {/* Observed Facts */}
               <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "#234e52" }}>OBSERVED FORENSIC FACTS</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {reportDraft.facts.map((fact: any, idx: number) => (
+                  {selectedReportVersion.facts.map((fact: any, idx: number) => (
                     <div key={idx} style={{ fontSize: "12px", padding: "6px 8px", background: "#e6fffa", borderRadius: "3px", display: "flex", justifyContent: "space-between" }}>
                       <span>{fact.statement}</span>
                       <strong style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "11px" }}>{fact.evidence_tag}</strong>
@@ -873,11 +1127,11 @@ export function InvestigationIntelligencePanel({
                 </div>
               </div>
 
-              {/* Inferred Deductions */}
+              {/* Analytical Inferences */}
               <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "#744210" }}>ANALYTICAL INFERENCES</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {reportDraft.inferences.map((inf: any, idx: number) => (
+                  {selectedReportVersion.inferences.map((inf: any, idx: number) => (
                     <div key={idx} style={{ fontSize: "12px", padding: "6px 8px", background: "#feebc8", borderRadius: "3px" }}>
                       <div>{inf.statement}</div>
                       <div style={{ fontSize: "10px", color: "#744210", marginTop: "2px" }}>Rationale: {inf.rationale}</div>
@@ -886,19 +1140,89 @@ export function InvestigationIntelligencePanel({
                 </div>
               </div>
 
-              {/* Recommendations */}
+              {/* Analyst Recommendations */}
               <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>ANALYST RECOMMENDATIONS</div>
                 <ul style={{ margin: "0 0 0 16px", padding: 0, fontSize: "12px", lineHeight: "1.6" }}>
-                  {reportDraft.recommendations.map((rec, idx) => (
+                  {selectedReportVersion.recommendations.map((rec, idx) => (
                     <li key={idx}>{rec}</li>
                   ))}
                 </ul>
               </div>
             </div>
           ) : (
-            <div style={{ fontSize: "12px", color: "#718096" }}>Click Regenerate Draft to generate a citation-grounded report.</div>
+            <div style={{ fontSize: "12px", color: "#718096" }}>Click Draft New Version to generate a citation-grounded report.</div>
           )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 6: IMMUTABLE AUDIT TRAIL (M5.5 Governance) */}
+      {/* ========================================================================= */}
+      {subTab === "audit" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: "12px", fontWeight: 700 }}>IMMUTABLE CASE AUDIT TRAIL</div>
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: "11px", padding: "4px 10px" }}
+              onClick={async () => {
+                setAuditLoading(true);
+                try {
+                  const log = await fetchCaseAuditLog(incidentId);
+                  setAuditLog(log);
+                } catch (err: any) {
+                  setError(`Failed to fetch audit log: ${err.message}`);
+                } finally {
+                  setAuditLoading(false);
+                }
+              }}
+              disabled={auditLoading}
+            >
+              {auditLoading ? "Refreshing..." : "Refresh Audit Log"}
+            </button>
+          </div>
+
+          <div style={{ background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px", overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", textAlign: "left" }}>
+              <thead>
+                <tr style={{ background: "var(--bg-subtle, #f8fafc)", borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
+                  <th style={{ padding: "8px 12px" }}>Timestamp (UTC)</th>
+                  <th style={{ padding: "8px 12px" }}>Actor</th>
+                  <th style={{ padding: "8px 12px" }}>Action</th>
+                  <th style={{ padding: "8px 12px" }}>Previous</th>
+                  <th style={{ padding: "8px 12px" }}>New Value</th>
+                  <th style={{ padding: "8px 12px" }}>Reason / Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLog.length > 0 ? (
+                  auditLog.map((entry, idx) => (
+                    <tr key={idx} style={{ borderBottom: "1px solid #edf2f7" }}>
+                      <td style={{ padding: "8px 12px", fontFamily: "var(--font-mono, monospace)", color: "#64748b" }}>
+                        {entry.timestamp?.slice(0, 19).replace("T", " ")}
+                      </td>
+                      <td style={{ padding: "8px 12px", fontWeight: 600 }}>{entry.actor}</td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <span style={{ padding: "2px 6px", background: "#f1f5f9", borderRadius: "3px", fontFamily: "var(--font-mono, monospace)" }}>
+                          {entry.action}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 12px", color: "#64748b" }}>{entry.previous_value || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: "#0f172a", fontWeight: 500 }}>{entry.new_value || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: "#475569" }}>{entry.reason || "—"}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} style={{ padding: "16px", textAlign: "center", color: "#94a3b8" }}>
+                      No audit log records found for this case.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

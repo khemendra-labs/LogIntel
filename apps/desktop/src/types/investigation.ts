@@ -416,3 +416,114 @@ export interface ClaimTrace {
   raw_evidence?: Record<string, any> | null;
 }
 
+// -------------------------------------------------------------
+// M5.5 Persistent Case & Investigation Continuity Types
+// -------------------------------------------------------------
+
+export type CaseStatus =
+  | "OPEN"
+  | "ACTIVE"
+  | "PAUSED"
+  | "READY_FOR_REVIEW"
+  | "CLOSED"
+  | "ARCHIVED";
+
+export type ResolutionStatus = "AVAILABLE" | "MISSING" | "UNRESOLVED";
+
+export type ContentOrigin = "ANALYST_AUTHORED" | "AI_GENERATED" | "SYSTEM_GENERATED";
+
+export interface CaseEvidenceReference {
+  reference_id: string;
+  case_id: number;
+  source_type: string;
+  source_id: string;
+  role: string;
+  epistemic_status: string;
+  citation_tag: string;
+  analyst_annotation?: string | null;
+  created_at: string;
+  resolution_status: ResolutionStatus;
+  resolved_record?: Record<string, any> | null;
+}
+
+export interface CaseHypothesis {
+  hypothesis_id: string;
+  case_id: number;
+  statement: string;
+  status: HypothesisStatus;
+  supporting_evidence_tags: string[];
+  contradicting_evidence_tags: string[];
+  evidence_gaps: string[];
+  analyst_assessment?: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  version: number;
+}
+
+export interface CaseQueryRecord {
+  query_id: string;
+  case_id: number;
+  proposal_id?: string | null;
+  query_template_id: string;
+  parameters: Record<string, any>;
+  rationale?: string | null;
+  executed_by: string;
+  executed_at: string;
+  result_count: number;
+  execution_status: string;
+  evidence_candidates_count: number;
+}
+
+export interface CaseReportVersion {
+  report_id: string;
+  case_id: number;
+  version: number;
+  title: string;
+  origin: ContentOrigin;
+  generated_by: string;
+  model_name?: string | null;
+  model_digest?: string | null;
+  executive_summary: string;
+  facts: Array<Record<string, any>>;
+  inferences: Array<Record<string, any>>;
+  hypotheses: Array<Record<string, any>>;
+  unknowns: string[];
+  recommendations: string[];
+  citation_manifest: Array<Record<string, any>>;
+  is_final: boolean;
+  created_at: string;
+  created_by: string;
+}
+
+export interface CaseAuditRecord {
+  audit_id?: number;
+  case_id: number;
+  timestamp: string;
+  actor: string;
+  action: string;
+  previous_value?: string | null;
+  new_value?: string | null;
+  reason?: string | null;
+}
+
+export interface InvestigationCase {
+  case_id: number;
+  incident_id: number;
+  title: string;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  owner: string;
+  status: CaseStatus;
+  version: number;
+  scope: InvestigationScope;
+  hypotheses: CaseHypothesis[];
+  evidence_references: CaseEvidenceReference[];
+  query_history: CaseQueryRecord[];
+  report_versions: CaseReportVersion[];
+  audit_history: CaseAuditRecord[];
+}
+
+

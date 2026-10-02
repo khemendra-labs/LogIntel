@@ -1176,7 +1176,357 @@ def trace_claim_explainability(
     }
 
 
+# =============================================================================
+# M5.5 Persistent Investigation Cases, Case Handoff, and Continuity Endpoints
+# =============================================================================
+
+class CreateCaseRequest(BaseModel):
+    incident_id: int
+    title: Optional[str] = None
+    description: str = ""
+
+
+class UpdateCaseStatusRequest(BaseModel):
+    target_status: str
+    reason: Optional[str] = None
+
+
+class HandoffCaseRequest(BaseModel):
+    new_owner: str
+    handoff_notes: Optional[str] = None
+
+
+class AssociateEvidenceRequest(BaseModel):
+    source_type: str
+    source_id: str
+    role: str = "SUPPORTING"
+    epistemic_status: str = "OBSERVED"
+    citation_tag: Optional[str] = None
+    annotation: Optional[str] = None
+
+
+class CreateCaseHypothesisRequest(BaseModel):
+    statement: str
+    status: str = "OPEN"
+    supporting_tags: Optional[List[str]] = None
+    contradicting_tags: Optional[List[str]] = None
+    gaps: Optional[List[str]] = None
+    assessment: Optional[str] = None
+
+
+class UpdateCaseHypothesisRequest(BaseModel):
+    statement: Optional[str] = None
+    status: Optional[str] = None
+    supporting_tags: Optional[List[str]] = None
+    contradicting_tags: Optional[List[str]] = None
+    gaps: Optional[List[str]] = None
+    assessment: Optional[str] = None
+
+
+class DraftCaseReportRequest(BaseModel):
+    title: Optional[str] = None
+    analyst_notes: Optional[str] = None
+    is_final: bool = False
+
+
+@protected_router.get("/cases")
+def list_investigation_cases(
+    status: Optional[str] = Query(None),
+    owner: Optional[str] = Query(None),
+) -> List[Dict[str, Any]]:
+    """List persistent investigation cases with optional status and owner filters."""
+    from logintel.ai.case_service import case_service
+    from logintel.ai.domain.case import CaseStatus
+
+    filter_status = CaseStatus(status) if status else None
+    cases = case_service.list_cases(status=filter_status, owner=owner)
+    return [c.model_dump(mode="json") for c in cases]
+
+
+@protected_router.post("/cases")
+def create_or_open_case(req: CreateCaseRequest) -> Dict[str, Any]:
+    """Create or load a persistent investigation case."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        case = case_service.create_or_open_case(
+            incident_id=req.incident_id,
+            title=req.title,
+            description=req.description,
+        )
+        return case.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}")
+def get_case_detail(case_id: int) -> Dict[str, Any]:
+    """Retrieve complete persistent case details including resolved evidence and stale status."""
+    from logintel.ai.case_service import case_service
+
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    return case.model_dump(mode="json")
+
+
+@protected_router.post("/cases/{case_id}/state")
+def update_case_state(case_id: int, req: UpdateCaseStatusRequest) -> Dict[str, Any]:
+    """Execute a validated case lifecycle state transition."""
+    from logintel.ai.case_service import case_service
+    from logintel.ai.domain.case import CaseStatus
+
+    try:
+        target = CaseStatus(req.target_status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid case status: {req.target_status}")
+
+    try:
+        updated = case_service.transition_case_state(
+            case_id=case_id,
+            target_status=target,
+            reason=req.reason,
+        )
+        return updated.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/scope")
+def update_case_scope_endpoint(case_id: int, scope: Dict[str, Any]) -> Dict[str, Any]:
+    """Update case investigation scope boundaries."""
+    from logintel.ai.case_service import case_service
+    from logintel.ai.domain.workspace import InvestigationScope
+
+    try:
+        scope_obj = InvestigationScope.model_validate(scope)
+        updated = case_service.update_scope(case_id=case_id, scope=scope_obj)
+        return updated.model_dump(mode="json")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to update scope: {str(e)}")
+
+
+@protected_router.post("/cases/{case_id}/handoff")
+def handoff_case(case_id: int, req: HandoffCaseRequest) -> Dict[str, Any]:
+    """Transfer case ownership during analyst handoff with notes."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        updated = case_service.transfer_case(
+            case_id=case_id,
+            new_owner=req.new_owner,
+            handoff_notes=req.handoff_notes,
+        )
+        return updated.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hypotheses")
+def list_case_hypotheses(case_id: int) -> List[Dict[str, Any]]:
+    """List persistent hypotheses for a case."""
+    from logintel.ai.case_service import case_service
+
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    return [h.model_dump(mode="json") for h in case.hypotheses]
+
+
+@protected_router.post("/cases/{case_id}/hypotheses")
+def create_case_hypothesis(case_id: int, req: CreateCaseHypothesisRequest) -> Dict[str, Any]:
+    """Create and persist an analyst-owned hypothesis in the case."""
+    from logintel.ai.case_service import case_service
+    from logintel.ai.domain.workspace import HypothesisStatus
+
+    try:
+        status_enum = HypothesisStatus(req.status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid hypothesis status: {req.status}")
+
+    try:
+        h = case_service.create_hypothesis(
+            case_id=case_id,
+            statement=req.statement,
+            status=status_enum,
+            supporting_tags=req.supporting_tags,
+            contradicting_tags=req.contradicting_tags,
+            gaps=req.gaps,
+            assessment=req.assessment,
+        )
+        return h.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.patch("/cases/{case_id}/hypotheses/{hyp_id}")
+def update_case_hypothesis_endpoint(
+    case_id: int,
+    hyp_id: str,
+    req: UpdateCaseHypothesisRequest,
+) -> Dict[str, Any]:
+    """Update an existing persistent hypothesis."""
+    from logintel.ai.case_service import case_service
+    from logintel.ai.domain.workspace import HypothesisStatus
+
+    status_enum = HypothesisStatus(req.status) if req.status else None
+    try:
+        h = case_service.update_hypothesis(
+            case_id=case_id,
+            hypothesis_id=hyp_id,
+            statement=req.statement,
+            status=status_enum,
+            supporting_tags=req.supporting_tags,
+            contradicting_tags=req.contradicting_tags,
+            gaps=req.gaps,
+            assessment=req.assessment,
+        )
+        return h.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/evidence")
+def list_case_evidence(case_id: int) -> List[Dict[str, Any]]:
+    """List case evidence references with dynamic resolution and stale detection."""
+    from logintel.ai.case_service import case_service
+
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    return [r.model_dump(mode="json") for r in case.evidence_references]
+
+
+@protected_router.post("/cases/{case_id}/evidence")
+def associate_case_evidence(case_id: int, req: AssociateEvidenceRequest) -> Dict[str, Any]:
+    """Associate an authoritative evidence reference with a case."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        ref = case_service.associate_evidence(
+            case_id=case_id,
+            source_type=req.source_type,
+            source_id=req.source_id,
+            role=req.role,
+            epistemic_status=req.epistemic_status,
+            citation_tag=req.citation_tag,
+            annotation=req.annotation,
+        )
+        return ref.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/evidence/{ref_id}")
+def disassociate_case_evidence(case_id: int, ref_id: str) -> Dict[str, Any]:
+    """Disassociate an evidence reference from a case."""
+    from logintel.ai.case_service import case_service
+
+    success = case_service.disassociate_evidence(case_id=case_id, reference_id=ref_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id} not found")
+    return {"case_id": case_id, "reference_id": ref_id, "deleted": True}
+
+
+@protected_router.get("/cases/{case_id}/queries")
+def list_case_queries(case_id: int) -> List[Dict[str, Any]]:
+    """List threat hunting query execution history for a case."""
+    from logintel.ai.case_service import case_service
+
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    return [q.model_dump(mode="json") for q in case.query_history]
+
+
+@protected_router.post("/cases/{case_id}/queries/execute")
+def execute_case_query(case_id: int, proposal: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute analyst-approved threat query, staging candidates and recording in query history."""
+    from logintel.ai.case_service import case_service
+    from logintel.ai.domain.intelligence import QueryProposal
+
+    try:
+        q_proposal = QueryProposal.model_validate(proposal)
+        return case_service.execute_approved_query(case_id=case_id, proposal=q_proposal)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Query execution failed: {str(e)}")
+
+
+@protected_router.get("/cases/{case_id}/reports")
+def list_case_reports(case_id: int) -> List[Dict[str, Any]]:
+    """List all historical versions of case reports."""
+    from logintel.ai.case_service import case_service
+
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    return [rep.model_dump(mode="json") for rep in case.reports]
+
+
+@protected_router.post("/cases/{case_id}/reports/draft")
+def draft_case_report(case_id: int, req: DraftCaseReportRequest) -> Dict[str, Any]:
+    """Generate or revise a persistent versioned investigation report."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        rep = case_service.draft_or_revise_report(
+            case_id=case_id,
+            title=req.title,
+            analyst_notes=req.analyst_notes,
+            is_final=req.is_final,
+        )
+        return rep.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/reports/{report_id}/compare")
+def compare_report_versions_endpoint(
+    case_id: int,
+    report_id: str,
+    v1: int = Query(..., description="First version number to compare"),
+    v2: int = Query(..., description="Second version number to compare"),
+) -> Dict[str, Any]:
+    """Compare two historical report versions to inspect modifications, additions, and notes."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        return case_service.compare_report_versions(
+            case_id=case_id,
+            report_id=report_id,
+            v1=v1,
+            v2=v2,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/audit")
+def get_case_audit_history(case_id: int) -> List[Dict[str, Any]]:
+    """Fetch complete chronological audit trail of case modifications."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        audits = case_service.get_audit_history(case_id)
+        return [a.model_dump(mode="json") for a in audits]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/ai-context")
+def get_case_ai_context(case_id: int) -> Dict[str, Any]:
+    """Deterministically reconstruct AI context from persistent case state without cross-case memory."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        ctx = case_service.reconstruct_ai_context(case_id)
+        return ctx.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
+
 
 
 
