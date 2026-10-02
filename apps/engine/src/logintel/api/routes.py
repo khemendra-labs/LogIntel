@@ -698,6 +698,74 @@ def export_investigation_report(
     )
 
 
+# -------------------------------------------------------------------------
+# Local AI Investigation Assistant (Milestone 5.2)
+# -------------------------------------------------------------------------
+
+class AIAnalysisRequest(BaseModel):
+    task: Optional[str] = Field(default=None, description="Optional custom analytical investigation prompt")
+    session_id: Optional[str] = Field(default=None, description="Optional ephemeral session ID")
+    strict_citations: bool = Field(default=True, description="Strictly enforce that all citations exist in context")
+
+
+@protected_router.get("/ai/status")
+async def get_ai_status() -> Dict[str, Any]:
+    """Diagnostic health check and model availability for the local AI subsystem."""
+    from logintel.ai.service import ai_service
+    return await ai_service.get_status()
+
+
+@protected_router.post("/ai/investigations/{incident_id}/analyze")
+async def analyze_investigation_with_ai(
+    incident_id: int,
+    req: Optional[AIAnalysisRequest] = None,
+) -> Dict[str, Any]:
+    """Execute evidence-grounded local AI analysis for a security incident."""
+    from logintel.storage.incidents_repo import incidents_repo
+    from logintel.ai.service import ai_service
+    from logintel.ai.errors import (
+        ModelUnavailable,
+        ProviderUnavailable,
+        ProviderTimeout,
+        ProviderMalformedResponse,
+        CrossInvestigationCitation,
+        InvalidCitation,
+        InvalidEpistemicClaim,
+        AIConcurrencyLimit,
+        AIError,
+    )
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    task = req.task if req else None
+    session_id = req.session_id if req else None
+    strict = req.strict_citations if req else True
+
+    try:
+        response = await ai_service.analyze_investigation(
+            incident_id=incident_id,
+            session_id=session_id,
+            task=task,
+            strict_citations=strict,
+        )
+        return response.model_dump(mode="json")
+    except ModelUnavailable as e:
+        raise HTTPException(status_code=503, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except ProviderUnavailable as e:
+        raise HTTPException(status_code=503, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except ProviderTimeout as e:
+        raise HTTPException(status_code=504, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except AIConcurrencyLimit as e:
+        raise HTTPException(status_code=429, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except (CrossInvestigationCitation, InvalidCitation, InvalidEpistemicClaim, ProviderMalformedResponse) as e:
+        raise HTTPException(status_code=502, detail={"error": e.error_code, "message": e.message, "details": e.details})
+    except AIError as e:
+        raise HTTPException(status_code=500, detail={"error": e.error_code, "message": e.message, "details": e.details})
+
+
 router.include_router(protected_router)
+
 
 

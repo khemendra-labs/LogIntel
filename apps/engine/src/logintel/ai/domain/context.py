@@ -129,3 +129,9 @@ class InvestigationContext(BaseModel):
         c_dict = self.canonical_content_dict(include_generated_at=include_generated_at)
         canonical_json = json.dumps(c_dict, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+    @property
+    def canonical_content_hash(self) -> str:
+        """Return deterministic SHA-256 hash of canonical content."""
+        return self.content_sha256(include_generated_at=False)
+

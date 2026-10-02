@@ -43,6 +43,7 @@ class EvidenceRef(BaseModel):
 
     evidence_type: EvidenceType
     evidence_id: str = Field(..., min_length=1, max_length=256)
+    citation_tag: Optional[str] = Field(None, max_length=256)
     canonical_key: Optional[str] = Field(None, max_length=512)
     description: Optional[str] = Field(None, max_length=1024)
 

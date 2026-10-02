@@ -70,6 +70,10 @@ class CitationManifest(BaseModel):
     def contains(self, tag: str) -> bool:
         return tag in self.citations
 
+    def is_citation_valid(self, tag: str) -> bool:
+        """Check whether a citation tag is present and valid within this manifest."""
+        return tag in self.citations
+
     def tags(self) -> List[str]:
         """Return deterministically sorted list of all citation tags."""
         return sorted(self.citations.keys())
