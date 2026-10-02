@@ -492,7 +492,6 @@ class EvidenceRetriever:
         conflicts: List[EvidenceConflict] = []
         c_idx = 1
 
-        # Check for temporal anomalies: e.g. login success preceding repeated failures from same host/user
         event_items = [i for i in items if i.evidence_type == EvidenceType.EVENT]
         failed_logins = [
             e for e in event_items
@@ -503,7 +502,26 @@ class EvidenceRetriever:
             if e.metadata.get("action") == "login" and e.metadata.get("outcome") == "success"
         ]
 
-        # If a success occurred after failures, note potential authentication conflict/privilege anomaly
+        # 1. State Contradiction (mutually exclusive states at identical timestamp/entity context)
+        for succ in success_logins:
+            for fail in failed_logins:
+                if succ.timestamp == fail.timestamp and succ.metadata.get("host") == fail.metadata.get("host"):
+                    conflicts.append(
+                        EvidenceConflict(
+                            conflict_id=f"conf-{c_idx}",
+                            evidence_tag_a=succ.citation_tag,
+                            evidence_tag_b=fail.citation_tag,
+                            conflict_type="STATE_CONTRADICTION",
+                            explanation=(
+                                f"Authoritative records report simultaneous SUCCESS and FAILURE for the same "
+                                f"host {succ.metadata.get('host')} at exact timestamp {succ.timestamp}."
+                            ),
+                            is_contradiction=True,
+                        )
+                    )
+                    c_idx += 1
+
+        # 2. Temporal Anomaly (out-of-sequence occurrences requiring analyst review)
         for succ in success_logins:
             for fail in failed_logins:
                 if succ.timestamp < fail.timestamp and succ.metadata.get("host") == fail.metadata.get("host"):
@@ -512,11 +530,14 @@ class EvidenceRetriever:
                             conflict_id=f"conf-{c_idx}",
                             evidence_tag_a=succ.citation_tag,
                             evidence_tag_b=fail.citation_tag,
-                            conflict_type="TEMPORAL_SEQUENCE_INCONSISTENCY",
+                            conflict_type="TEMPORAL_ANOMALY",
                             explanation=(
-                                f"Successful authentication at {succ.timestamp} unexpectedly preceded "
-                                f"authentication failure at {fail.timestamp} on host {succ.metadata.get('host')}"
+                                f"Successful authentication at {succ.timestamp} preceded "
+                                f"authentication failure at {fail.timestamp} on host {succ.metadata.get('host')}. "
+                                f"This sequence represents a temporal anomaly for investigation, "
+                                f"not an automatic contradiction of observed records."
                             ),
+                            is_contradiction=False,
                         )
                     )
                     c_idx += 1
@@ -541,6 +562,7 @@ class EvidenceRetriever:
                     description="No Linux auditd or process execution syscall telemetry is available for this incident.",
                     impact="Subsequent command execution, argument vectors, and spawned child processes cannot be conclusively verified.",
                     suggested_data_source="/var/log/audit/audit.log",
+                    gap_type="VISIBILITY_GAP",
                 )
             )
             g_idx += 1
@@ -554,6 +576,21 @@ class EvidenceRetriever:
                     description="Network entities are present, but dedicated packet filter or connection flow telemetry is missing.",
                     impact="Egress data transfer volumes and connection durations cannot be definitively observed.",
                     suggested_data_source="iptables / ufw / zeek logs",
+                    gap_type="VISIBILITY_GAP",
+                )
+            )
+            g_idx += 1
+
+        # Check for observed telemetry absence (source is present, but specific expected actions are absent)
+        if has_auth and not any(i.metadata.get("action") == "sudo" for i in items if i.evidence_type == EvidenceType.EVENT):
+            gaps.append(
+                EvidenceGap(
+                    gap_id=f"gap-{g_idx}",
+                    category="SUDO_PRIVILEGE_TELEMETRY",
+                    description="Authentication telemetry is active, but zero sudo or privilege escalation events were observed in the window.",
+                    impact="Absence of observed sudo events within available auth telemetry does not constitute proof that no privilege escalation occurred.",
+                    suggested_data_source="/var/log/auth.log",
+                    gap_type="OBSERVED_TELEMETRY_ABSENCE",
                 )
             )
             g_idx += 1

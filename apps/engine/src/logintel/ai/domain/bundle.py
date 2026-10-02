@@ -52,7 +52,7 @@ class EvidenceItem(BaseModel):
 
 
 class EvidenceConflict(BaseModel):
-    """Explicit representation of conflicting or contradictory forensic evidence."""
+    """Explicit representation of conflicting, contradictory, or anomalous forensic evidence."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -61,6 +61,7 @@ class EvidenceConflict(BaseModel):
     evidence_tag_b: str
     conflict_type: str
     explanation: str
+    is_contradiction: bool = False
 
 
 class EvidenceGap(BaseModel):
@@ -73,6 +74,7 @@ class EvidenceGap(BaseModel):
     description: str
     impact: str
     suggested_data_source: Optional[str] = None
+    gap_type: str = "VISIBILITY_GAP"
 
 
 class EvidenceCoverage(BaseModel):

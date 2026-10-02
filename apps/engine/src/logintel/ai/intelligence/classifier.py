@@ -30,6 +30,10 @@ INTENT_PATTERNS = [
         re.compile(r"\b(why was\s+(?:the|this|an?)?\s*alert|alert\s+explanation|explain\s+(?:the|this|an?)?\s*alert|alert\s+details)\b", re.IGNORECASE),
     ),
     (
+        InvestigationIntent.EVIDENCE_EXPLANATION,
+        re.compile(r"\b(evidence\s+(?:details|explanation)|explain\s+(?:the\s+)?evidence|what does this evidence mean|explain\s+event\b)", re.IGNORECASE),
+    ),
+    (
         InvestigationIntent.DETECTION_EXPLANATION,
         re.compile(r"\b(detection\s+rule|why did\s+(?:the|this)\s+rule trigger|rule\s+logic|explain\s+detection)\b", re.IGNORECASE),
     ),
