@@ -1,0 +1,1 @@
+"""LogIntel AI Domain Models."""
