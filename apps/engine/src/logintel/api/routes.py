@@ -1525,6 +1525,172 @@ def get_case_ai_context(case_id: int) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# =========================================================================
+# M5.6 Investigation Intelligence & Governed Threat Hunting Routes
+# =========================================================================
+
+class HuntProposalApiRequest(BaseModel):
+    template_id: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    rationale: str
+    suggested_by: str = "SecAnalyst-1"
+
+
+class HuntExecuteApiRequest(BaseModel):
+    proposal_id: str
+    template_id: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    rationale: str
+    suggested_by: str = "SecAnalyst-1"
+    approved_by: str = "SecAnalyst-1"
+
+
+class IntelligenceSynthesisApiRequest(BaseModel):
+    prompt: Optional[str] = None
+    actor: str = "SecAnalyst-1"
+
+
+@protected_router.get("/cases/{case_id}/findings")
+def get_case_findings(case_id: int) -> Dict[str, Any]:
+    """Retrieve deterministic investigation findings and multi-attribute correlations."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        findings, correlations = case_service.get_findings_and_correlations(case_id)
+        return {
+            "case_id": case_id,
+            "findings": [f.model_dump(mode="json") for f in findings],
+            "correlations": [c.model_dump(mode="json") for c in correlations],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/correlations")
+def get_case_correlations(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve deterministic evidence correlations with explicit explanation reasons."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        _, correlations = case_service.get_findings_and_correlations(case_id)
+        return [c.model_dump(mode="json") for c in correlations]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline")
+def get_case_timeline(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve unified investigation timeline with strict provenance demarcation."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        timeline = case_service.get_case_timeline(case_id)
+        return [item.model_dump(mode="json") for item in timeline]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/evidence-gaps")
+def get_case_evidence_gaps(case_id: int) -> List[Dict[str, Any]]:
+    """Identify missing telemetry dimensions and safe threat hunt query recommendations."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        gaps = case_service.get_evidence_gaps(case_id)
+        return [g.model_dump(mode="json") for g in gaps]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/pivots/{entity_type}/{entity_value}")
+def get_case_entity_pivot(case_id: int, entity_type: str, entity_value: str) -> Dict[str, Any]:
+    """Execute deep entity investigation pivot across events, alerts, and cases without duplicating payloads."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        pivot = case_service.resolve_entity_pivot(case_id, entity_type, entity_value)
+        return pivot.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunt/proposals")
+def create_case_hunt_proposal(case_id: int, req: HuntProposalApiRequest) -> Dict[str, Any]:
+    """Validate and generate a governed threat hunting proposal with read-only preview."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        proposal = case_service.create_hunt_proposal(
+            case_id=case_id,
+            template_id=req.template_id,
+            parameters=req.parameters,
+            rationale=req.rationale,
+            suggested_by=req.suggested_by,
+        )
+        return proposal.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunt/execute")
+def execute_case_hunt_query(case_id: int, req: HuntExecuteApiRequest) -> Dict[str, Any]:
+    """Execute analyst-approved governed threat hunting query and persist to case query history."""
+    from logintel.ai.case_service import case_service
+    from logintel.ai.domain.investigation_intel import GovernedThreatHuntProposal
+
+    try:
+        proposal = GovernedThreatHuntProposal(
+            proposal_id=req.proposal_id,
+            case_id=case_id,
+            template_id=req.template_id,
+            parameters=req.parameters,
+            rationale=req.rationale,
+            suggested_by=req.suggested_by,
+        )
+        execution = case_service.execute_hunt_query(proposal, approved_by=req.approved_by)
+        return execution.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hypotheses/{hyp_id}/analysis")
+def analyze_case_hypothesis_endpoint(case_id: int, hyp_id: str) -> Dict[str, Any]:
+    """Perform deterministic evidence support analysis for an analyst-owned hypothesis."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        analysis = case_service.analyze_hypothesis(case_id, hyp_id)
+        return analysis.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/intelligence")
+def get_case_intelligence_dossier_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve comprehensive aggregated investigation intelligence dossier."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        dossier = case_service.get_case_intelligence_dossier(case_id)
+        return dossier.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/intelligence/synthesis")
+def synthesize_case_intelligence(case_id: int, req: Optional[IntelligenceSynthesisApiRequest] = None) -> Dict[str, Any]:
+    """Generate structured AI investigation intelligence with application-level containment."""
+    from logintel.ai.case_service import case_service
+
+    prompt = req.prompt if req else None
+    actor = req.actor if req else "SecAnalyst-1"
+    try:
+        response = case_service.generate_ai_investigation_intelligence(case_id, prompt=prompt, actor=actor)
+        return response.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

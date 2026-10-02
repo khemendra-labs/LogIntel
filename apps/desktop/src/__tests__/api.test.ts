@@ -985,6 +985,225 @@ describe("Frontend API Client and Authentication", () => {
     expect(result.length).toBe(1);
     expect(result[0].action).toBe("CASE_CREATED");
   });
+
+  it("fetchCaseFindings retrieves structured findings and multi-attribute correlations", async () => {
+    setEngineToken("m56_findings_token");
+    const mockData = {
+      case_id: 501,
+      findings: [
+        {
+          finding_id: "fnd-1",
+          case_id: 501,
+          finding_type: "AUTHENTICATION_FAILURE_BURST",
+          title: "Brute Force Pattern",
+          description: "Multiple failures",
+          epistemic_status: "OBSERVED",
+          confidence_basis: "Forensic events",
+          source_references: ["[event:101]"],
+          related_entities: ["user:deployer"],
+          related_alerts: [],
+          related_detections: [],
+          related_events: ["101"],
+          created_at: "2026-10-02T12:00:00Z",
+          generated_by: "DETERMINISTIC_CORRELATOR",
+        },
+      ],
+      correlations: [
+        {
+          correlation_id: "corr-1",
+          case_id: 501,
+          source_item: "[event:101]",
+          target_item: "[alert:11]",
+          reasons: ["same host: srv-01"],
+          confidence_score: 1.0,
+          shared_entities: ["host:srv-01"],
+        },
+      ],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockData,
+    } as Response);
+
+    const { fetchCaseFindings } = await import("../lib/api");
+    const result = await fetchCaseFindings(501);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases/501/findings",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer m56_findings_token" }),
+      })
+    );
+    expect(result.case_id).toBe(501);
+    expect(result.findings.length).toBe(1);
+    expect(result.findings[0].epistemic_status).toBe("OBSERVED");
+    expect(result.correlations.length).toBe(1);
+  });
+
+  it("fetchCaseTimeline retrieves unified timeline items with provenance", async () => {
+    setEngineToken("m56_timeline_token");
+    const mockTimeline = [
+      {
+        item_id: "tl-1",
+        case_id: 501,
+        timestamp: "2026-10-02T12:00:00Z",
+        source_type: "OBSERVED_EVENT",
+        title: "Auth Failure",
+        summary: "Failed login",
+        provenance: "Authoritative event",
+        is_authoritative: true,
+      },
+    ];
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockTimeline,
+    } as Response);
+
+    const { fetchCaseTimeline } = await import("../lib/api");
+    const result = await fetchCaseTimeline(501);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases/501/timeline",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer m56_timeline_token" }),
+      })
+    );
+    expect(result.length).toBe(1);
+    expect(result[0].is_authoritative).toBe(true);
+  });
+
+  it("fetchCaseEvidenceGaps retrieves missing telemetry gaps", async () => {
+    setEngineToken("m56_gap_token");
+    const mockGaps = [
+      {
+        gap_id: "gap-1",
+        case_id: 501,
+        gap_type: "MISSING_PROCESS_TELEMETRY",
+        description: "No process execution data",
+        affected_scope: ["srv-01"],
+        supporting_context: "Observed auth without subsequent exec logs",
+        status: "OPEN",
+      },
+    ];
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockGaps,
+    } as Response);
+
+    const { fetchCaseEvidenceGaps } = await import("../lib/api");
+    const result = await fetchCaseEvidenceGaps(501);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:41721/api/v1/cases/501/evidence-gaps",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer m56_gap_token" }),
+      })
+    );
+    expect(result.length).toBe(1);
+    expect(result[0].gap_type).toBe("MISSING_PROCESS_TELEMETRY");
+  });
+
+  it("createThreatHuntProposal and executeCaseThreatHunt perform governed threat hunting", async () => {
+    setEngineToken("m56_hunt_token");
+    const mockProposal = {
+      proposal_id: "hunt-prop-1",
+      case_id: 501,
+      template_id: "search_auth_failures",
+      parameters: { username: "deployer" },
+      rationale: "Investigate brute-force burst",
+      validation_status: "VALID" as const,
+      validation_errors: [],
+      preview_query_description: "Hunt auth failures for deployer",
+      suggested_by: "analyst-1",
+      created_at: "2026-10-02T12:05:00Z",
+    };
+
+    const mockExecution = {
+      case_id: 501,
+      proposal_id: "hunt-prop-1",
+      template_id: "search_auth_failures",
+      parameters: { username: "deployer" },
+      executed_by: "analyst-1",
+      approved_by: "lead-analyst",
+      executed_at: "2026-10-02T12:06:00Z",
+      result_status: "MATCHED" as const,
+      result_count: 3,
+      matched_items: [{ id: "101" }, { id: "102" }, { id: "103" }],
+      candidate_findings: [],
+    };
+
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockProposal,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockExecution,
+      } as Response);
+
+    const { createThreatHuntProposal, executeCaseThreatHunt } = await import("../lib/api");
+    const prop = await createThreatHuntProposal(501, "search_auth_failures", { username: "deployer" }, "Investigate");
+    expect(prop.validation_status).toBe("VALID");
+
+    const exec = await executeCaseThreatHunt(501, prop, "lead-analyst");
+    expect(exec.result_status).toBe("MATCHED");
+    expect(exec.result_count).toBe(3);
+  });
+
+  it("fetchCaseIntelligenceDossier and generateCaseIntelligenceSynthesis assemble intelligence advisory", async () => {
+    setEngineToken("m56_intel_token");
+    const mockDossier = {
+      case_id: 501,
+      incident_id: 500,
+      case_title: "APT Case",
+      status: "OPEN",
+      owner: "analyst-1",
+      findings: [],
+      correlations: [],
+      evidence_gaps: [],
+      timeline: [],
+      hypotheses_analysis: [],
+      attack_path: [],
+      mitre_mappings: [],
+      generated_at: "2026-10-02T12:00:00Z",
+    };
+
+    const mockSynthesis = {
+      case_id: 501,
+      summary: "Investigation synthesis",
+      observed_claims: ["Failed login burst observed"],
+      inferred_claims: [],
+      unknowns: ["Target binary"],
+      evidence_gaps: ["Process telemetry"],
+      correlations: [],
+      citations: ["[event:101]"],
+      suggested_queries: [],
+      hypothesis_assessment: {},
+      provenance: { containment_mode: "APPLICATION_LEVEL_AI_CONTAINMENT" },
+    };
+
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockDossier,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockSynthesis,
+      } as Response);
+
+    const { fetchCaseIntelligenceDossier, generateCaseIntelligenceSynthesis } = await import("../lib/api");
+    const dossier = await fetchCaseIntelligenceDossier(501);
+    expect(dossier.case_id).toBe(501);
+
+    const synthesis = await generateCaseIntelligenceSynthesis(501, "analyst-1");
+    expect(synthesis.observed_claims.length).toBe(1);
+    expect(synthesis.provenance.containment_mode).toBe("APPLICATION_LEVEL_AI_CONTAINMENT");
+  });
 });
 
 

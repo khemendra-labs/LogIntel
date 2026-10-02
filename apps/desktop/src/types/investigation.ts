@@ -526,4 +526,168 @@ export interface InvestigationCase {
   audit_history: CaseAuditRecord[];
 }
 
+// --- Milestone 5.6: Investigation Intelligence, Threat Hunting & Evidence Correlation ---
+
+export type QueryResultStatus = "NO_MATCH" | "MATCHED" | "PARTIAL" | "UNAVAILABLE" | "INVALID" | "FAILED";
+export type TimelineSourceType = "OBSERVED_EVENT" | "ALERT" | "DETECTION" | "ANALYST_ANNOTATION" | "DERIVED_CORRELATION" | "AI_INTERPRETATION";
+export type HypothesisSupportStatus = "SUPPORTED_BY_CURRENT_EVIDENCE" | "WEAKLY_SUPPORTED" | "CONTRADICTED" | "INSUFFICIENT_EVIDENCE" | "UNRESOLVED";
+
+export interface InvestigationFinding {
+  finding_id: string;
+  case_id: number;
+  finding_type: string;
+  title: string;
+  description: string;
+  epistemic_status: EpistemicStatus;
+  confidence_basis: string;
+  source_references: string[];
+  related_entities: string[];
+  related_alerts: string[];
+  related_detections: string[];
+  related_events: string[];
+  created_at: string;
+  generated_by: string;
+}
+
+export interface InvestigationCorrelation {
+  correlation_id: string;
+  case_id: number;
+  source_item: string;
+  target_item: string;
+  reasons: string[];
+  confidence_score: number;
+  temporal_distance_seconds?: number | null;
+  shared_entities: string[];
+}
+
+export interface TemporalWindowAnalysis {
+  anchor_id: string;
+  anchor_type: string;
+  anchor_timestamp: string;
+  window_seconds: number;
+  before_items: Array<Record<string, any>>;
+  during_items: Array<Record<string, any>>;
+  after_items: Array<Record<string, any>>;
+  temporal_anomalies: string[];
+  state_contradictions: string[];
+}
+
+export interface EvidenceGap {
+  gap_id: string;
+  case_id: number;
+  gap_type: string;
+  description: string;
+  affected_scope: string[];
+  supporting_context: string;
+  recommended_query?: Record<string, any> | null;
+  status: string;
+}
+
+export interface GovernedThreatHuntProposal {
+  proposal_id: string;
+  case_id: number;
+  template_id: string;
+  parameters: Record<string, any>;
+  rationale: string;
+  validation_status: "VALID" | "INVALID";
+  validation_errors: string[];
+  preview_query_description: string;
+  suggested_by: string;
+  created_at: string;
+}
+
+export interface GovernedThreatHuntExecution {
+  case_id: number;
+  proposal_id: string;
+  template_id: string;
+  parameters: Record<string, any>;
+  executed_by: string;
+  approved_by: string;
+  executed_at: string;
+  result_status: QueryResultStatus;
+  result_count: number;
+  matched_items: Array<Record<string, any>>;
+  candidate_findings: InvestigationFinding[];
+}
+
+export interface EntityPivotAnalysis {
+  entity_type: string;
+  entity_value: string;
+  case_id: number;
+  related_events: Array<Record<string, any>>;
+  related_alerts: Array<Record<string, any>>;
+  related_detections: Array<Record<string, any>>;
+  related_incidents: number[];
+  related_cases: number[];
+  related_entities: Array<Record<string, any>>;
+  temporal_activity: Array<Record<string, any>>;
+  evidence_references: string[];
+}
+
+export interface CaseTimelineItem {
+  item_id: string;
+  case_id: number;
+  timestamp: string;
+  source_type: TimelineSourceType;
+  title: string;
+  summary: string;
+  provenance: string;
+  citation_tag?: string | null;
+  is_authoritative: boolean;
+  metadata?: Record<string, any>;
+}
+
+export interface HypothesisEvidenceAnalysis {
+  hypothesis_id: string;
+  case_id: number;
+  statement: string;
+  support_status: HypothesisSupportStatus;
+  supporting_evidence: Array<Record<string, any>>;
+  contradicting_evidence: Array<Record<string, any>>;
+  evidence_gaps: string[];
+  temporal_consistency: boolean;
+  entity_consistency: boolean;
+  analysis_summary: string;
+}
+
+export interface AttackPathStepAnalysis {
+  step_number: number;
+  stage: string;
+  description: string;
+  epistemic_status: EpistemicStatus;
+  supporting_evidence: string[];
+  mitre_technique_id?: string | null;
+  mitre_technique_name?: string | null;
+}
+
+export interface CaseIntelligenceDossier {
+  case_id: number;
+  incident_id: number;
+  case_title: string;
+  status: string;
+  owner: string;
+  findings: InvestigationFinding[];
+  correlations: InvestigationCorrelation[];
+  evidence_gaps: EvidenceGap[];
+  timeline: CaseTimelineItem[];
+  hypotheses_analysis: HypothesisEvidenceAnalysis[];
+  attack_path: AttackPathStepAnalysis[];
+  mitre_mappings: Array<Record<string, any>>;
+  generated_at: string;
+}
+
+export interface InvestigationIntelligenceResponse {
+  case_id: number;
+  summary: string;
+  observed_claims: string[];
+  inferred_claims: string[];
+  unknowns: string[];
+  evidence_gaps: string[];
+  correlations: string[];
+  citations: string[];
+  suggested_queries: Array<Record<string, any>>;
+  hypothesis_assessment: Record<string, any>;
+  provenance: Record<string, any>;
+}
+
 

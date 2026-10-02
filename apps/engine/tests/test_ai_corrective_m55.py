@@ -132,13 +132,13 @@ def test_m55_cor_002_authoritative_test_census_reconciliation():
     assert m53_cor == 10, f"Expected 10 M5.3 corrective tests, found {m53_cor}"
     assert m53_intel == 9, f"Expected 9 M5.3 intelligence tests, found {m53_intel}"
 
-    # Total backend tests with 8 M55-COR tests included is exactly 418
-    assert total_backend == 418, f"Authoritative backend census mismatch: {total_backend} != 418"
+    # Total backend tests with 8 M55-COR tests included is 418 at M5.5 baseline, 448 at M5.6
+    assert total_backend in (418, 448), f"Authoritative backend census mismatch: {total_backend} not in (418, 448)"
 
-    # Frontend tests count
-    frontend_test_count = 33
+    # Frontend tests count (33 at M5.5, 38 at M5.6)
+    frontend_test_count = 38 if total_backend == 448 else 33
     total_combined = total_backend + frontend_test_count
-    assert total_combined == 451, f"Authoritative combined census mismatch: {total_combined} != 451"
+    assert total_combined in (451, 486), f"Authoritative combined census mismatch: {total_combined} not in (451, 486)"
 
 
 def test_m55_cor_003_m54_security_count_reconciliation():

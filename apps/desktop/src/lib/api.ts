@@ -56,6 +56,16 @@ import type {
   CaseQueryRecord,
   CaseReportVersion,
   CaseAuditRecord,
+  InvestigationFinding,
+  InvestigationCorrelation,
+  EvidenceGap,
+  GovernedThreatHuntProposal,
+  GovernedThreatHuntExecution,
+  EntityPivotAnalysis,
+  CaseTimelineItem,
+  HypothesisEvidenceAnalysis,
+  CaseIntelligenceDossier,
+  InvestigationIntelligenceResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -1190,6 +1200,173 @@ export async function fetchCaseAIContext(caseId: number): Promise<any> {
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch reconstructed AI context: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseFindings(caseId: number): Promise<{ case_id: number; findings: InvestigationFinding[]; correlations: InvestigationCorrelation[] }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case findings: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseCorrelations(caseId: number): Promise<InvestigationCorrelation[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlations`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case correlations: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseTimeline(caseId: number): Promise<CaseTimelineItem[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case timeline: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseEvidenceGaps(caseId: number): Promise<EvidenceGap[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence-gaps`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence gaps: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function resolveEntityPivot(
+  caseId: number,
+  entityType: string,
+  entityValue: string
+): Promise<EntityPivotAnalysis> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/pivots/${encodeURIComponent(entityType)}/${encodeURIComponent(entityValue)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to resolve entity pivot: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createThreatHuntProposal(
+  caseId: number,
+  templateId: string,
+  parameters: Record<string, any>,
+  rationale: string,
+  actor: string = "SecAnalyst-1"
+): Promise<GovernedThreatHuntProposal> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunt/proposals`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      template_id: templateId,
+      parameters,
+      rationale,
+      actor,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create threat hunt proposal: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function executeCaseThreatHunt(
+  caseId: number,
+  proposal: GovernedThreatHuntProposal,
+  approvedBy: string = "SecAnalyst-1"
+): Promise<GovernedThreatHuntExecution> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunt/execute`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      proposal,
+      approved_by: approvedBy,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to execute threat hunt: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchHypothesisAnalysis(
+  caseId: number,
+  hypothesisId: string
+): Promise<HypothesisEvidenceAnalysis> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/${encodeURIComponent(hypothesisId)}/analysis`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch hypothesis analysis: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseIntelligenceDossier(caseId: number): Promise<CaseIntelligenceDossier> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/intelligence`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case intelligence dossier: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function generateCaseIntelligenceSynthesis(
+  caseId: number,
+  actor: string = "SecAnalyst-1"
+): Promise<InvestigationIntelligenceResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/intelligence/synthesis`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ actor }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to generate case intelligence synthesis: ${res.statusText}`);
   }
   return res.json();
 }
