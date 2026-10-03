@@ -39,6 +39,7 @@ import {
   CaseReportVersion,
   CaseAuditRecord,
 } from "../types/investigation";
+import { InvestigationGraphExplorer } from "./InvestigationGraphExplorer";
 
 interface InvestigationIntelligencePanelProps {
   incidentId: number;
@@ -53,8 +54,8 @@ export function InvestigationIntelligencePanel({
   onSelectAlertId,
   onSelectEntityKey,
 }: InvestigationIntelligencePanelProps) {
-  // Navigation sub-tabs for M5.4 & M5.5
-  const [subTab, setSubTab] = useState<"ask" | "hypotheses" | "queries" | "summary" | "report" | "audit">("ask");
+  // Navigation sub-tabs for M5.4, M5.5 & M5.8
+  const [subTab, setSubTab] = useState<"ask" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph">("ask");
 
   // Persistent Case State (M5.5 Continuity)
   const [caseData, setCaseData] = useState<InvestigationCase | null>(null);
@@ -514,6 +515,7 @@ export function InvestigationIntelligencePanel({
       <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-color, #e2e8f0)", paddingBottom: "4px" }}>
         {[
           { id: "ask", label: "Analyst Questions & AI" },
+          { id: "graph", label: "Investigation Graph & Pivots (M5.8)" },
           { id: "hypotheses", label: `Hypothesis Workbench (${hypotheses.length})` },
           { id: "queries", label: "Query Execution & Evidence Candidates" },
           { id: "summary", label: "Structured Summary" },
@@ -1224,6 +1226,17 @@ export function InvestigationIntelligencePanel({
             </table>
           </div>
         </div>
+      )}
+
+      {/* 7. Investigation Graph & Pivots (M5.8) */}
+      {subTab === "graph" && (
+        <InvestigationGraphExplorer
+          caseId={caseData?.case_id || incidentId}
+          incidentId={incidentId}
+          onSelectEventId={onSelectEventId}
+          onSelectAlertId={onSelectAlertId}
+          onSelectEntityKey={onSelectEntityKey}
+        />
       )}
     </div>
   );

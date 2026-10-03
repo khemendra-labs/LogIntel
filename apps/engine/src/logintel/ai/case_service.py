@@ -32,6 +32,7 @@ from logintel.ai.domain.investigation_intel import (
     CaseIntelligenceDossier,
     CaseTimelineItem,
     EntityPivotAnalysis,
+    EpistemicStatus,
     EvidenceGap,
     GovernedThreatHuntExecution,
     GovernedThreatHuntProposal,
@@ -51,7 +52,15 @@ from logintel.ai.domain.investigation_dossier import (
     ProvenanceManifestEntry,
     RefinedTimelineItem,
 )
+from logintel.ai.domain.investigation_graph import (
+    EntityPivotGraph,
+    GraphExplanationResponse,
+    InvestigationGraph,
+    InvestigationPath,
+    TemporalChain,
+)
 from logintel.ai.dossier.dossier_builder import DossierBuilder
+from logintel.ai.graph.graph_builder import InvestigationGraphBuilder
 from logintel.ai.intelligence.service import InvestigationIntelligenceService
 from logintel.ai.evidence.retriever import EvidenceRetriever
 from logintel.logging import get_logger
@@ -88,6 +97,7 @@ class CaseService:
             case_repo=self.case_repo,
             investigation_repo=self.investigation_repo,
         )
+        self.graph_builder = InvestigationGraphBuilder(forensic_db=self.forensic_db)
 
     def create_or_open_case(
         self,
@@ -902,6 +912,173 @@ class CaseService:
             is_final=is_final,
             actor=actor,
         )
+
+    # =========================================================================
+    # Milestone 5.8: Investigation Graph & Evidence Relationship Intelligence
+    # =========================================================================
+
+    def get_investigation_graph(
+        self,
+        case_id: int,
+        max_nodes: int = 50,
+        max_edges: int = 100,
+        entity_type: Optional[str] = None,
+        relationship_type: Optional[str] = None,
+        epistemic_status: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> InvestigationGraph:
+        """Construct bounded, evidence-bound investigation graph for a case (M5.8)."""
+        case = self.get_case(case_id, resolve_evidence=True)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        incident = self.incidents_repo.get_incident(case.incident_id)
+        entities = self.incidents_repo.get_incident_entities(case.incident_id)
+        relationships = self.incidents_repo.get_incident_relationships(case.incident_id)
+        mitre_mappings = self.investigation_repo.get_incident_mitre_mappings(case.incident_id)
+
+        return self.graph_builder.build_graph(
+            case=case,
+            incident=incident,
+            entities=entities,
+            relationships=relationships,
+            mitre_mappings=mitre_mappings,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            entity_type=entity_type,
+            relationship_type=relationship_type,
+            epistemic_status=epistemic_status,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    def get_graph_node_detail(self, case_id: int, node_id: str) -> Dict[str, Any]:
+        """Retrieve detailed node inspection including connected edges and citations (M5.8)."""
+        graph = self.get_investigation_graph(case_id, max_nodes=200, max_edges=500)
+        node = next((n for n in graph.nodes if n.node_id == node_id), None)
+        if not node:
+            raise ValueError(f"Node {node_id} not found in case {case_id}")
+
+        connected_edges = [
+            e for e in graph.edges if e.source_node_id == node_id or e.target_node_id == node_id
+        ]
+        return {
+            "node": node.model_dump(),
+            "connected_edges": [e.model_dump() for e in connected_edges],
+            "total_connected_edges": len(connected_edges),
+        }
+
+    def get_graph_edge_evidence(self, case_id: int, edge_id: str) -> Dict[str, Any]:
+        """Deep forensic inspection for a specific graph edge including all citations (M5.8)."""
+        graph = self.get_investigation_graph(case_id, max_nodes=200, max_edges=500)
+        edge = next((e for e in graph.edges if e.edge_id == edge_id), None)
+        if not edge:
+            raise ValueError(f"Edge {edge_id} not found in case {case_id}")
+
+        return {
+            "edge": edge.model_dump(),
+            "evidence_references": [ev.model_dump() for ev in edge.evidence_references],
+            "evidence_event_ids": edge.evidence_event_ids,
+            "corroboration_status": edge.corroboration_status.value,
+            "epistemic_status": edge.epistemic_status.value,
+            "is_authoritative": edge.is_authoritative,
+        }
+
+    def get_entity_pivot_graph(
+        self,
+        case_id: int,
+        entity_type: str,
+        entity_value: str,
+    ) -> EntityPivotGraph:
+        """Construct case-bounded entity pivot graph showing adjacent relationships (M5.8)."""
+        graph = self.get_investigation_graph(case_id, max_nodes=200, max_edges=500)
+        # entity_key can be e.g. "srv-api-01" or "host:srv-api-01"
+        entity_key = f"{entity_type.lower()}:{entity_value}" if ":" not in entity_value else entity_value
+        return self.graph_builder.build_entity_pivot_graph(graph, entity_key, entity_type)
+
+    def get_investigation_path(
+        self,
+        case_id: int,
+        source_node_id: str,
+        target_node_id: str,
+        max_depth: int = 5,
+    ) -> Optional[InvestigationPath]:
+        """Reconstruct bounded investigation path between source and target nodes (M5.8)."""
+        graph = self.get_investigation_graph(case_id, max_nodes=200, max_edges=500)
+        return self.graph_builder.reconstruct_investigation_path(
+            graph=graph,
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+            max_depth=max_depth,
+        )
+
+    def get_temporal_chain(self, case_id: int) -> TemporalChain:
+        """Derive chronological relationship sequence with delta-time annotations (M5.8)."""
+        graph = self.get_investigation_graph(case_id, max_nodes=200, max_edges=500)
+        return self.graph_builder.build_temporal_chain(graph)
+
+    def explain_graph_relationship(
+        self,
+        case_id: int,
+        edge_id: Optional[str] = None,
+        path_nodes: Optional[List[str]] = None,
+        question: Optional[str] = None,
+    ) -> GraphExplanationResponse:
+        """Generate advisory-only, citation-grounded narrative explanation of graph relationships (M5.8)."""
+        graph = self.get_investigation_graph(case_id, max_nodes=200, max_edges=500)
+        target_ref = edge_id or (f"path:{'->'.join(path_nodes)}" if path_nodes else "graph")
+
+        citations: List[str] = []
+        if edge_id:
+            edge = next((e for e in graph.edges if e.edge_id == edge_id), None)
+            if not edge:
+                raise ValueError(f"Edge {edge_id} not found in case {case_id}")
+            citations = [ev.citation_tag for ev in edge.evidence_references]
+            summary = (
+                f"Advisory Explanation: Observed relationship '{edge.relationship_type}' connecting "
+                f"{edge.source_node_id} to {edge.target_node_id}. Grounded in {len(citations)} forensic "
+                f"evidence citations with {edge.corroboration_status.value} corroboration status."
+            )
+        elif path_nodes and len(path_nodes) >= 2:
+            path = self.graph_builder.reconstruct_investigation_path(
+                graph, path_nodes[0], path_nodes[-1]
+            )
+            if path:
+                for e in path.edges:
+                    citations.extend([ev.citation_tag for ev in e.evidence_references])
+                summary = (
+                    f"Advisory Path Summary: Progression across {path.total_steps} transitions "
+                    f"({path.path_nature.value}). Corroborated by {len(citations)} forensic citations."
+                )
+            else:
+                summary = f"No direct connected path identified between {path_nodes[0]} and {path_nodes[-1]}."
+        else:
+            summary = (
+                f"Advisory Investigation Graph Overview: Case {case_id} contains {graph.total_nodes} nodes "
+                f"and {graph.total_edges} evidence-bound relationships ({graph.observed_edges_count} observed, "
+                f"{graph.inferred_edges_count} inferred)."
+            )
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        return GraphExplanationResponse(
+            case_id=case_id,
+            target_ref=target_ref,
+            summary=summary,
+            evidence_citations=citations,
+            epistemic_status=EpistemicStatus.INFERRED,
+            is_authoritative=False,
+            generated_by="LOCAL_AI_ADVISORY",
+            generated_at=now_iso,
+        )
+
+    def export_investigation_graph(self, case_id: int, format: str = "json") -> str:
+        """Export case investigation graph with full provenance in JSON or GraphML format (M5.8)."""
+        graph = self.get_investigation_graph(case_id, max_nodes=200, max_edges=500)
+        fmt = (format or "json").lower().strip()
+        if fmt == "graphml":
+            return self.graph_builder.export_graphml(graph)
+        return self.graph_builder.export_graph_json(graph)
 
 
 # Singleton case service instance

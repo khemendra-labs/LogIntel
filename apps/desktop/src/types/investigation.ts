@@ -841,3 +841,172 @@ export interface ReportDraftRequest {
   is_final?: boolean;
   actor?: string;
 }
+
+// ============================================================================
+// Milestone 5.8: Investigation Graph & Evidence Relationship Intelligence
+// ============================================================================
+
+export type GraphNodeType =
+  | "HOST"
+  | "USER"
+  | "IP"
+  | "PROCESS"
+  | "COMMAND"
+  | "FILE"
+  | "SESSION"
+  | "DOMAIN"
+  | "CONTAINER"
+  | "EVENT"
+  | "DETECTION"
+  | "ALERT"
+  | "INCIDENT"
+  | "FINDING";
+
+export type RelationshipEpistemicStatus = "OBSERVED" | "INFERRED" | "UNKNOWN";
+
+export type CorroborationStatus =
+  | "DIRECT_EVIDENCE"
+  | "CORROBORATED"
+  | "SINGLE_SOURCE"
+  | "TEMPORALLY_ALIGNED"
+  | "CONTRADICTED"
+  | "INSUFFICIENT_EVIDENCE"
+  | "UNRESOLVED";
+
+export type TemporalRelation =
+  | "BEFORE"
+  | "DURING"
+  | "AFTER"
+  | "OVERLAPS"
+  | "CO_OCCURRED"
+  | "SEQUENCE";
+
+export type PathNature = "OBSERVED" | "INFERRED" | "MIXED";
+
+export interface GraphEvidenceItem {
+  reference_id: string;
+  source_type: string;
+  source_id: string;
+  source_hash: string;
+  citation_tag: string;
+  timestamp?: string | null;
+  summary: string;
+  epistemic_status: EpistemicStatus;
+  is_authoritative: boolean;
+  role: string;
+}
+
+export interface InvestigationGraphNode {
+  node_id: string;
+  node_type: GraphNodeType;
+  display_label: string;
+  entity_key?: string | null;
+  is_authoritative: boolean;
+  epistemic_status: EpistemicStatus;
+  source_reference?: string | null;
+  metadata?: Record<string, any>;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  degree: number;
+}
+
+export interface InvestigationGraphEdge {
+  edge_id: string;
+  source_node_id: string;
+  target_node_id: string;
+  relationship_type: string;
+  epistemic_status: RelationshipEpistemicStatus;
+  is_authoritative: boolean;
+  confidence: string;
+  corroboration_status: CorroborationStatus;
+  evidence_references: GraphEvidenceItem[];
+  evidence_event_ids: string[];
+  first_seen?: string | null;
+  last_seen?: string | null;
+  duration_seconds?: number | null;
+  temporal_relation?: TemporalRelation | null;
+  mitre_technique_id?: string | null;
+  mitre_tactic?: string | null;
+  description: string;
+  provenance: string;
+}
+
+export interface InvestigationGraph {
+  case_id: number;
+  incident_id: number;
+  nodes: InvestigationGraphNode[];
+  edges: InvestigationGraphEdge[];
+  total_nodes: number;
+  total_edges: number;
+  observed_edges_count: number;
+  inferred_edges_count: number;
+  corroborated_edges_count: number;
+  contradicted_edges_count: number;
+  generated_at: string;
+}
+
+export interface InvestigationPath {
+  path_id: string;
+  case_id: number;
+  source_node_id: string;
+  target_node_id: string;
+  nodes: InvestigationGraphNode[];
+  edges: InvestigationGraphEdge[];
+  total_steps: number;
+  path_nature: PathNature;
+  evidence_references_count: number;
+  total_duration_seconds?: number | null;
+  summary: string;
+}
+
+export interface TemporalChainStep {
+  step_index: number;
+  timestamp: string;
+  edge_id: string;
+  source_node_id: string;
+  target_node_id: string;
+  relationship_type: string;
+  delta_seconds_from_previous?: number | null;
+  evidence_citation: string;
+  epistemic_status: RelationshipEpistemicStatus;
+}
+
+export interface TemporalChain {
+  case_id: number;
+  steps: TemporalChainStep[];
+  total_steps: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  total_span_seconds?: number | null;
+}
+
+export interface EntityPivotGraph {
+  entity_key: string;
+  entity_type: string;
+  case_id: number;
+  connected_nodes: InvestigationGraphNode[];
+  connected_edges: InvestigationGraphEdge[];
+  related_alerts_count: number;
+  related_events_count: number;
+  related_findings_count: number;
+  timeline_occurrences_count: number;
+}
+
+export interface GraphExplanationRequest {
+  edge_id?: string | null;
+  path_nodes?: string[] | null;
+  question?: string | null;
+  include_evidence_citations?: boolean;
+}
+
+export interface GraphExplanationResponse {
+  explanation_id: string;
+  case_id: number;
+  target_ref: string;
+  summary: string;
+  evidence_citations: string[];
+  epistemic_status: EpistemicStatus;
+  is_authoritative: boolean;
+  generated_by: string;
+  generated_at: string;
+}

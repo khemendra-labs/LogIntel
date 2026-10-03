@@ -132,13 +132,19 @@ def test_m55_cor_002_authoritative_test_census_reconciliation():
     assert m53_cor == 10, f"Expected 10 M5.3 corrective tests, found {m53_cor}"
     assert m53_intel == 9, f"Expected 9 M5.3 intelligence tests, found {m53_intel}"
 
-    # Total backend tests with 8 M55-COR tests included is 418 at M5.5 baseline, 448 at M5.6, 478 at M5.7
-    assert total_backend in (418, 448, 478), f"Authoritative backend census mismatch: {total_backend} not in (418, 448, 478)"
+    m58_sec = counts.get("apps/engine/tests/test_ai_security_m58.py", 0)
+    m58_intel = counts.get("apps/engine/tests/test_ai_intelligence_m58.py", 0)
+    if total_backend >= 508:
+        assert m58_sec == 20, f"Expected 20 M5.8 security tests, found {m58_sec}"
+        assert m58_intel == 10, f"Expected 10 M5.8 intelligence tests, found {m58_intel}"
 
-    # Frontend tests count (33 at M5.5, 38 at M5.6, 40 at M5.7)
-    frontend_test_count = 40 if total_backend == 478 else (38 if total_backend == 448 else 33)
+    # Total backend tests: 418 at M5.5, 448 at M5.6, 478 at M5.7, 508 at M5.8
+    assert total_backend in (418, 448, 478, 508), f"Authoritative backend census mismatch: {total_backend} not in (418, 448, 478, 508)"
+
+    # Frontend tests count (33 at M5.5, 38 at M5.6, 40 at M5.7, 41 at M5.8)
+    frontend_test_count = 41 if total_backend == 508 else (40 if total_backend == 478 else (38 if total_backend == 448 else 33))
     total_combined = total_backend + frontend_test_count
-    assert total_combined in (451, 486, 518), f"Authoritative combined census mismatch: {total_combined} not in (451, 486, 518)"
+    assert total_combined in (451, 486, 518, 549), f"Authoritative combined census mismatch: {total_combined} not in (451, 486, 518, 549)"
 
 
 def test_m55_cor_003_m54_security_count_reconciliation():

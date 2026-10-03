@@ -73,6 +73,14 @@ import type {
   RefinedTimelineItem,
   CaseBriefing,
   ProvenanceManifestEntry,
+  InvestigationGraph,
+  InvestigationGraphNode,
+  InvestigationGraphEdge,
+  InvestigationPath,
+  TemporalChain,
+  EntityPivotGraph,
+  GraphExplanationRequest,
+  GraphExplanationResponse,
   ReportDraftRequest,
 } from "../types/investigation";
 
@@ -1510,6 +1518,161 @@ export async function draftReportFromDossier(
   });
   if (!res.ok) {
     throw new Error(`Failed to draft report from dossier: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// -------------------------------------------------------------------------
+// Milestone 5.8: Investigation Graph & Evidence Relationship Intelligence
+// -------------------------------------------------------------------------
+
+export async function fetchCaseInvestigationGraph(
+  caseId: number,
+  params?: {
+    max_nodes?: number;
+    max_edges?: number;
+    entity_type?: string;
+    relationship_type?: string;
+    epistemic_status?: string;
+    start_time?: string;
+    end_time?: string;
+  }
+): Promise<InvestigationGraph> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (params?.max_nodes !== undefined) query.set("max_nodes", String(params.max_nodes));
+  if (params?.max_edges !== undefined) query.set("max_edges", String(params.max_edges));
+  if (params?.entity_type) query.set("entity_type", params.entity_type);
+  if (params?.relationship_type) query.set("relationship_type", params.relationship_type);
+  if (params?.epistemic_status) query.set("epistemic_status", params.epistemic_status);
+  if (params?.start_time) query.set("start_time", params.start_time);
+  if (params?.end_time) query.set("end_time", params.end_time);
+
+  const qs = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/cases/${caseId}/graph${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch investigation graph: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseGraphNodeDetail(
+  caseId: number,
+  nodeId: string
+): Promise<{ node: InvestigationGraphNode; connected_edges: InvestigationGraphEdge[]; total_connected_edges: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/graph/nodes/${encodeURIComponent(nodeId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch graph node detail: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseGraphEdgeEvidence(
+  caseId: number,
+  edgeId: string
+): Promise<{
+  edge: InvestigationGraphEdge;
+  evidence_references: Array<Record<string, any>>;
+  evidence_event_ids: string[];
+  corroboration_status: string;
+  epistemic_status: string;
+  is_authoritative: boolean;
+}> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/graph/edges/${encodeURIComponent(edgeId)}/evidence`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch graph edge evidence: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseEntityPivotGraph(
+  caseId: number,
+  entityType: string,
+  entityValue: string
+): Promise<EntityPivotGraph> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/graph/pivots/${encodeURIComponent(entityType)}/${encodeURIComponent(entityValue)}`,
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to fetch entity pivot graph: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseInvestigationPath(
+  caseId: number,
+  source: string,
+  target: string,
+  maxDepth = 5
+): Promise<InvestigationPath> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams({
+    source,
+    target,
+    max_depth: String(maxDepth),
+  });
+  const res = await fetch(`${API_BASE}/cases/${caseId}/graph/paths?${query.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch investigation path: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseGraphTemporalChain(caseId: number): Promise<TemporalChain> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/graph/temporal-chain`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch temporal chain: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function explainCaseGraphRelationship(
+  caseId: number,
+  req?: GraphExplanationRequest
+): Promise<GraphExplanationResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/graph/explain`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req || {}),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to explain graph relationship: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportCaseInvestigationGraph(
+  caseId: number,
+  format = "json"
+): Promise<{ case_id: number; format: string; content: string }> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams({ format });
+  const res = await fetch(`${API_BASE}/cases/${caseId}/graph/export?${query.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to export investigation graph: ${res.statusText}`);
   }
   return res.json();
 }

@@ -1828,6 +1828,154 @@ def get_case_provenance_manifest_endpoint(case_id: int) -> List[Dict[str, Any]]:
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# =============================================================================
+# Milestone 5.8: Investigation Graph & Evidence Relationship Intelligence
+# =============================================================================
+
+class GraphExplanationApiRequest(BaseModel):
+    """Payload to request local AI explanation of a graph edge or path (M5.8)."""
+    edge_id: Optional[str] = None
+    path_nodes: Optional[List[str]] = None
+    question: Optional[str] = None
+    include_evidence_citations: bool = True
+
+
+@protected_router.get("/cases/{case_id}/graph")
+def get_investigation_graph_endpoint(
+    case_id: int,
+    max_nodes: int = 50,
+    max_edges: int = 100,
+    entity_type: Optional[str] = None,
+    relationship_type: Optional[str] = None,
+    epistemic_status: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Retrieve bounded, evidence-bound investigation graph for a case (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        graph = case_service.get_investigation_graph(
+            case_id=case_id,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            entity_type=entity_type,
+            relationship_type=relationship_type,
+            epistemic_status=epistemic_status,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        return graph.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/graph/nodes/{node_id:path}")
+def get_graph_node_detail_endpoint(case_id: int, node_id: str) -> Dict[str, Any]:
+    """Retrieve detailed node inspection including connected edges and citations (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        return case_service.get_graph_node_detail(case_id, node_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/graph/edges/{edge_id:path}/evidence")
+def get_graph_edge_evidence_endpoint(case_id: int, edge_id: str) -> Dict[str, Any]:
+    """Deep forensic inspection for a specific graph edge including all citations (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        return case_service.get_graph_edge_evidence(case_id, edge_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/graph/pivots/{entity_type}/{entity_value}")
+def get_entity_pivot_graph_endpoint(case_id: int, entity_type: str, entity_value: str) -> Dict[str, Any]:
+    """Construct case-bounded entity pivot graph showing adjacent relationships (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        pivot = case_service.get_entity_pivot_graph(case_id, entity_type, entity_value)
+        return pivot.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/graph/paths")
+def get_investigation_path_endpoint(
+    case_id: int,
+    source: str,
+    target: str,
+    max_depth: int = 5,
+) -> Dict[str, Any]:
+    """Reconstruct bounded investigation path between source and target nodes (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        path = case_service.get_investigation_path(
+            case_id=case_id,
+            source_node_id=source,
+            target_node_id=target,
+            max_depth=max_depth,
+        )
+        if not path:
+            raise HTTPException(status_code=404, detail=f"No connected path found between {source} and {target}")
+        return path.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/graph/temporal-chain")
+def get_graph_temporal_chain_endpoint(case_id: int) -> Dict[str, Any]:
+    """Derive chronological relationship sequence with delta-time annotations (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        chain = case_service.get_temporal_chain(case_id)
+        return chain.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/graph/explain")
+def explain_graph_relationship_endpoint(
+    case_id: int,
+    req: Optional[GraphExplanationApiRequest] = None,
+) -> Dict[str, Any]:
+    """Generate advisory-only, citation-grounded narrative explanation of graph relationships (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    edge_id = req.edge_id if req else None
+    path_nodes = req.path_nodes if req else None
+    question = req.question if req else None
+
+    try:
+        explanation = case_service.explain_graph_relationship(
+            case_id=case_id,
+            edge_id=edge_id,
+            path_nodes=path_nodes,
+            question=question,
+        )
+        return explanation.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/graph/export")
+def export_investigation_graph_endpoint(case_id: int, format: str = "json") -> Dict[str, Any]:
+    """Export case investigation graph with full provenance in JSON or GraphML format (M5.8)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        content = case_service.export_investigation_graph(case_id, format=format)
+        return {"case_id": case_id, "format": format, "content": content}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

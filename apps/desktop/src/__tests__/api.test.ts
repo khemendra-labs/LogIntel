@@ -1339,6 +1339,172 @@ describe("Frontend API Client and Authentication", () => {
     const prov = await getProvenanceManifest(601);
     expect(prov[0].is_authoritative).toBe(true);
   });
+
+  it("M5.8 investigation graph, edge evidence, pivots, paths, temporal chain, explanation and export", async () => {
+    setEngineToken("m58_graph_token");
+
+    const mockGraph = {
+      case_id: 701,
+      incident_id: 700,
+      nodes: [
+        {
+          node_id: "host:srv-01",
+          node_type: "HOST",
+          display_label: "srv-01",
+          is_authoritative: true,
+          epistemic_status: "OBSERVED",
+          degree: 1,
+        },
+      ],
+      edges: [
+        {
+          edge_id: "edge-1",
+          source_node_id: "user:alice",
+          target_node_id: "host:srv-01",
+          relationship_type: "AUTHENTICATED_TO",
+          epistemic_status: "OBSERVED",
+          is_authoritative: true,
+          confidence: "HIGH",
+          corroboration_status: "DIRECT_OBSERVATION",
+          evidence_references: [],
+          evidence_event_ids: ["ev-101"],
+          description: "alice logged in",
+          provenance: "auth.log",
+        },
+      ],
+      total_nodes: 1,
+      total_edges: 1,
+      observed_edges_count: 1,
+      inferred_edges_count: 0,
+      corroborated_edges_count: 1,
+      contradicted_edges_count: 0,
+      generated_at: "2026-10-03T12:00:00Z",
+    };
+
+    const mockNodeDetail = {
+      node: mockGraph.nodes[0],
+      connected_edges: mockGraph.edges,
+      connected_nodes: [],
+    };
+
+    const mockEdgeEvidence = {
+      edge: mockGraph.edges[0],
+      evidence_references: [],
+      evidence_event_ids: ["ev-101"],
+      corroboration_status: "DIRECT_OBSERVATION",
+      epistemic_status: "OBSERVED",
+      is_authoritative: true,
+    };
+
+    const mockPivot = {
+      entity_key: "srv-01",
+      entity_type: "host",
+      case_id: 701,
+      connected_nodes: [mockGraph.nodes[0]],
+      connected_edges: [mockGraph.edges[0]],
+      related_alerts_count: 1,
+      related_events_count: 5,
+      related_findings_count: 1,
+      timeline_occurrences_count: 3,
+    };
+
+    const mockPath = {
+      path_id: "path-1",
+      case_id: 701,
+      source_node_id: "user:alice",
+      target_node_id: "host:srv-01",
+      nodes: [mockGraph.nodes[0]],
+      edges: [mockGraph.edges[0]],
+      total_steps: 1,
+      path_nature: "INVESTIGATION_PATH",
+      evidence_references_count: 1,
+      summary: "Direct authentication step",
+    };
+
+    const mockTemporal = {
+      case_id: 701,
+      steps: [
+        {
+          step_index: 0,
+          timestamp: "2026-10-03T10:00:00Z",
+          edge_id: "edge-1",
+          source_node_id: "user:alice",
+          target_node_id: "host:srv-01",
+          relationship_type: "AUTHENTICATED_TO",
+          evidence_citation: "[event:ev-101]",
+          epistemic_status: "OBSERVED",
+        },
+      ],
+      total_steps: 1,
+    };
+
+    const mockExplain = {
+      explanation_id: "exp-1",
+      case_id: 701,
+      target_ref: "edge:edge-1",
+      summary: "Alice authenticated directly to host srv-01.",
+      evidence_citations: ["[event:ev-101]"],
+      epistemic_status: "OBSERVED",
+      is_authoritative: false,
+      generated_by: "local-ai",
+      generated_at: "2026-10-03T12:05:00Z",
+    };
+
+    const mockExport = {
+      case_id: 701,
+      format: "json",
+      content: '{"nodes": [], "edges": []}',
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ ok: true, json: async () => mockGraph } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockNodeDetail } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockEdgeEvidence } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockPivot } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockPath } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockTemporal } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockExplain } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockExport } as Response);
+
+    const {
+      fetchCaseInvestigationGraph,
+      fetchCaseGraphNodeDetail,
+      fetchCaseGraphEdgeEvidence,
+      fetchCaseEntityPivotGraph,
+      fetchCaseInvestigationPath,
+      fetchCaseGraphTemporalChain,
+      explainCaseGraphRelationship,
+      exportCaseInvestigationGraph,
+    } = await import("../lib/api");
+
+    const graph = await fetchCaseInvestigationGraph(701, { max_nodes: 50, epistemic_status: "OBSERVED" as any });
+    expect(graph.total_nodes).toBe(1);
+    expect(fetchSpy.mock.calls[0][0]).toContain("/cases/701/graph?");
+    expect(fetchSpy.mock.calls[0][0]).toContain("max_nodes=50");
+    expect(fetchSpy.mock.calls[0][0]).toContain("epistemic_status=OBSERVED");
+
+    const nodeDetail = await fetchCaseGraphNodeDetail(701, "host:srv-01");
+    expect(nodeDetail.node.node_id).toBe("host:srv-01");
+
+    const edgeEvidence = await fetchCaseGraphEdgeEvidence(701, "edge-1");
+    expect(edgeEvidence.corroboration_status).toBe("DIRECT_OBSERVATION");
+
+    const pivot = await fetchCaseEntityPivotGraph(701, "host", "srv-01");
+    expect(pivot.related_events_count).toBe(5);
+
+    const path = await fetchCaseInvestigationPath(701, "user:alice", "host:srv-01", 3);
+    expect(path.path_nature).toBe("INVESTIGATION_PATH");
+
+    const temporal = await fetchCaseGraphTemporalChain(701);
+    expect(temporal.total_steps).toBe(1);
+
+    const explain = await explainCaseGraphRelationship(701, { edge_id: "edge-1" });
+    expect(explain.is_authoritative).toBe(false);
+    expect(explain.epistemic_status).toBe("OBSERVED");
+
+    const exportRes = await exportCaseInvestigationGraph(701, "json");
+    expect(exportRes.format).toBe("json");
+  });
 });
 
 
