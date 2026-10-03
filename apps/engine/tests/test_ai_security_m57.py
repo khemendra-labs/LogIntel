@@ -365,13 +365,35 @@ def test_m57_sec_015_observed_inferred_unknown_separation(m57_sec_setup):
 
 
 def test_m57_sec_016_timeline_provenance_integrity(m57_sec_setup):
-    """M57-SEC-016: Derived items, findings, and hypotheses must never be marked is_authoritative = True."""
+    """M57-SEC-016: Derived items, findings, hypotheses, and threat hunt hits must never be marked is_authoritative = True."""
     _, _, case_svc, c1_id, _ = m57_sec_setup
+
+    # Execute a matching threat hunt to test threat hunt result authority boundary
+    prop = case_svc.create_hunt_proposal(
+        case_id=c1_id,
+        template_id="search_auth_failures",
+        parameters={"username": "alice", "limit": 10},
+        rationale="Security audit hunt",
+    )
+    case_svc.execute_hunt_query(prop, approved_by="sec-lead")
+
     timeline = case_svc.get_refined_timeline(c1_id)
 
+    hunt_seen = False
     for item in timeline:
-        if item.source_type in (RefinedTimelineSourceType.FINDING, RefinedTimelineSourceType.CORRELATION, RefinedTimelineSourceType.HYPOTHESIS, RefinedTimelineSourceType.AI_INTERPRETATION):
+        if item.source_type in (
+            RefinedTimelineSourceType.FINDING,
+            RefinedTimelineSourceType.CORRELATION,
+            RefinedTimelineSourceType.HYPOTHESIS,
+            RefinedTimelineSourceType.AI_INTERPRETATION,
+            RefinedTimelineSourceType.THREAT_HUNT_RESULT,
+        ):
             assert not item.is_authoritative, f"Derived item marked authoritative: {item.item_id}"
+            if item.source_type == RefinedTimelineSourceType.THREAT_HUNT_RESULT:
+                hunt_seen = True
+                assert item.epistemic_status == EpistemicStatus.INFERRED
+
+    assert hunt_seen, "Threat hunt item was not incorporated into timeline"
 
 
 def test_m57_sec_017_mitre_provenance_integrity(m57_sec_setup):

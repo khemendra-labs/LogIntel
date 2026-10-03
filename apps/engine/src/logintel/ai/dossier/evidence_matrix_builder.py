@@ -98,23 +98,39 @@ class EvidenceMatrixBuilder:
                     })
 
             # 3. Determine deterministic status
-            has_resolved_support = any(
-                item["resolution"] == EvidenceItemResolution.RESOLVED.value for item in supporting_items
+            resolved_support_count = sum(
+                1 for item in supporting_items if item["resolution"] == EvidenceItemResolution.RESOLVED.value
             )
-            has_resolved_contradiction = any(
-                item["resolution"] == EvidenceItemResolution.RESOLVED.value for item in contradicting_items
+            resolved_contradiction_count = sum(
+                1 for item in contradicting_items if item["resolution"] == EvidenceItemResolution.RESOLVED.value
+            )
+            unresolved_count = sum(
+                1 for item in (supporting_items + contradicting_items)
+                if item["resolution"] in (
+                    EvidenceItemResolution.UNRESOLVED.value,
+                    EvidenceItemResolution.MISSING.value,
+                    EvidenceItemResolution.UNAVAILABLE.value,
+                )
             )
 
-            if has_resolved_contradiction:
+            # Deterministic Mutual-Exclusivity Precedence Hierarchy:
+            # 1. Refutation Precedence: Any resolved contradiction refutes the hypothesis (Cases C, H)
+            # 2. Epistemic Gate Precedence: Unresolved references prevent resolution of support (Cases D, E, F)
+            # 3. Insufficient Evidence: No references cited or 0 resolved support (Case G)
+            # 4. Corroborated Support: >= 2 resolved support, 0 unresolved, 0 gaps (Case A)
+            # 5. Weakly Supported: 1 resolved support, OR >= 2 resolved support with open evidence gaps (Case B)
+            if resolved_contradiction_count >= 1:
                 status = EvidenceMatrixStatus.CONTRADICTED
-            elif has_resolved_support and not hyp.evidence_gaps:
-                status = EvidenceMatrixStatus.SUPPORTED
-            elif has_resolved_support and hyp.evidence_gaps:
-                status = EvidenceMatrixStatus.WEAKLY_SUPPORTED
+            elif unresolved_count >= 1:
+                status = EvidenceMatrixStatus.UNRESOLVED
             elif not supporting_items and not contradicting_items:
                 status = EvidenceMatrixStatus.INSUFFICIENT
+            elif resolved_support_count >= 2 and not hyp.evidence_gaps:
+                status = EvidenceMatrixStatus.SUPPORTED
+            elif resolved_support_count >= 1:
+                status = EvidenceMatrixStatus.WEAKLY_SUPPORTED
             else:
-                status = EvidenceMatrixStatus.UNRESOLVED
+                status = EvidenceMatrixStatus.INSUFFICIENT
 
             entries.append(
                 EvidenceMatrixEntry(

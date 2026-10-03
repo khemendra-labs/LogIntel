@@ -43,7 +43,7 @@ class ProvenanceTracker:
         # 1. Evidence References
         for ref in case.evidence_references:
             payload = json.dumps(ref.resolved_record or {"source_id": ref.source_id}, sort_keys=True)
-            sha = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+            sha = hashlib.sha256(payload.encode("utf-8")).hexdigest()
             entries.append(
                 ProvenanceManifestEntry(
                     case_id=case.case_id,
@@ -63,7 +63,7 @@ class ProvenanceTracker:
             f_id = f.get("finding_id", "unknown")
             sources = f.get("source_references") or f.get("related_events") or []
             src_str = ",".join(str(s) for s in sources)
-            sha = hashlib.sha256(src_str.encode("utf-8")).hexdigest()[:16]
+            sha = hashlib.sha256(src_str.encode("utf-8")).hexdigest()
             entries.append(
                 ProvenanceManifestEntry(
                     case_id=case.case_id,

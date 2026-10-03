@@ -179,8 +179,9 @@ def run_benchmarks() -> Dict[str, Dict[str, Any]]:
             lambda: case_svc.get_threat_hunt_results(case_id)
         )
 
-        # 9. AI synthesis
-        results["ai_synthesis"] = measure_op(
+        # 9. Deterministic AI-advisory fallback synthesis (Category: DETERMINISTIC_FALLBACK)
+        # Note: Measures deterministic claims assembly and synthesis without external or local LLM inference latency.
+        results["deterministic_ai_fallback_synthesis"] = measure_op(
             lambda: case_svc.generate_ai_investigation_intelligence(case_id)
         )
 

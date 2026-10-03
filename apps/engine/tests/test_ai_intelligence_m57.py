@@ -21,6 +21,12 @@ from typing import Generator
 import pytest
 
 from logintel.ai.case_service import CaseService
+from logintel.ai.domain.case import (
+    CaseEvidenceReference,
+    CaseHypothesis,
+    InvestigationCase,
+    ResolutionStatus,
+)
 from logintel.ai.domain.investigation_dossier import (
     EvidenceItemResolution,
     EvidenceMatrixStatus,
@@ -28,6 +34,7 @@ from logintel.ai.domain.investigation_dossier import (
     RefinedTimelineSourceType,
 )
 from logintel.ai.domain.investigation_intel import EpistemicStatus, QueryResultStatus
+from logintel.ai.dossier.evidence_matrix_builder import EvidenceMatrixBuilder
 from logintel.storage.case_repo import CaseRepository
 from logintel.storage.db import Database
 
@@ -168,7 +175,7 @@ def test_m57_intel_002_finding_review_lifecycle(m57_setup):
 
 
 def test_m57_intel_003_evidence_matrix_evaluation(m57_setup):
-    """M57-INTEL-003: Deterministic Hypothesis Evidence Matrix resolution."""
+    """M57-INTEL-003: Deterministic Hypothesis Evidence Matrix resolution and mutual-exclusivity."""
     case_svc, case_id, _ = m57_setup
     matrix = case_svc.get_evidence_matrix(case_id)
 
@@ -182,6 +189,82 @@ def test_m57_intel_003_evidence_matrix_evaluation(m57_setup):
     for ev in entry.supporting_evidence:
         assert ev["resolution"] in (EvidenceItemResolution.RESOLVED.value, EvidenceItemResolution.MISSING.value)
         assert ev["citation_tag"].startswith("[")
+
+    # Comprehensive C23 Precedence Verification: Cases A through H
+    builder = EvidenceMatrixBuilder()
+    base_case = case_svc.get_case(case_id)
+    assert base_case is not None
+    mock_case = base_case.model_copy(deep=True)
+    mock_case.evidence_references = [
+        CaseEvidenceReference(
+            reference_id="ref-1",
+            case_id=case_id,
+            source_type="event",
+            source_id="ev-1",
+            citation_tag="[event:1]",
+            created_at="2026-10-02T10:00:00Z",
+            resolution_status=ResolutionStatus.AVAILABLE,
+        ),
+        CaseEvidenceReference(
+            reference_id="ref-2",
+            case_id=case_id,
+            source_type="event",
+            source_id="ev-2",
+            citation_tag="[event:2]",
+            created_at="2026-10-02T10:00:00Z",
+            resolution_status=ResolutionStatus.AVAILABLE,
+        ),
+        CaseEvidenceReference(
+            reference_id="ref-c",
+            case_id=case_id,
+            source_type="event",
+            source_id="ev-c",
+            citation_tag="[event:c]",
+            created_at="2026-10-02T10:00:00Z",
+            resolution_status=ResolutionStatus.AVAILABLE,
+        ),
+    ]
+
+    def eval_status(sup_tags, contra_tags, gaps=None):
+        test_c = mock_case.model_copy(deep=True)
+        test_c.hypotheses = [
+            CaseHypothesis(
+                hypothesis_id="h-test",
+                case_id=case_id,
+                statement="Testing precedence",
+                supporting_evidence_tags=sup_tags,
+                contradicting_evidence_tags=contra_tags,
+                evidence_gaps=gaps or [],
+                created_at="2026-10-02T10:00:00Z",
+                updated_at="2026-10-02T10:00:00Z",
+            )
+        ]
+        res = builder.build_matrix(test_c)
+        return res[0].status
+
+    # Case A: 2 support + 0 contradiction + 0 unresolved -> SUPPORTED
+    assert eval_status(["[event:1]", "[event:2]"], []) == EvidenceMatrixStatus.SUPPORTED
+
+    # Case B: 1 support + 0 contradiction + 0 unresolved -> WEAKLY_SUPPORTED
+    assert eval_status(["[event:1]"], []) == EvidenceMatrixStatus.WEAKLY_SUPPORTED
+
+    # Case C: 2 support + contradiction -> CONTRADICTED
+    assert eval_status(["[event:1]", "[event:2]"], ["[event:c]"]) == EvidenceMatrixStatus.CONTRADICTED
+
+    # Case D: 1 support + unresolved reference -> UNRESOLVED (deterministic documented result)
+    assert eval_status(["[event:1]", "[event:unresolved]"], []) == EvidenceMatrixStatus.UNRESOLVED
+
+    # Case E: 2 support + unresolved reference -> UNRESOLVED (deterministic documented result)
+    assert eval_status(["[event:1]", "[event:2]", "[event:unresolved]"], []) == EvidenceMatrixStatus.UNRESOLVED
+
+    # Case F: 0 support + 0 contradiction + unresolved reference -> UNRESOLVED
+    assert eval_status(["[event:unresolved]"], []) == EvidenceMatrixStatus.UNRESOLVED
+
+    # Case G: 0 support + 0 contradiction + 0 unresolved -> INSUFFICIENT
+    assert eval_status([], []) == EvidenceMatrixStatus.INSUFFICIENT
+
+    # Case H: contradiction + unresolved reference -> CONTRADICTED (deterministic documented result)
+    assert eval_status([], ["[event:c]", "[event:unresolved]"]) == EvidenceMatrixStatus.CONTRADICTED
 
 
 def test_m57_intel_004_evidence_gap_actions(m57_setup):
@@ -213,7 +296,13 @@ def test_m57_intel_005_refined_timeline_intelligence(m57_setup):
     for item in timeline:
         if item.source_type in (RefinedTimelineSourceType.OBSERVED_EVENT, RefinedTimelineSourceType.ALERT):
             assert item.is_authoritative
-        elif item.source_type in (RefinedTimelineSourceType.HYPOTHESIS, RefinedTimelineSourceType.CORRELATION, RefinedTimelineSourceType.FINDING):
+        elif item.source_type in (
+            RefinedTimelineSourceType.HYPOTHESIS,
+            RefinedTimelineSourceType.CORRELATION,
+            RefinedTimelineSourceType.FINDING,
+            RefinedTimelineSourceType.THREAT_HUNT_RESULT,
+            RefinedTimelineSourceType.AI_INTERPRETATION,
+        ):
             assert not item.is_authoritative
 
 
@@ -239,7 +328,8 @@ def test_m57_intel_006_threat_hunt_result_integration(m57_setup):
     timeline = case_svc.get_refined_timeline(case_id)
     hunt_items = [t for t in timeline if t.source_type == RefinedTimelineSourceType.THREAT_HUNT_RESULT]
     assert len(hunt_items) >= 1
-    assert hunt_items[0].is_authoritative
+    assert not hunt_items[0].is_authoritative
+    assert hunt_items[0].epistemic_status == EpistemicStatus.INFERRED
 
 
 def test_m57_intel_007_case_briefing(m57_setup):
