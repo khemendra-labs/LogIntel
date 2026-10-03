@@ -108,6 +108,23 @@ class RefinedTimelineBuilder:
                         metadata={"host": rec.get("host")},
                     )
                 )
+            elif ref.source_type == "incident":
+                items.append(
+                    RefinedTimelineItem(
+                        item_id=f"tl-inc-{ref.source_id}",
+                        case_id=case.case_id,
+                        timestamp=ts,
+                        source_type=RefinedTimelineSourceType.INCIDENT,
+                        source_id=ref.source_id,
+                        title=f"Incident: {rec.get('title') or ref.source_id}",
+                        summary=rec.get("summary") or "Authoritative incident record",
+                        epistemic_status=EpistemicStatus.OBSERVED,
+                        is_authoritative=True,
+                        citation_tag=ref.citation_tag or f"[incident:{ref.source_id}]",
+                        provenance=f"Authoritative incident record in forensic database: {ref.source_id}",
+                        metadata={"severity": rec.get("severity"), "status": rec.get("status")},
+                    )
+                )
 
         # 2. Governed Threat Hunting Query Executions
         for q in case.query_history:
