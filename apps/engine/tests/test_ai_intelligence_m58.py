@@ -178,6 +178,7 @@ def test_m58_intel_003_epistemic_status_demarcation(m58_setup):
         if edge.relationship_type in ("AUTHENTICATED_TO", "CONNECTED_TO", "EXECUTED", "LATERAL_MOVEMENT"):
             assert edge.is_authoritative is True
             assert edge.epistemic_status == RelationshipEpistemicStatus.OBSERVED
+            assert not hasattr(edge, "confidence") and "confidence" not in edge.model_dump()  # M58-07: Strength without fake confidence
 
     assert graph.observed_edges_count == 4
     assert graph.inferred_edges_count == 0

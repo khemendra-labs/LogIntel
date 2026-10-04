@@ -31,7 +31,7 @@ from logintel.ai.domain.investigation_graph import (
 )
 from logintel.ai.domain.investigation_intel import EpistemicStatus
 from logintel.logging import get_logger
-from logintel.models.incidents import ConfidenceLevel, Incident, IncidentEntity, IncidentRelationship
+from logintel.models.incidents import Incident, IncidentEntity, IncidentRelationship
 from logintel.models.investigation import MitreMapping
 from logintel.storage.db import Database
 
@@ -268,7 +268,6 @@ class InvestigationGraphBuilder:
                     relationship_type=rel.relationship_type,
                     epistemic_status=r_epistemic,
                     is_authoritative=is_auth,
-                    confidence=rel.confidence,
                     corroboration_status=corroboration,
                     evidence_references=evidence_items,
                     evidence_event_ids=rel.evidence_event_ids,
@@ -331,7 +330,6 @@ class InvestigationGraphBuilder:
                             relationship_type="HUNT_CANDIDATE",
                             epistemic_status=RelationshipEpistemicStatus.INFERRED,
                             is_authoritative=False,
-                            confidence=ConfidenceLevel.INFERRED,
                             corroboration_status=CorroborationStatus.SINGLE_SOURCE,
                             evidence_references=[
                                 GraphEvidenceItem(

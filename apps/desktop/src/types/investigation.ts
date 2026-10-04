@@ -917,7 +917,6 @@ export interface InvestigationGraphEdge {
   relationship_type: string;
   epistemic_status: RelationshipEpistemicStatus;
   is_authoritative: boolean;
-  confidence: string;
   corroboration_status: CorroborationStatus;
   evidence_references: GraphEvidenceItem[];
   evidence_event_ids: string[];

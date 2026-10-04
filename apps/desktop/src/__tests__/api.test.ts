@@ -1364,7 +1364,6 @@ describe("Frontend API Client and Authentication", () => {
           relationship_type: "AUTHENTICATED_TO",
           epistemic_status: "OBSERVED",
           is_authoritative: true,
-          confidence: "HIGH",
           corroboration_status: "DIRECT_OBSERVATION",
           evidence_references: [],
           evidence_event_ids: ["ev-101"],

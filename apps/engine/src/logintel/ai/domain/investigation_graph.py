@@ -18,7 +18,6 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 from logintel.ai.domain.investigation_intel import EpistemicStatus
-from logintel.models.incidents import ConfidenceLevel
 
 
 class GraphNodeType(str, Enum):
@@ -51,6 +50,7 @@ class RelationshipEpistemicStatus(str, Enum):
 class CorroborationStatus(str, Enum):
     """Evidence-backed corroboration status of a graph relationship."""
     DIRECT_EVIDENCE = "DIRECT_EVIDENCE"
+    DIRECT_OBSERVATION = "DIRECT_OBSERVATION"
     CORROBORATED = "CORROBORATED"
     SINGLE_SOURCE = "SINGLE_SOURCE"
     TEMPORALLY_ALIGNED = "TEMPORALLY_ALIGNED"
@@ -119,7 +119,6 @@ class InvestigationGraphEdge(BaseModel):
     relationship_type: str
     epistemic_status: RelationshipEpistemicStatus = RelationshipEpistemicStatus.OBSERVED
     is_authoritative: bool = True
-    confidence: ConfidenceLevel = ConfidenceLevel.CORRELATED
     corroboration_status: CorroborationStatus = CorroborationStatus.DIRECT_EVIDENCE
     evidence_references: List[GraphEvidenceItem] = Field(default_factory=list)
     evidence_event_ids: List[str] = Field(default_factory=list)
