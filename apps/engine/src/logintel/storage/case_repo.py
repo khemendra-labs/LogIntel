@@ -8,6 +8,7 @@ case handoff, and an immutable audit trail.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -227,6 +228,72 @@ class CaseRepository:
                     );
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS case_assessments (
+                        assessment_id TEXT NOT NULL,
+                        case_id INTEGER NOT NULL REFERENCES investigation_cases(case_id) ON DELETE CASCADE,
+                        assessment_version INTEGER NOT NULL DEFAULT 1,
+                        case_state TEXT NOT NULL DEFAULT 'OPEN',
+                        assessment_state TEXT NOT NULL DEFAULT 'DRAFT',
+                        evidence_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+                        closure_readiness TEXT NOT NULL DEFAULT 'UNKNOWN',
+                        findings_json TEXT NOT NULL DEFAULT '[]',
+                        hypotheses_json TEXT NOT NULL DEFAULT '[]',
+                        gaps_json TEXT NOT NULL DEFAULT '[]',
+                        questions_json TEXT NOT NULL DEFAULT '[]',
+                        sufficiency_json TEXT NOT NULL DEFAULT '{}',
+                        readiness_json TEXT NOT NULL DEFAULT '{}',
+                        attack_summary_json TEXT NOT NULL DEFAULT '[]',
+                        affected_entities_json TEXT NOT NULL DEFAULT '[]',
+                        affected_hosts_json TEXT NOT NULL DEFAULT '[]',
+                        mitre_summary_json TEXT NOT NULL DEFAULT '[]',
+                        epistemic_summary_json TEXT NOT NULL DEFAULT '{}',
+                        supporting_evidence_json TEXT NOT NULL DEFAULT '[]',
+                        contradicting_evidence_json TEXT NOT NULL DEFAULT '[]',
+                        analyst_assessment TEXT NOT NULL DEFAULT '',
+                        conclusion_json TEXT NOT NULL DEFAULT '{}',
+                        provenance_json TEXT NOT NULL DEFAULT '{}',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        created_by TEXT NOT NULL DEFAULT 'SYSTEM_DETERMINISTIC',
+                        PRIMARY KEY (case_id, assessment_id, assessment_version)
+                    );
+                    """
+                )
+                for col_name, col_type in [
+                    ("case_state", "TEXT NOT NULL DEFAULT 'OPEN'"),
+                    ("attack_summary_json", "TEXT NOT NULL DEFAULT '[]'"),
+                    ("affected_entities_json", "TEXT NOT NULL DEFAULT '[]'"),
+                    ("affected_hosts_json", "TEXT NOT NULL DEFAULT '[]'"),
+                    ("mitre_summary_json", "TEXT NOT NULL DEFAULT '[]'"),
+                    ("epistemic_summary_json", "TEXT NOT NULL DEFAULT '{}'"),
+                    ("supporting_evidence_json", "TEXT NOT NULL DEFAULT '[]'"),
+                    ("contradicting_evidence_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ]:
+                    try:
+                        conn.execute(f"ALTER TABLE case_assessments ADD COLUMN {col_name} {col_type};")
+                    except sqlite3.OperationalError:
+                        pass
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS case_investigation_questions (
+                        question_id TEXT NOT NULL,
+                        case_id INTEGER NOT NULL REFERENCES investigation_cases(case_id) ON DELETE CASCADE,
+                        question TEXT NOT NULL,
+                        category TEXT NOT NULL DEFAULT 'AUTHENTICATION',
+                        status TEXT NOT NULL DEFAULT 'OPEN',
+                        related_evidence_json TEXT NOT NULL DEFAULT '[]',
+                        related_entities_json TEXT NOT NULL DEFAULT '[]',
+                        recommended_query TEXT,
+                        resolution_notes TEXT,
+                        created_by TEXT NOT NULL DEFAULT 'SecAnalyst-1',
+                        created_at TEXT NOT NULL,
+                        resolved_at TEXT,
+                        PRIMARY KEY (case_id, question_id)
+                    );
+                    """
+                )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_incident ON investigation_cases(incident_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_status ON investigation_cases(status);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_hypotheses_case ON case_hypotheses(case_id);")
@@ -235,6 +302,8 @@ class CaseRepository:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_audit_case ON case_audit_log(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_finding_reviews_case ON case_finding_reviews(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_transition_reviews_case ON case_transition_reviews(case_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_case_assessments_case ON case_assessments(case_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_case_questions_case ON case_investigation_questions(case_id);")
 
                 # Database-level enforcement of append-only audit log
                 conn.execute(
@@ -776,6 +845,31 @@ class CaseRepository:
             hypothesis.version = new_hyp_version
             hypothesis.updated_at = now_iso
             return hypothesis
+
+    def list_hypotheses(self, case_id: int) -> List[CaseHypothesis]:
+        """List all persistent hypotheses recorded for a case."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT * FROM case_hypotheses WHERE case_id = ? ORDER BY created_at ASC",
+            (case_id,),
+        ).fetchall()
+        return [
+            CaseHypothesis(
+                hypothesis_id=h["hypothesis_id"],
+                case_id=h["case_id"],
+                statement=h["statement"],
+                status=h["status"],
+                supporting_evidence_tags=json.loads(h["supporting_evidence_tags_json"]),
+                contradicting_evidence_tags=json.loads(h["contradicting_evidence_tags_json"]),
+                evidence_gaps=json.loads(h["evidence_gaps_json"]),
+                analyst_assessment=h["analyst_assessment"],
+                created_at=h["created_at"],
+                updated_at=h["updated_at"],
+                created_by=h["created_by"],
+                version=h["version"],
+            )
+            for h in rows
+        ]
 
     def add_evidence_reference(
         self,
@@ -1323,5 +1417,346 @@ class CaseRepository:
             (case_id, transition_id),
         ).fetchone()
         return dict(row) if row else None
+
+    # ---------------------------------------------------------
+    # M5.11 Case Assessment & Investigation Question Methods
+    # ---------------------------------------------------------
+
+    def upsert_case_assessment(
+        self,
+        case_id: int,
+        assessment_id: str,
+        assessment_version: int,
+        assessment_state: str,
+        evidence_state: str,
+        closure_readiness: str,
+        findings: List[Dict[str, Any]],
+        hypotheses: List[Dict[str, Any]],
+        gaps: List[Dict[str, Any]],
+        questions: List[Dict[str, Any]],
+        sufficiency: Dict[str, Any],
+        readiness: Dict[str, Any],
+        case_state: str = "OPEN",
+        attack_summary: Optional[List[str]] = None,
+        affected_entities: Optional[List[str]] = None,
+        affected_hosts: Optional[List[str]] = None,
+        mitre_summary: Optional[List[str]] = None,
+        epistemic_summary: Optional[Dict[str, Any]] = None,
+        supporting_evidence: Optional[List[str]] = None,
+        contradicting_evidence: Optional[List[str]] = None,
+        analyst_assessment: str = "",
+        conclusion: Optional[Dict[str, Any]] = None,
+        provenance: Optional[Dict[str, Any]] = None,
+        created_at: Optional[str] = None,
+        created_by: str = "SYSTEM_DETERMINISTIC",
+    ) -> Dict[str, Any]:
+        """Insert or update a case assessment record in cases.db."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        record_created_at = created_at or now_iso
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO case_assessments (
+                        assessment_id, case_id, assessment_version, case_state, assessment_state,
+                        evidence_state, closure_readiness, findings_json, hypotheses_json,
+                        gaps_json, questions_json, sufficiency_json, readiness_json,
+                        attack_summary_json, affected_entities_json, affected_hosts_json,
+                        mitre_summary_json, epistemic_summary_json, supporting_evidence_json,
+                        contradicting_evidence_json, analyst_assessment, conclusion_json,
+                        provenance_json, created_at, updated_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(case_id, assessment_id, assessment_version) DO UPDATE SET
+                        case_state = excluded.case_state,
+                        assessment_state = excluded.assessment_state,
+                        evidence_state = excluded.evidence_state,
+                        closure_readiness = excluded.closure_readiness,
+                        findings_json = excluded.findings_json,
+                        hypotheses_json = excluded.hypotheses_json,
+                        gaps_json = excluded.gaps_json,
+                        questions_json = excluded.questions_json,
+                        sufficiency_json = excluded.sufficiency_json,
+                        readiness_json = excluded.readiness_json,
+                        attack_summary_json = excluded.attack_summary_json,
+                        affected_entities_json = excluded.affected_entities_json,
+                        affected_hosts_json = excluded.affected_hosts_json,
+                        mitre_summary_json = excluded.mitre_summary_json,
+                        epistemic_summary_json = excluded.epistemic_summary_json,
+                        supporting_evidence_json = excluded.supporting_evidence_json,
+                        contradicting_evidence_json = excluded.contradicting_evidence_json,
+                        analyst_assessment = excluded.analyst_assessment,
+                        conclusion_json = excluded.conclusion_json,
+                        provenance_json = excluded.provenance_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        assessment_id,
+                        case_id,
+                        assessment_version,
+                        case_state,
+                        assessment_state,
+                        evidence_state,
+                        closure_readiness,
+                        json.dumps(findings),
+                        json.dumps(hypotheses),
+                        json.dumps(gaps),
+                        json.dumps(questions),
+                        json.dumps(sufficiency),
+                        json.dumps(readiness),
+                        json.dumps(attack_summary or []),
+                        json.dumps(affected_entities or []),
+                        json.dumps(affected_hosts or []),
+                        json.dumps(mitre_summary or []),
+                        json.dumps(epistemic_summary or {}),
+                        json.dumps(supporting_evidence or []),
+                        json.dumps(contradicting_evidence or []),
+                        analyst_assessment,
+                        json.dumps(conclusion or {}),
+                        json.dumps(provenance or {}),
+                        record_created_at,
+                        now_iso,
+                        created_by,
+                    ),
+                )
+                self.append_audit_log(
+                    case_id=case_id,
+                    actor=created_by,
+                    action="UPSERT_CASE_ASSESSMENT",
+                    new_value=assessment_id,
+                    reason=f"Assessment {assessment_id} v{assessment_version} persisted",
+                    details={
+                        "assessment_id": assessment_id,
+                        "version": assessment_version,
+                        "closure_readiness": closure_readiness,
+                        "evidence_state": evidence_state,
+                    },
+                )
+
+        return {
+            "assessment_id": assessment_id,
+            "case_id": case_id,
+            "assessment_version": assessment_version,
+            "assessment_state": assessment_state,
+            "evidence_state": evidence_state,
+            "closure_readiness": closure_readiness,
+            "updated_at": now_iso,
+        }
+
+    def get_latest_case_assessment(self, case_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve the latest assessment record for a case."""
+        conn = self._get_connection()
+        row = conn.execute(
+            """
+            SELECT * FROM case_assessments
+            WHERE case_id = ?
+            ORDER BY assessment_version DESC, updated_at DESC
+            LIMIT 1
+            """,
+            (case_id,),
+        ).fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        res["findings"] = json.loads(res.get("findings_json") or "[]")
+        res["hypotheses"] = json.loads(res.get("hypotheses_json") or "[]")
+        res["gaps"] = json.loads(res.get("gaps_json") or "[]")
+        res["questions"] = json.loads(res.get("questions_json") or "[]")
+        res["sufficiency"] = json.loads(res.get("sufficiency_json") or "{}")
+        res["readiness"] = json.loads(res.get("readiness_json") or "{}")
+        res["attack_sequence_summary"] = json.loads(res.get("attack_summary_json") or "[]")
+        res["affected_entities"] = json.loads(res.get("affected_entities_json") or "[]")
+        res["affected_hosts"] = json.loads(res.get("affected_hosts_json") or "[]")
+        res["mitre_summary"] = json.loads(res.get("mitre_summary_json") or "[]")
+        res["epistemic_summary"] = json.loads(res.get("epistemic_summary_json") or "{}")
+        res["supporting_evidence"] = json.loads(res.get("supporting_evidence_json") or "[]")
+        res["contradicting_evidence"] = json.loads(res.get("contradicting_evidence_json") or "[]")
+        res["conclusion"] = json.loads(res.get("conclusion_json") or "{}")
+        res["provenance"] = json.loads(res.get("provenance_json") or "{}")
+        return res
+
+    def list_case_assessments(self, case_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        """List assessment history for a case."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT assessment_id, case_id, assessment_version, assessment_state,
+                   evidence_state, closure_readiness, created_at, updated_at, created_by
+            FROM case_assessments
+            WHERE case_id = ?
+            ORDER BY assessment_version DESC
+            LIMIT ?
+            """,
+            (case_id, min(limit, 100)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def create_investigation_question(
+        self,
+        case_id: int,
+        question: str,
+        category: str = "AUTHENTICATION",
+        related_evidence: Optional[List[str]] = None,
+        related_entities: Optional[List[str]] = None,
+        recommended_query: Optional[str] = None,
+        created_by: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Create a new investigation question in cases.db."""
+        valid_cats = {
+            "AUTHENTICATION",
+            "EXECUTION",
+            "LATERAL_MOVEMENT",
+            "PERSISTENCE",
+            "DATA_EXFILTRATION",
+            "TEMPORAL_GAP",
+            "IDENTITY_CONTINUITY",
+            "HOST_ATTRIBUTION",
+            "AUTHORIZATION",
+        }
+        if category not in valid_cats:
+            category = "AUTHENTICATION"
+
+        # Sanitize against null bytes and control characters
+        safe_question = "".join(c for c in question if c >= " " or c in "\n\t").strip()
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        question_id = f"q-{case_id}-{hashlib.sha256(f'{safe_question}-{now_iso}'.encode()).hexdigest()[:8]}"
+
+        rel_ev = related_evidence or []
+        rel_ent = related_entities or []
+
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO case_investigation_questions (
+                        question_id, case_id, question, category, status,
+                        related_evidence_json, related_entities_json, recommended_query,
+                        created_by, created_at
+                    ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        question_id,
+                        case_id,
+                        safe_question,
+                        category,
+                        json.dumps(rel_ev),
+                        json.dumps(rel_ent),
+                        recommended_query,
+                        created_by,
+                        now_iso,
+                    ),
+                )
+                self.append_audit_log(
+                    case_id=case_id,
+                    actor=created_by,
+                    action="CREATE_INVESTIGATION_QUESTION",
+                    new_value=question_id,
+                    reason=f"Added investigation question: {safe_question[:80]}",
+                    details={"question_id": question_id, "category": category},
+                )
+
+        return {
+            "question_id": question_id,
+            "case_id": case_id,
+            "question": safe_question,
+            "category": category,
+            "status": "OPEN",
+            "related_evidence": rel_ev,
+            "related_entities": rel_ent,
+            "recommended_query": recommended_query,
+            "resolution_notes": None,
+            "created_by": created_by,
+            "created_at": now_iso,
+            "resolved_at": None,
+        }
+
+    def update_investigation_question_status(
+        self,
+        case_id: int,
+        question_id: str,
+        status: str,
+        resolution_notes: Optional[str] = None,
+        actor: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Update the status of an investigation question."""
+        valid_statuses = {"OPEN", "INVESTIGATING", "ANSWERED", "UNRESOLVED", "NOT_APPLICABLE"}
+        if status not in valid_statuses:
+            raise ValueError(f"Invalid question status '{status}'. Must be one of: {sorted(valid_statuses)}")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        resolved_at = now_iso if status in {"ANSWERED", "UNRESOLVED", "NOT_APPLICABLE"} else None
+
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                existing = conn.execute(
+                    "SELECT * FROM case_investigation_questions WHERE case_id = ? AND question_id = ?",
+                    (case_id, question_id),
+                ).fetchone()
+                if not existing:
+                    raise KeyError(f"Investigation question {question_id} not found in case {case_id}")
+
+                old_status = existing["status"]
+
+                conn.execute(
+                    """
+                    UPDATE case_investigation_questions
+                    SET status = ?, resolution_notes = COALESCE(?, resolution_notes), resolved_at = ?
+                    WHERE case_id = ? AND question_id = ?
+                    """,
+                    (status, resolution_notes, resolved_at, case_id, question_id),
+                )
+
+                self.append_audit_log(
+                    case_id=case_id,
+                    actor=actor,
+                    action="UPDATE_INVESTIGATION_QUESTION_STATUS",
+                    previous_value=old_status,
+                    new_value=status,
+                    reason=f"Question {question_id} marked {status}",
+                    details={"question_id": question_id, "resolution_notes": resolution_notes},
+                )
+
+        updated = self.get_investigation_question(case_id, question_id)
+        if not updated:
+            raise KeyError(f"Question {question_id} missing after update")
+        return updated
+
+    def get_investigation_question(self, case_id: int, question_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific investigation question."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM case_investigation_questions WHERE case_id = ? AND question_id = ?",
+            (case_id, question_id),
+        ).fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        res["related_evidence"] = json.loads(res["related_evidence_json"])
+        res["related_entities"] = json.loads(res["related_entities_json"])
+        return res
+
+    def list_investigation_questions(self, case_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+        """List all investigation questions for a case."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT * FROM case_investigation_questions
+            WHERE case_id = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (case_id, min(limit, 200)),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["related_evidence"] = json.loads(d["related_evidence_json"])
+            d["related_entities"] = json.loads(d["related_entities_json"])
+            result.append(d)
+        return result
+
 
 

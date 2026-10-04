@@ -77,6 +77,19 @@ from logintel.ai.domain.investigation_temporal import (
     TemporalTransition,
     TransitionReviewState,
 )
+from logintel.ai.domain.investigation_assessment import (
+    AssessmentExplanationResponse,
+    CaseAssessment,
+    CaseHandoffPackage,
+    ClosureReadinessAssessment,
+    CompetingHypothesisAssessment,
+    EvidenceSufficiencyAssessment,
+    InvestigationBriefing,
+    InvestigationQuestion,
+    PrioritizedEvidenceGap,
+    StructuredFinding,
+)
+from logintel.ai.assessment.assessment_engine import AssessmentEngine
 from logintel.ai.correlation.advanced_correlator import AdvancedEvidenceCorrelator
 from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
 from logintel.ai.dossier.dossier_builder import DossierBuilder
@@ -120,6 +133,7 @@ class CaseService:
         self.graph_builder = InvestigationGraphBuilder(forensic_db=self.forensic_db)
         self.advanced_correlator = AdvancedEvidenceCorrelator()
         self.temporal_engine = TemporalReconstructionEngine()
+        self.assessment_engine = AssessmentEngine()
 
     def create_or_open_case(
         self,
@@ -1390,7 +1404,340 @@ class CaseService:
         else:
             return self.temporal_engine.export_reconstruction_json(dossier)
 
+    # ---------------------------------------------------------
+    # M5.11 Case Assessment & Investigation Closure Orchestration
+    # ---------------------------------------------------------
+
+    def get_case_assessment(self, case_id: int, refresh: bool = False) -> CaseAssessment:
+        """Synthesize or retrieve comprehensive case assessment."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        # 1. Fetch temporal dossier for reconstruction telemetry
+        try:
+            temporal_dossier = self.get_temporal_reconstruction(case_id)
+        except Exception as e:
+            logger.warning("Could not build temporal dossier for case %s: %s", case_id, e)
+            temporal_dossier = None
+
+        # 2. Fetch finding reviews
+        finding_reviews = self.case_repo.get_finding_reviews(case_id)
+
+        # 3. Fetch questions
+        questions = self.case_repo.list_investigation_questions(case_id)
+
+        # 4. Fetch hypotheses
+        raw_hypotheses = self.case_repo.list_hypotheses(case_id)
+        hypotheses = [
+            {
+                "hypothesis_id": h.hypothesis_id,
+                "statement": h.statement,
+                "status": h.status.value if hasattr(h.status, "value") else str(h.status),
+                "supporting_evidence_tags": h.supporting_evidence_tags,
+                "contradicting_evidence_tags": h.contradicting_evidence_tags,
+                "evidence_gaps": h.evidence_gaps,
+                "analyst_assessment": h.analyst_assessment,
+            }
+            for h in raw_hypotheses
+        ]
+
+        # 5. Check if cached assessment exists and not forced refresh
+        latest = self.case_repo.get_latest_case_assessment(case_id)
+        if latest and not refresh:
+            from logintel.ai.domain.investigation_assessment import (
+                CaseAssessment,
+                CaseConclusion,
+                ClosureReadinessAssessment,
+                EvidenceSufficiencyAssessment,
+                PrioritizedEvidenceGap,
+                ProvenanceManifest,
+                StructuredFinding,
+                CompetingHypothesisAssessment,
+                InvestigationQuestion,
+            )
+            return CaseAssessment(
+                case_id=case_id,
+                assessment_id=latest["assessment_id"],
+                assessment_version=latest["assessment_version"],
+                created_at=latest["created_at"],
+                updated_at=latest["updated_at"],
+                case_state=latest.get("case_state") or case.status.value,
+                evidence_state=latest["evidence_state"],
+                assessment_state=latest.get("assessment_state") or "DRAFT",
+                epistemic_summary=latest.get("epistemic_summary") or {},
+                key_findings=[StructuredFinding.model_validate(f) for f in latest["findings"]],
+                supporting_evidence=latest.get("supporting_evidence") or [f["finding_id"] for f in latest["findings"] if f.get("review_state") == "ACCEPTED"],
+                contradicting_evidence=latest.get("contradicting_evidence") or [],
+                evidence_gaps=[PrioritizedEvidenceGap.model_validate(g) for g in latest["gaps"]],
+                hypotheses=[CompetingHypothesisAssessment.model_validate(h) for h in latest["hypotheses"]],
+                questions=[InvestigationQuestion.model_validate(q) for q in latest["questions"]],
+                evidence_sufficiency=EvidenceSufficiencyAssessment.model_validate(latest["sufficiency"]),
+                attack_sequence_summary=latest.get("attack_sequence_summary") or [],
+                affected_entities=latest.get("affected_entities") or [],
+                affected_hosts=latest.get("affected_hosts") or [],
+                mitre_summary=latest.get("mitre_summary") or [],
+                analyst_assessment=latest.get("analyst_assessment") or "",
+                closure_readiness=ClosureReadinessAssessment.model_validate(latest["readiness"]),
+                conclusion=CaseConclusion.model_validate(latest["conclusion"]),
+                provenance=ProvenanceManifest.model_validate(latest["provenance"]),
+            )
+
+        analyst_note = latest.get("analyst_assessment", "") if latest else ""
+        version = (latest.get("assessment_version", 0) + 1) if refresh and latest else (latest.get("assessment_version", 1) if latest else 1)
+
+        # Synthesize assessment
+        assessment = self.assessment_engine.synthesize_case_assessment(
+            case=case,
+            temporal_dossier=temporal_dossier,
+            finding_reviews=finding_reviews,
+            existing_questions=questions,
+            existing_hypotheses=hypotheses,
+            analyst_assessment=analyst_note,
+            assessment_version=version,
+        )
+
+        # Persist assessment snapshot in cases.db
+        self.case_repo.upsert_case_assessment(
+            case_id=case_id,
+            assessment_id=assessment.assessment_id,
+            assessment_version=assessment.assessment_version,
+            case_state=assessment.case_state,
+            assessment_state=assessment.assessment_state.value if hasattr(assessment.assessment_state, "value") else str(assessment.assessment_state),
+            evidence_state=assessment.evidence_state.value if hasattr(assessment.evidence_state, "value") else str(assessment.evidence_state),
+            closure_readiness=assessment.closure_readiness.status.value if hasattr(assessment.closure_readiness.status, "value") else str(assessment.closure_readiness.status),
+            findings=[f.model_dump() for f in assessment.key_findings],
+            hypotheses=[h.model_dump() for h in assessment.hypotheses],
+            gaps=[g.model_dump() for g in assessment.evidence_gaps],
+            questions=[q.model_dump() for q in assessment.questions],
+            sufficiency=assessment.evidence_sufficiency.model_dump(),
+            readiness=assessment.closure_readiness.model_dump(),
+            attack_summary=assessment.attack_sequence_summary,
+            affected_entities=assessment.affected_entities,
+            affected_hosts=assessment.affected_hosts,
+            mitre_summary=assessment.mitre_summary,
+            epistemic_summary=assessment.epistemic_summary,
+            supporting_evidence=assessment.supporting_evidence,
+            contradicting_evidence=assessment.contradicting_evidence,
+            analyst_assessment=assessment.analyst_assessment,
+            conclusion=assessment.conclusion.model_dump(),
+            provenance=assessment.provenance.model_dump(),
+            created_at=assessment.created_at,
+            created_by="SYSTEM_DETERMINISTIC",
+        )
+
+        return assessment
+
+    def get_case_findings(self, case_id: int) -> List[StructuredFinding]:
+        """Retrieve key findings for a case."""
+        assessment = self.get_case_assessment(case_id)
+        return assessment.key_findings
+
+    def review_case_finding(
+        self,
+        case_id: int,
+        finding_id: str,
+        review_state: str,
+        notes: str = "",
+        actor: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Record analyst review for a finding preserving epistemic separation."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        res = self.case_repo.upsert_finding_review(
+            case_id=case_id,
+            finding_id=finding_id,
+            review_state=review_state,
+            analyst_notes=notes,
+            reviewed_by=actor,
+        )
+        res["epistemic_status_preserved"] = True
+
+        # Update cached assessment finding if present
+        latest = self.case_repo.get_latest_case_assessment(case_id)
+        if latest:
+            findings = latest.get("findings", [])
+            for f in findings:
+                if f.get("finding_id") == finding_id:
+                    f["review_state"] = review_state
+                    f["reviewed_by"] = actor
+                    f["reviewed_at"] = res.get("reviewed_at")
+                    f["review_notes"] = notes
+            self.case_repo.upsert_case_assessment(
+                case_id=case_id,
+                assessment_id=latest["assessment_id"],
+                assessment_version=latest["assessment_version"],
+                case_state=latest.get("case_state", "OPEN"),
+                assessment_state=latest.get("assessment_state", "DRAFT"),
+                evidence_state=latest["evidence_state"],
+                closure_readiness=latest["closure_readiness"],
+                findings=findings,
+                hypotheses=latest.get("hypotheses", []),
+                gaps=latest.get("gaps", []),
+                questions=latest.get("questions", []),
+                sufficiency=latest.get("sufficiency", {}),
+                readiness=latest.get("readiness", {}),
+                attack_summary=latest.get("attack_sequence_summary", []),
+                affected_entities=latest.get("affected_entities", []),
+                affected_hosts=latest.get("affected_hosts", []),
+                mitre_summary=latest.get("mitre_summary", []),
+                epistemic_summary=latest.get("epistemic_summary", {}),
+                supporting_evidence=latest.get("supporting_evidence", []),
+                contradicting_evidence=latest.get("contradicting_evidence", []),
+                analyst_assessment=latest.get("analyst_assessment", ""),
+                conclusion=latest.get("conclusion", {}),
+                provenance=latest.get("provenance", {}),
+                created_at=latest.get("created_at"),
+                created_by=actor,
+            )
+
+        return res
+
+    def get_case_hypotheses(self, case_id: int) -> List[CompetingHypothesisAssessment]:
+        """Retrieve competing hypothesis assessment for a case."""
+        assessment = self.get_case_assessment(case_id)
+        return assessment.hypotheses
+
+    def get_case_questions(self, case_id: int) -> List[InvestigationQuestion]:
+        """Retrieve investigation questions for a case."""
+        assessment = self.get_case_assessment(case_id)
+        return assessment.questions
+
+    def create_case_question(
+        self,
+        case_id: int,
+        question: str,
+        category: str = "AUTHENTICATION",
+        related_evidence: Optional[List[str]] = None,
+        related_entities: Optional[List[str]] = None,
+        recommended_query: Optional[str] = None,
+        actor: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Add a new investigation question to the case."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        return self.case_repo.create_investigation_question(
+            case_id=case_id,
+            question=question,
+            category=category,
+            related_evidence=related_evidence,
+            related_entities=related_entities,
+            recommended_query=recommended_query,
+            created_by=actor,
+        )
+
+    def update_case_question_status(
+        self,
+        case_id: int,
+        question_id: str,
+        status: str,
+        resolution_notes: Optional[str] = None,
+        actor: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Update an investigation question status."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        return self.case_repo.update_investigation_question_status(
+            case_id=case_id,
+            question_id=question_id,
+            status=status,
+            resolution_notes=resolution_notes,
+            actor=actor,
+        )
+
+    def get_case_gaps(self, case_id: int) -> List[PrioritizedEvidenceGap]:
+        """Retrieve prioritized evidence gaps for a case."""
+        assessment = self.get_case_assessment(case_id)
+        return assessment.evidence_gaps
+
+    def get_closure_readiness(self, case_id: int) -> ClosureReadinessAssessment:
+        """Retrieve closure readiness evaluation for a case."""
+        assessment = self.get_case_assessment(case_id)
+        return assessment.closure_readiness
+
+    def record_analyst_assessment(
+        self,
+        case_id: int,
+        analyst_assessment: str,
+        actor: str = "SecAnalyst-1",
+    ) -> CaseAssessment:
+        """Record or update analyst-authored case assessment text."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        assessment = self.get_case_assessment(case_id)
+        assessment.analyst_assessment = analyst_assessment
+        assessment.conclusion = self.assessment_engine.build_case_conclusion(
+            case=case,
+            findings=assessment.key_findings,
+            sufficiency=assessment.evidence_sufficiency,
+            readiness=assessment.closure_readiness,
+            analyst_assessment_text=analyst_assessment,
+        )
+
+        # Persist updated assessment
+        self.case_repo.upsert_case_assessment(
+            case_id=case_id,
+            assessment_id=assessment.assessment_id,
+            assessment_version=assessment.assessment_version,
+            case_state=assessment.case_state,
+            assessment_state=assessment.assessment_state.value if hasattr(assessment.assessment_state, "value") else str(assessment.assessment_state),
+            evidence_state=assessment.evidence_state.value if hasattr(assessment.evidence_state, "value") else str(assessment.evidence_state),
+            closure_readiness=assessment.closure_readiness.status.value if hasattr(assessment.closure_readiness.status, "value") else str(assessment.closure_readiness.status),
+            findings=[f.model_dump() for f in assessment.key_findings],
+            hypotheses=[h.model_dump() for h in assessment.hypotheses],
+            gaps=[g.model_dump() for g in assessment.evidence_gaps],
+            questions=[q.model_dump() for q in assessment.questions],
+            sufficiency=assessment.evidence_sufficiency.model_dump(),
+            readiness=assessment.closure_readiness.model_dump(),
+            attack_summary=assessment.attack_sequence_summary,
+            affected_entities=assessment.affected_entities,
+            affected_hosts=assessment.affected_hosts,
+            mitre_summary=assessment.mitre_summary,
+            epistemic_summary=assessment.epistemic_summary,
+            supporting_evidence=assessment.supporting_evidence,
+            contradicting_evidence=assessment.contradicting_evidence,
+            analyst_assessment=analyst_assessment,
+            conclusion=assessment.conclusion.model_dump(),
+            provenance=assessment.provenance.model_dump(),
+            created_at=assessment.created_at,
+            created_by=actor,
+        )
+        return assessment
+
+    def get_investigation_briefing(self, case_id: int) -> InvestigationBriefing:
+        """Generate 15-section deterministic investigation briefing."""
+        assessment = self.get_case_assessment(case_id)
+        return self.assessment_engine.generate_investigation_briefing(assessment)
+
+    def get_case_handoff(self, case_id: int, actor: str = "SecAnalyst-1") -> CaseHandoffPackage:
+        """Generate structured case handoff package."""
+        assessment = self.get_case_assessment(case_id)
+        return self.assessment_engine.generate_case_handoff_package(assessment, actor=actor)
+
+    def explain_case_assessment(
+        self,
+        case_id: int,
+        target_id: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> AssessmentExplanationResponse:
+        """Generate strictly advisory local AI explanation of assessment or finding."""
+        assessment = self.get_case_assessment(case_id)
+        return self.assessment_engine.explain_case_assessment(
+            assessment=assessment,
+            target_id=target_id,
+            analyst_query=query,
+        )
+
 
 # Singleton case service instance
 case_service = CaseService()
+
 

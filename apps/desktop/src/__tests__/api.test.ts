@@ -1888,7 +1888,202 @@ describe("Frontend API Client and Authentication", () => {
     const exported = await exportTemporalReconstruction(901, "json");
     expect(exported.format).toBe("json");
   });
+
+  it("M5.11 Case Assessment API client methods perform bounded authenticated calls", async () => {
+    setEngineToken("valid_token");
+
+    const mockAssessment = {
+      case_id: 902,
+      assessment_id: "asmt-902-v1",
+      assessment_version: 1,
+      created_at: "2026-10-04T12:00:00Z",
+      updated_at: "2026-10-04T12:00:00Z",
+      case_state: "OPEN",
+      evidence_state: "SUFFICIENT",
+      assessment_state: "DRAFT",
+      epistemic_summary: { total_findings: 2, observed: 1, inferred: 1, unknown: 0 },
+      key_findings: [
+        {
+          finding_id: "f-1",
+          case_id: 902,
+          title: "Initial Authentication",
+          description: "User logged in",
+          epistemic_status: "OBSERVED",
+          severity: "MEDIUM",
+          evidence_references: ["ev:101"],
+          supporting_references: ["ev:101"],
+          contradicting_references: [],
+          related_entities: ["alice"],
+          related_events: ["101"],
+          related_incidents: [902],
+          related_sequences: [],
+          mitre_references: [],
+          review_state: "UNREVIEWED",
+          provenance: {},
+        },
+      ],
+      supporting_evidence: ["ev:101"],
+      contradicting_evidence: [],
+      evidence_gaps: [],
+      hypotheses: [],
+      questions: [],
+      evidence_sufficiency: {
+        status: "SUFFICIENT",
+        rationale: "Complete telemetry",
+        existing_evidence: ["ev:101"],
+        missing_evidence: [],
+        contradicting_evidence: [],
+        next_useful_evidence: [],
+      },
+      attack_sequence_summary: [],
+      affected_entities: ["alice"],
+      affected_hosts: ["host-1"],
+      mitre_summary: [],
+      analyst_assessment: "",
+      closure_readiness: {
+        status: "READY",
+        summary: "Case ready for closure",
+        blocking_factors: [],
+        warnings: [],
+        recommendations: [],
+      },
+      conclusion: {
+        statement: "Activity confirmed",
+        epistemic_status: "OBSERVED",
+        supporting_evidence: ["ev:101"],
+        contradicting_evidence: [],
+        limitations: [],
+        unknowns: [],
+      },
+      provenance: { fingerprint: "sha256:abc" },
+    };
+
+    const mockBriefing = {
+      briefing_id: "brf-902-v1",
+      case_id: 902,
+      assessment_id: "asmt-902-v1",
+      sections: { "Case Overview": "Case 902 Overview" },
+      briefing_text: "Full briefing text",
+      closure_readiness: "READY",
+      evidence_sufficiency: "SUFFICIENT",
+      generated_at: "2026-10-04T12:00:00Z",
+      provenance_hash: "sha256:abc",
+    };
+
+    const mockHandoff = {
+      handoff_id: "hnd-902-abc",
+      case_id: 902,
+      created_at: "2026-10-04T12:00:00Z",
+      operator: "SecAnalyst-1",
+      case_summary: "Handoff summary",
+      current_state: "OPEN",
+      key_findings: ["Initial Authentication"],
+      open_questions: [],
+      evidence_gaps: [],
+      hypotheses: [],
+      affected_entities: ["alice"],
+      analyst_assessment: "Analyst note",
+      required_next_actions: ["Sign off"],
+      report_versions: [1],
+      provenance_manifest: {},
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/assessment/briefing")) {
+        return { ok: true, json: async () => mockBriefing } as Response;
+      }
+      if (urlStr.includes("/assessment/handoff")) {
+        return { ok: true, json: async () => mockHandoff } as Response;
+      }
+      if (urlStr.includes("/assessment/findings/") && urlStr.includes("/review")) {
+        return {
+          ok: true,
+          json: async () => ({
+            review_id: "rev-1",
+            case_id: 902,
+            finding_id: "f-1",
+            review_state: "ACCEPTED",
+            epistemic_status_preserved: true,
+          }),
+        } as Response;
+      }
+      if (urlStr.includes("/assessment/findings")) {
+        return {
+          ok: true,
+          json: async () => ({ case_id: 902, findings: mockAssessment.key_findings, total_findings: 1 }),
+        } as Response;
+      }
+      if (urlStr.includes("/assessment/questions")) {
+        return {
+          ok: true,
+          json: async () => ({ case_id: 902, questions: [], total_questions: 0 }),
+        } as Response;
+      }
+      if (urlStr.includes("/assessment/readiness")) {
+        return { ok: true, json: async () => mockAssessment.closure_readiness } as Response;
+      }
+      if (urlStr.includes("/assessment/gaps")) {
+        return { ok: true, json: async () => ({ case_id: 902, evidence_gaps: [], total_gaps: 0 }) } as Response;
+      }
+      if (urlStr.includes("/assessment/hypotheses")) {
+        return { ok: true, json: async () => ({ case_id: 902, hypotheses: [], total_hypotheses: 0 }) } as Response;
+      }
+      if (urlStr.includes("/assessment/explain")) {
+        return {
+          ok: true,
+          json: async () => ({
+            explanation_id: "axp-1",
+            case_id: 902,
+            target_id: "f-1",
+            explanation_text: "Advisory explanation",
+            is_authoritative: false,
+            generated_by: "LOCAL_AI_ADVISORY",
+            referenced_citations: ["ev:101"],
+            epistemic_status: "INFERRED",
+            generated_at: "2026-10-04T12:00:00Z",
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => mockAssessment } as Response;
+    });
+
+    const {
+      getCaseAssessment,
+      getCaseFindings,
+      reviewCaseFinding,
+      getClosureReadiness,
+      getInvestigationBriefing,
+      getCaseHandoff,
+      explainCaseAssessment,
+    } = await import("../lib/api");
+
+    const asmt = await getCaseAssessment(902);
+    expect(asmt.case_id).toBe(902);
+    expect(asmt.evidence_state).toBe("SUFFICIENT");
+
+    const findings = await getCaseFindings(902);
+    expect(findings.total_findings).toBe(1);
+
+    const reviewed = await reviewCaseFinding(902, "f-1", "ACCEPTED", "Valid", "SecAnalyst-1");
+    expect(reviewed.review_state).toBe("ACCEPTED");
+    expect(reviewed.epistemic_status_preserved).toBe(true);
+
+    const readiness = await getClosureReadiness(902);
+    expect(readiness.status).toBe("READY");
+
+    const briefing = await getInvestigationBriefing(902);
+    expect(briefing.briefing_id).toBe("brf-902-v1");
+
+    const handoff = await getCaseHandoff(902);
+    expect(handoff.operator).toBe("SecAnalyst-1");
+
+    const explanation = await explainCaseAssessment(902, "f-1");
+    expect(explanation.is_authoritative).toBe(false);
+    expect(explanation.generated_by).toBe("LOCAL_AI_ADVISORY");
+  });
 });
+
 
 
 

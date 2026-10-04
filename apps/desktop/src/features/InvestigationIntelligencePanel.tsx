@@ -42,6 +42,7 @@ import {
 import { InvestigationGraphExplorer } from "./InvestigationGraphExplorer";
 import { InvestigationCorrelationExplorer } from "./InvestigationCorrelationExplorer";
 import { InvestigationTemporalExplorer } from "./InvestigationTemporalExplorer";
+import { InvestigationAssessmentExplorer } from "./InvestigationAssessmentExplorer";
 
 interface InvestigationIntelligencePanelProps {
   incidentId: number;
@@ -56,8 +57,8 @@ export function InvestigationIntelligencePanel({
   onSelectAlertId,
   onSelectEntityKey,
 }: InvestigationIntelligencePanelProps) {
-  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9 & M5.10
-  const [subTab, setSubTab] = useState<"ask" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline">("ask");
+  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9, M5.10 & M5.11
+  const [subTab, setSubTab] = useState<"ask" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline" | "assessment">("ask");
 
   // Persistent Case State (M5.5 Continuity)
   const [caseData, setCaseData] = useState<InvestigationCase | null>(null);
@@ -517,9 +518,10 @@ export function InvestigationIntelligencePanel({
       <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-color, #e2e8f0)", paddingBottom: "4px" }}>
         {[
           { id: "ask", label: "Analyst Questions & AI" },
-          { id: "graph", label: "Investigation Graph & Pivots (M5.8)" },
-          { id: "correlation", label: "Evidence Correlation & Findings (M5.9)" },
+          { id: "assessment", label: "Case Assessment & Closure (M5.11)" },
           { id: "timeline", label: "Temporal Reconstruction & Timeline (M5.10)" },
+          { id: "correlation", label: "Evidence Correlation & Findings (M5.9)" },
+          { id: "graph", label: "Investigation Graph & Pivots (M5.8)" },
           { id: "hypotheses", label: `Hypothesis Workbench (${hypotheses.length})` },
           { id: "queries", label: "Query Execution & Evidence Candidates" },
           { id: "summary", label: "Structured Summary" },
@@ -1257,6 +1259,17 @@ export function InvestigationIntelligencePanel({
       {/* 9. Temporal Investigation Reconstruction (M5.10) */}
       {subTab === "timeline" && (
         <InvestigationTemporalExplorer
+          caseId={caseData?.case_id || incidentId}
+          incidentId={incidentId}
+          onSelectEventId={onSelectEventId}
+          onSelectAlertId={onSelectAlertId}
+          onSelectEntityKey={onSelectEntityKey}
+        />
+      )}
+
+      {/* 10. Case Assessment & Investigation Closure (M5.11) */}
+      {subTab === "assessment" && (
+        <InvestigationAssessmentExplorer
           caseId={caseData?.case_id || incidentId}
           incidentId={incidentId}
           onSelectEventId={onSelectEventId}

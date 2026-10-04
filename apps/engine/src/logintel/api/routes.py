@@ -2295,6 +2295,264 @@ def export_temporal_reconstruction_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# M5.11 Case Assessment & Investigation Closure Endpoints
+# -----------------------------------------------------------------------------
+
+class FindingReviewRequest(BaseModel):
+    review_state: str = Field(..., pattern="^(UNREVIEWED|ACCEPTED|REJECTED|DISPUTED)$")
+    analyst_notes: str = Field(default="", max_length=2000)
+    reviewed_by: str = Field(default="SecAnalyst-1", max_length=100)
+
+
+class CreateQuestionRequest(BaseModel):
+    question: str = Field(..., min_length=5, max_length=1000)
+    category: str = Field(default="AUTHENTICATION")
+    related_evidence: List[str] = Field(default_factory=list)
+    related_entities: List[str] = Field(default_factory=list)
+    recommended_query: Optional[str] = Field(default=None, max_length=1000)
+    created_by: str = Field(default="SecAnalyst-1", max_length=100)
+
+
+class UpdateQuestionStatusRequest(BaseModel):
+    status: str = Field(..., pattern="^(OPEN|INVESTIGATING|ANSWERED|UNRESOLVED|NOT_APPLICABLE)$")
+    resolution_notes: Optional[str] = Field(default=None, max_length=2000)
+    actor: str = Field(default="SecAnalyst-1", max_length=100)
+
+
+class AnalystAssessmentRequest(BaseModel):
+    analyst_assessment: str = Field(..., max_length=5000)
+    actor: str = Field(default="SecAnalyst-1", max_length=100)
+
+
+class AssessmentExplanationRequest(BaseModel):
+    target_id: Optional[str] = Field(default=None, max_length=120)
+    query: Optional[str] = Field(default=None, max_length=1000)
+
+
+@protected_router.get("/cases/{case_id}/assessment")
+def get_case_assessment_endpoint(
+    case_id: int,
+    refresh: bool = Query(default=False),
+) -> Dict[str, Any]:
+    """Retrieve or synthesize comprehensive case assessment (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        assessment = case_service.get_case_assessment(case_id, refresh=refresh)
+        return assessment.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/assessment/findings")
+def get_case_findings_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve key findings for case assessment (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        findings = case_service.get_case_findings(case_id)
+        return {
+            "case_id": case_id,
+            "findings": [f.model_dump(mode="json") for f in findings],
+            "total_findings": len(findings),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/assessment/findings/{finding_id}/review")
+def review_case_finding_endpoint(
+    case_id: int,
+    finding_id: str,
+    req: FindingReviewRequest,
+) -> Dict[str, Any]:
+    """Record analyst review for a finding preserving epistemic status (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        result = case_service.review_case_finding(
+            case_id=case_id,
+            finding_id=finding_id,
+            review_state=req.review_state,
+            notes=req.analyst_notes,
+            actor=req.reviewed_by,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/assessment/hypotheses")
+def get_case_hypotheses_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve competing hypotheses assessment (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        hypotheses = case_service.get_case_hypotheses(case_id)
+        return {
+            "case_id": case_id,
+            "hypotheses": [h.model_dump(mode="json") for h in hypotheses],
+            "total_hypotheses": len(hypotheses),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/assessment/questions")
+def get_case_questions_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve investigation questions for case (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        questions = case_service.get_case_questions(case_id)
+        return {
+            "case_id": case_id,
+            "questions": [q.model_dump(mode="json") for q in questions],
+            "total_questions": len(questions),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/assessment/questions")
+def create_case_question_endpoint(
+    case_id: int,
+    req: CreateQuestionRequest,
+) -> Dict[str, Any]:
+    """Create a new investigation question (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        result = case_service.create_case_question(
+            case_id=case_id,
+            question=req.question,
+            category=req.category,
+            related_evidence=req.related_evidence,
+            related_entities=req.related_entities,
+            recommended_query=req.recommended_query,
+            actor=req.created_by,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/assessment/questions/{question_id}/status")
+def update_case_question_status_endpoint(
+    case_id: int,
+    question_id: str,
+    req: UpdateQuestionStatusRequest,
+) -> Dict[str, Any]:
+    """Update status of an investigation question (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        result = case_service.update_case_question_status(
+            case_id=case_id,
+            question_id=question_id,
+            status=req.status,
+            resolution_notes=req.resolution_notes,
+            actor=req.actor,
+        )
+        return result
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/assessment/gaps")
+def get_case_gaps_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve prioritized evidence gaps (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        gaps = case_service.get_case_gaps(case_id)
+        return {
+            "case_id": case_id,
+            "evidence_gaps": [g.model_dump(mode="json") for g in gaps],
+            "total_gaps": len(gaps),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/assessment/readiness")
+def get_case_closure_readiness_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve deterministic closure readiness assessment (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        readiness = case_service.get_closure_readiness(case_id)
+        return readiness.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/assessment/analyst-assessment")
+def record_analyst_assessment_endpoint(
+    case_id: int,
+    req: AnalystAssessmentRequest,
+) -> Dict[str, Any]:
+    """Record analyst-authored case assessment text (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        assessment = case_service.record_analyst_assessment(
+            case_id=case_id,
+            analyst_assessment=req.analyst_assessment,
+            actor=req.actor,
+        )
+        return assessment.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/assessment/briefing")
+def get_investigation_briefing_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve deterministic 15-section investigation briefing (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        briefing = case_service.get_investigation_briefing(case_id)
+        return briefing.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/assessment/handoff")
+def get_case_handoff_endpoint(
+    case_id: int,
+    actor: str = Query(default="SecAnalyst-1"),
+) -> Dict[str, Any]:
+    """Retrieve structured analyst handoff package (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        handoff = case_service.get_case_handoff(case_id, actor=actor)
+        return handoff.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/assessment/explain")
+def explain_case_assessment_endpoint(
+    case_id: int,
+    req: AssessmentExplanationRequest,
+) -> Dict[str, Any]:
+    """Generate strictly advisory-only local AI explanation of assessment or finding (M5.11)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        explanation = case_service.explain_case_assessment(
+            case_id=case_id,
+            target_id=req.target_id,
+            query=req.query,
+        )
+        return explanation.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

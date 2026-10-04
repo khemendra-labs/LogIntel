@@ -695,6 +695,7 @@ export type FindingReviewState =
   | "UNDER_REVIEW"
   | "ACCEPTED"
   | "REJECTED"
+  | "DISPUTED"
   | "NEEDS_MORE_EVIDENCE";
 
 export type EvidenceMatrixStatus =
@@ -1368,4 +1369,194 @@ export interface TemporalExplanationResponse {
   epistemic_status: EpistemicStatus;
   generated_at: string;
 }
+
+// -------------------------------------------------------------
+// M5.11 Analyst Decision Intelligence & Case Assessment Types
+// -------------------------------------------------------------
+
+export type EvidenceSufficiencyState =
+  | "SUFFICIENT"
+  | "PARTIALLY_SUFFICIENT"
+  | "INSUFFICIENT"
+  | "UNKNOWN";
+
+export type ClosureReadinessState =
+  | "READY"
+  | "NOT_READY"
+  | "READY_WITH_LIMITATIONS"
+  | "UNKNOWN";
+
+export type AssessmentState = "DRAFT" | "REVIEWED" | "FINAL";
+
+export type QuestionStatus =
+  | "OPEN"
+  | "INVESTIGATING"
+  | "ANSWERED"
+  | "UNRESOLVED"
+  | "NOT_APPLICABLE";
+
+export type QuestionCategory =
+  | "AUTHENTICATION"
+  | "EXECUTION"
+  | "LATERAL_MOVEMENT"
+  | "PERSISTENCE"
+  | "DATA_EXFILTRATION"
+  | "TEMPORAL_GAP"
+  | "IDENTITY_CONTINUITY"
+  | "HOST_ATTRIBUTION"
+  | "AUTHORIZATION";
+
+export type GapPriority = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+
+export interface StructuredFinding {
+  finding_id: string;
+  case_id: number;
+  title: string;
+  description: string;
+  epistemic_status: EpistemicStatus;
+  severity: string;
+  evidence_references: string[];
+  supporting_references: string[];
+  contradicting_references: string[];
+  related_entities: string[];
+  related_events: string[];
+  related_incidents: number[];
+  related_sequences: string[];
+  mitre_references: string[];
+  review_state: FindingReviewState;
+  provenance: Record<string, any>;
+}
+
+export interface CompetingHypothesisAssessment {
+  hypothesis_id: string;
+  statement: string;
+  status: string;
+  supporting_evidence: string[];
+  contradicting_evidence: string[];
+  evidence_gaps: string[];
+  determination: "SUPPORTING" | "CONTRADICTING" | "UNRESOLVED";
+  analyst_assessment?: string | null;
+  epistemic_status: EpistemicStatus;
+}
+
+export interface InvestigationQuestion {
+  question_id: string;
+  case_id: number;
+  question: string;
+  category: QuestionCategory;
+  status: QuestionStatus;
+  related_evidence: string[];
+  related_entities: string[];
+  recommended_query?: string | null;
+  created_at: string;
+  resolved_at?: string | null;
+  resolution_notes?: string | null;
+}
+
+export interface PrioritizedEvidenceGap {
+  gap_id: string;
+  title: string;
+  gap_type: string;
+  affected_area: string;
+  priority: GapPriority;
+  explanation: string;
+  remedy: string;
+  related_entities: string[];
+}
+
+export interface CaseConclusion {
+  statement: string;
+  epistemic_status: EpistemicStatus;
+  supporting_evidence: string[];
+  contradicting_evidence: string[];
+  limitations: string[];
+  unknowns: string[];
+}
+
+export interface EvidenceSufficiencyAssessment {
+  status: EvidenceSufficiencyState;
+  rationale: string;
+  existing_evidence: string[];
+  missing_evidence: string[];
+  contradicting_evidence: string[];
+  next_useful_evidence: string[];
+}
+
+export interface ClosureReadinessAssessment {
+  status: ClosureReadinessState;
+  summary: string;
+  blocking_factors: string[];
+  warnings: string[];
+  recommendations: string[];
+}
+
+export interface CaseAssessment {
+  case_id: number;
+  assessment_id: string;
+  assessment_version: number;
+  created_at: string;
+  updated_at: string;
+  case_state: string;
+  evidence_state: EvidenceSufficiencyState;
+  assessment_state: AssessmentState;
+  epistemic_summary: Record<string, number>;
+  key_findings: StructuredFinding[];
+  supporting_evidence: string[];
+  contradicting_evidence: string[];
+  evidence_gaps: PrioritizedEvidenceGap[];
+  hypotheses: CompetingHypothesisAssessment[];
+  questions: InvestigationQuestion[];
+  evidence_sufficiency: EvidenceSufficiencyAssessment;
+  attack_sequence_summary: string[];
+  affected_entities: string[];
+  affected_hosts: string[];
+  mitre_summary: Array<Record<string, any>>;
+  analyst_assessment: string;
+  closure_readiness: ClosureReadinessAssessment;
+  conclusion: CaseConclusion;
+  provenance: Record<string, any>;
+}
+
+export interface InvestigationBriefing {
+  briefing_id: string;
+  case_id: number;
+  assessment_id: string;
+  sections: Record<string, string>;
+  briefing_text: string;
+  closure_readiness: ClosureReadinessState;
+  evidence_sufficiency: EvidenceSufficiencyState;
+  generated_at: string;
+  provenance_hash: string;
+}
+
+export interface CaseHandoffPackage {
+  handoff_id: string;
+  case_id: number;
+  created_at: string;
+  operator: string;
+  case_summary: string;
+  current_state: string;
+  key_findings: string[];
+  open_questions: string[];
+  evidence_gaps: string[];
+  hypotheses: string[];
+  affected_entities: string[];
+  analyst_assessment: string;
+  required_next_actions: string[];
+  report_versions: number[];
+  provenance_manifest: Record<string, any>;
+}
+
+export interface AssessmentExplanationResponse {
+  explanation_id: string;
+  case_id: number;
+  target_id: string;
+  explanation_text: string;
+  is_authoritative: boolean;
+  generated_by: string;
+  referenced_citations: string[];
+  epistemic_status: EpistemicStatus;
+  generated_at: string;
+}
+
 

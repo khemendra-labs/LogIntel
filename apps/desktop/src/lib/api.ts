@@ -106,6 +106,16 @@ import type {
   AttackSequenceReconstruction,
   TemporalReconstructionDossier,
   TemporalExplanationResponse,
+  CaseAssessment,
+  StructuredFinding,
+  CompetingHypothesisAssessment,
+  InvestigationQuestion,
+  PrioritizedEvidenceGap,
+  ClosureReadinessAssessment,
+  InvestigationBriefing,
+  CaseHandoffPackage,
+  AssessmentExplanationResponse,
+  FindingReviewState,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -2010,6 +2020,227 @@ export async function exportTemporalReconstruction(
   });
   if (!res.ok) {
     throw new Error(`Failed to export temporal reconstruction: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// -----------------------------------------------------------------------------
+// M5.11 Case Assessment & Investigation Closure Client Methods
+// -----------------------------------------------------------------------------
+
+export async function getCaseAssessment(caseId: number, refresh: boolean = false): Promise<CaseAssessment> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment?refresh=${refresh}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case assessment: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCaseFindings(caseId: number): Promise<{ case_id: number; findings: StructuredFinding[]; total_findings: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/findings`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch findings: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function reviewCaseFinding(
+  caseId: number,
+  findingId: string,
+  reviewState: FindingReviewState,
+  notes: string = "",
+  reviewer: string = "SecAnalyst-1"
+): Promise<{ review_id: string; case_id: number; finding_id: string; review_state: string; epistemic_status_preserved: boolean }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/findings/${encodeURIComponent(findingId)}/review`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      review_state: reviewState,
+      analyst_notes: notes,
+      reviewed_by: reviewer,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to review finding: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCaseHypotheses(caseId: number): Promise<{ case_id: number; hypotheses: CompetingHypothesisAssessment[]; total_hypotheses: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/hypotheses`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch hypotheses: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCaseQuestions(caseId: number): Promise<{ case_id: number; questions: InvestigationQuestion[]; total_questions: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/questions`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch questions: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createCaseQuestion(
+  caseId: number,
+  question: string,
+  category: string = "AUTHENTICATION",
+  relatedEvidence: string[] = [],
+  relatedEntities: string[] = [],
+  recommendedQuery?: string,
+  createdBy: string = "SecAnalyst-1"
+): Promise<InvestigationQuestion> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/questions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      question,
+      category,
+      related_evidence: relatedEvidence,
+      related_entities: relatedEntities,
+      recommended_query: recommendedQuery || null,
+      created_by: createdBy,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create question: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseQuestionStatus(
+  caseId: number,
+  questionId: string,
+  status: string,
+  resolutionNotes?: string,
+  actor: string = "SecAnalyst-1"
+): Promise<InvestigationQuestion> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/questions/${encodeURIComponent(questionId)}/status`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      status,
+      resolution_notes: resolutionNotes || null,
+      actor,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update question status: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCaseGaps(caseId: number): Promise<{ case_id: number; evidence_gaps: PrioritizedEvidenceGap[]; total_gaps: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/gaps`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence gaps: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getClosureReadiness(caseId: number): Promise<ClosureReadinessAssessment> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/readiness`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch closure readiness: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function recordAnalystAssessment(
+  caseId: number,
+  analystAssessment: string,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseAssessment> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/analyst-assessment`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      analyst_assessment: analystAssessment,
+      actor,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to record analyst assessment: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getInvestigationBriefing(caseId: number): Promise<InvestigationBriefing> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/briefing`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch briefing: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCaseHandoff(caseId: number, actor: string = "SecAnalyst-1"): Promise<CaseHandoffPackage> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/handoff?actor=${encodeURIComponent(actor)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch handoff package: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function explainCaseAssessment(
+  caseId: number,
+  targetId?: string,
+  query?: string
+): Promise<AssessmentExplanationResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/assessment/explain`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      target_id: targetId || null,
+      query: query || null,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to explain assessment: ${res.statusText}`);
   }
   return res.json();
 }
