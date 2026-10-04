@@ -2112,6 +2112,189 @@ def explain_correlation_cluster_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# =============================================================================
+# Milestone 5.10: Temporal Investigation Reconstruction & Campaign Correlation
+# =============================================================================
+
+class TransitionReviewApiRequest(BaseModel):
+    review_state: str
+    analyst_notes: str = ""
+    reviewed_by: str = "SecAnalyst-1"
+
+
+class TemporalExplanationApiRequest(BaseModel):
+    target_id: Optional[str] = None
+    question: Optional[str] = None
+
+
+@protected_router.get("/cases/{case_id}/timeline/reconstruction")
+def get_temporal_reconstruction_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve full deterministic temporal investigation reconstruction dossier (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        dossier = case_service.get_temporal_reconstruction(case_id)
+        return dossier.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/episodes")
+def get_temporal_episodes_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve reconstructed temporal episodes for a case (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        episodes = case_service.get_temporal_episodes(case_id)
+        return {
+            "case_id": case_id,
+            "episodes": [ep.model_dump(mode="json") for ep in episodes],
+            "total_episodes": len(episodes),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/transitions")
+def get_temporal_transitions_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve evidence-grounded transitions between entities and episodes (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        transitions = case_service.get_temporal_transitions(case_id)
+        return {
+            "case_id": case_id,
+            "transitions": [tr.model_dump(mode="json") for tr in transitions],
+            "total_transitions": len(transitions),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/gaps")
+def get_temporal_gaps_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve temporal and telemetry visibility gaps for a case (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        gaps = case_service.get_temporal_gaps(case_id)
+        return {
+            "case_id": case_id,
+            "gaps": [g.model_dump(mode="json") for g in gaps],
+            "total_gaps": len(gaps),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/sequences")
+def get_temporal_sequences_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve attack sequence reconstructions with MITRE technique alignment (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        sequences = case_service.get_temporal_sequences(case_id)
+        return {
+            "case_id": case_id,
+            "attack_sequences": [s.model_dump(mode="json") for s in sequences],
+            "total_sequences": len(sequences),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/incidents")
+def get_campaign_correlations_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve categorical campaign-level incident correlations (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        corrs = case_service.get_campaign_correlations(case_id)
+        return {
+            "case_id": case_id,
+            "campaign_correlations": [c.model_dump(mode="json") for c in corrs],
+            "total_correlations": len(corrs),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/incidents/{incident_id}/relations")
+def get_incident_campaign_relation_endpoint(case_id: int, incident_id: int) -> Dict[str, Any]:
+    """Retrieve relationship details for a specific related incident (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        relation = case_service.get_incident_campaign_relations(case_id, incident_id)
+        if not relation:
+            raise HTTPException(status_code=404, detail=f"No campaign correlation between case {case_id} and incident {incident_id}")
+        return relation.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/timeline/transitions/{transition_id}/review")
+def review_temporal_transition_endpoint(
+    case_id: int,
+    transition_id: str,
+    req: TransitionReviewApiRequest,
+) -> Dict[str, Any]:
+    """Record analyst review for a temporal transition preserving epistemic separation (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        result = case_service.review_temporal_transition(
+            case_id=case_id,
+            transition_id=transition_id,
+            review_state=req.review_state,
+            notes=req.analyst_notes,
+            actor=req.reviewed_by,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/timeline/explain")
+def explain_temporal_reconstruction_endpoint(
+    case_id: int,
+    req: TemporalExplanationApiRequest,
+) -> Dict[str, Any]:
+    """Generate strictly advisory-only local AI explanation of temporal reconstruction (M5.10)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        explanation = case_service.explain_temporal_reconstruction(
+            case_id=case_id,
+            target_id=req.target_id,
+            question=req.question,
+        )
+        return explanation.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/export")
+def export_temporal_reconstruction_endpoint(
+    case_id: int,
+    format: str = Query(default="json", pattern="^(json|csv|graphml)$"),
+) -> Response:
+    """Export temporal reconstruction in JSON, CSV, or GraphML format (M5.10)."""
+    from fastapi.responses import PlainTextResponse
+    from logintel.ai.case_service import case_service
+
+    try:
+        content = case_service.export_temporal_reconstruction(case_id, format=format)
+        media_type = "application/json"
+        if format.lower() == "csv":
+            media_type = "text/csv"
+        elif format.lower() == "graphml":
+            media_type = "application/xml"
+        return PlainTextResponse(content=content, media_type=media_type)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

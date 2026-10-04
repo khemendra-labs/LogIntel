@@ -1678,6 +1678,216 @@ describe("Frontend API Client and Authentication", () => {
     expect(explanation.is_authoritative).toBe(false);
     expect(explanation.generated_by).toBe("local_ollama_advisory");
   });
+
+  // ============================================================================
+  // Milestone 5.10 — Temporal Investigation Reconstruction & Campaign Correlation
+  // ============================================================================
+
+  it("M5.10 temporal investigation reconstruction, episodes, transitions, review, and export", async () => {
+    setEngineToken("m510_token");
+
+    const mockDossier = {
+      reconstruction_id: "recon-case-901-test",
+      case_id: 901,
+      incident_id: 901,
+      generated_at: "2026-10-04T12:00:00Z",
+      duration_seconds: 300,
+      episodes: [
+        {
+          episode_id: "ep-901-auth",
+          case_id: 901,
+          episode_type: "AUTHENTICATION_BURST",
+          title: "Authentication Burst on host-alpha",
+          summary: "Observed auth events",
+          start_time: "2026-10-04T12:00:00Z",
+          end_time: "2026-10-04T12:05:00Z",
+          duration_seconds: 300,
+          entities: ["user:alice", "host:alpha"],
+          evidence_references: [],
+          evidence_event_ids: ["evt-1"],
+          epistemic_status: "OBSERVED",
+          corroboration_status: "DIRECT_EVIDENCE",
+        },
+      ],
+      transitions: [
+        {
+          transition_id: "tr-901-1",
+          case_id: 901,
+          transition_type: "USER_TO_HOST",
+          from_entity: "user:alice",
+          to_entity: "host:alpha",
+          timestamp: "2026-10-04T12:00:00Z",
+          reason: "User authenticated to host",
+          correlation_basis: "EXPLICIT_RELATIONSHIP",
+          evidence_references: [],
+          epistemic_status: "OBSERVED",
+          review_state: "UNREVIEWED",
+        },
+      ],
+      evidence_chains: [],
+      gaps: [
+        {
+          gap_id: "gap-901-1",
+          case_id: 901,
+          gap_type: "TIMESTAMP_GAP",
+          title: "Temporal Activity Gap",
+          description: "Gap between events",
+          affected_entities: ["host:alpha"],
+          remedy: "Verify logging",
+        },
+      ],
+      multi_host_traces: [],
+      continuities: [],
+      campaign_correlations: [
+        {
+          correlation_id: "camp-901-902",
+          primary_incident_id: 901,
+          related_incident_id: 902,
+          related_incident_title: "Secondary breach",
+          relationship_reason: "SHARED_ENTITY",
+          correlation_status: "POTENTIALLY_RELATED",
+          shared_entities: ["user:alice"],
+          shared_evidence_count: 1,
+          epistemic_status: "INFERRED",
+          summary: "Shared alice account",
+        },
+      ],
+      attack_sequences: [
+        {
+          sequence_id: "seq-901-1",
+          case_id: 901,
+          name: "Deterministic Reconstruction Sequence",
+          description: "Multi-stage progression",
+          steps: [],
+          total_steps: 1,
+          start_time: "2026-10-04T12:00:00Z",
+          end_time: "2026-10-04T12:05:00Z",
+          duration_seconds: 300,
+          epistemic_status: "OBSERVED",
+        },
+      ],
+      mitre_summary: [],
+      provenance_hash: "sha256:reconhash901",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    // 1. fetchTemporalReconstruction
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockDossier,
+    } as Response);
+
+    // 2. fetchTemporalEpisodes
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 901, episodes: mockDossier.episodes, total_episodes: 1 }),
+    } as Response);
+
+    // 3. fetchTemporalTransitions
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 901, transitions: mockDossier.transitions, total_transitions: 1 }),
+    } as Response);
+
+    // 4. fetchTemporalGaps
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 901, gaps: mockDossier.gaps, total_gaps: 1 }),
+    } as Response);
+
+    // 5. fetchTemporalSequences
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 901, sequences: mockDossier.attack_sequences, total_sequences: 1 }),
+    } as Response);
+
+    // 6. fetchCampaignCorrelations
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 901, correlations: mockDossier.campaign_correlations, total_correlations: 1 }),
+    } as Response);
+
+    // 7. reviewTemporalTransition
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        case_id: 901,
+        transition_id: "tr-901-1",
+        review_state: "ACCEPTED",
+        epistemic_status_preserved: true,
+      }),
+    } as Response);
+
+    // 8. explainTemporalReconstruction
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        explanation_id: "exp-901-1",
+        case_id: 901,
+        target_id: "recon-case-901-test",
+        explanation_text: "Timeline shows observed authentication followed by execution.",
+        is_authoritative: false,
+        generated_by: "LOCAL_AI_ADVISORY",
+        referenced_citations: ["[EVT:evt-1]"],
+        epistemic_status: "INFERRED",
+        generated_at: "2026-10-04T12:06:00Z",
+      }),
+    } as Response);
+
+    // 9. exportTemporalReconstruction
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        case_id: 901,
+        format: "json",
+        content: JSON.stringify(mockDossier),
+      }),
+    } as Response);
+
+    const {
+      fetchTemporalReconstruction,
+      fetchTemporalEpisodes,
+      fetchTemporalTransitions,
+      fetchTemporalGaps,
+      fetchTemporalSequences,
+      fetchCampaignCorrelations,
+      reviewTemporalTransition,
+      explainTemporalReconstruction,
+      exportTemporalReconstruction,
+    } = await import("../lib/api");
+
+    const recon = await fetchTemporalReconstruction(901);
+    expect(recon.case_id).toBe(901);
+    expect(recon.episodes.length).toBe(1);
+
+    const episodes = await fetchTemporalEpisodes(901, "AUTHENTICATION_BURST");
+    expect(episodes.total_episodes).toBe(1);
+
+    const transitions = await fetchTemporalTransitions(901, { epistemic_status: "OBSERVED" });
+    expect(transitions.total_transitions).toBe(1);
+
+    const gaps = await fetchTemporalGaps(901);
+    expect(gaps.total_gaps).toBe(1);
+
+    const sequences = await fetchTemporalSequences(901);
+    expect(sequences.total_sequences).toBe(1);
+
+    const campaigns = await fetchCampaignCorrelations(901);
+    expect(campaigns.total_correlations).toBe(1);
+    expect(campaigns.correlations[0].correlation_status).toBe("POTENTIALLY_RELATED");
+
+    const review = await reviewTemporalTransition(901, "tr-901-1", "ACCEPTED", "SecAnalyst-1");
+    expect(review.review_state).toBe("ACCEPTED");
+    expect(review.epistemic_status_preserved).toBe(true);
+
+    const explanation = await explainTemporalReconstruction(901, "recon-case-901-test");
+    expect(explanation.is_authoritative).toBe(false);
+    expect(explanation.generated_by).toBe("LOCAL_AI_ADVISORY");
+
+    const exported = await exportTemporalReconstruction(901, "json");
+    expect(exported.format).toBe("json");
+  });
 });
 
 

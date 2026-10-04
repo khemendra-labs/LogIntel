@@ -67,7 +67,18 @@ from logintel.ai.domain.investigation_correlation import (
     EvidenceGapDetail,
     HypothesisSupportDetail,
 )
+from logintel.ai.domain.investigation_temporal import (
+    AttackSequenceReconstruction,
+    IncidentCampaignCorrelation,
+    TemporalEpisode,
+    TemporalExplanationResponse,
+    TemporalGap,
+    TemporalReconstructionDossier,
+    TemporalTransition,
+    TransitionReviewState,
+)
 from logintel.ai.correlation.advanced_correlator import AdvancedEvidenceCorrelator
+from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
 from logintel.ai.dossier.dossier_builder import DossierBuilder
 from logintel.ai.graph.graph_builder import InvestigationGraphBuilder
 from logintel.ai.intelligence.service import InvestigationIntelligenceService
@@ -108,6 +119,7 @@ class CaseService:
         )
         self.graph_builder = InvestigationGraphBuilder(forensic_db=self.forensic_db)
         self.advanced_correlator = AdvancedEvidenceCorrelator()
+        self.temporal_engine = TemporalReconstructionEngine()
 
     def create_or_open_case(
         self,
@@ -1252,6 +1264,131 @@ class CaseService:
             generated_by="LOCAL_AI_ADVISORY",
             generated_at=now_iso,
         )
+
+    # -------------------------------------------------------------
+    # Milestone 5.10 Temporal Investigation Reconstruction & Campaign Correlation
+    # -------------------------------------------------------------
+
+    def get_temporal_reconstruction(self, case_id: int) -> TemporalReconstructionDossier:
+        """Synthesize deterministic temporal reconstruction dossier with overlaid analyst reviews."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        # 1. Build graph topology for relational edges
+        graph = self.get_investigation_graph(case_id)
+
+        # 2. Extract clusters
+        clusters, _, _ = self.get_evidence_clusters(case_id)
+
+        # 3. Retrieve other incidents for campaign correlation
+        other_incidents = self.incidents_repo.list_incidents(limit=50)
+        inc_dicts = [inc.model_dump(mode="json") if hasattr(inc, "model_dump") else dict(inc) for inc in other_incidents]
+
+        # 4. Generate base temporal reconstruction dossier
+        dossier = self.temporal_engine.reconstruct_investigation(
+            case=case,
+            graph=graph,
+            clusters=clusters,
+            other_incidents=inc_dicts,
+        )
+
+        # 5. Overlay any persistent analyst transition reviews from cases.db
+        reviews = self.case_repo.get_transition_reviews(case_id)
+        if reviews:
+            for tr in dossier.transitions:
+                if tr.transition_id in reviews:
+                    rev = reviews[tr.transition_id]
+                    tr.review_state = TransitionReviewState(rev["review_state"])
+                    tr.reviewed_by = rev.get("reviewed_by")
+                    tr.reviewed_at = rev.get("reviewed_at")
+                    tr.review_notes = rev.get("analyst_notes")
+                    # Note: Epistemic status remains independent and unchanged (e.g. INFERRED + ACCEPTED)
+
+        return dossier
+
+    def get_temporal_episodes(self, case_id: int) -> List[TemporalEpisode]:
+        """Retrieve deterministic temporal episodes for a case."""
+        return self.get_temporal_reconstruction(case_id).episodes
+
+    def get_temporal_transitions(self, case_id: int) -> List[TemporalTransition]:
+        """Retrieve evidence-grounded transitions between entities and episodes."""
+        return self.get_temporal_reconstruction(case_id).transitions
+
+    def get_temporal_gaps(self, case_id: int) -> List[TemporalGap]:
+        """Retrieve temporal and telemetry visibility gaps for a case."""
+        return self.get_temporal_reconstruction(case_id).gaps
+
+    def get_temporal_sequences(self, case_id: int) -> List[AttackSequenceReconstruction]:
+        """Retrieve attack sequence reconstructions with MITRE ATT&CK integration."""
+        return self.get_temporal_reconstruction(case_id).attack_sequences
+
+    def get_campaign_correlations(self, case_id: int) -> List[IncidentCampaignCorrelation]:
+        """Retrieve categorical campaign-level incident correlations."""
+        return self.get_temporal_reconstruction(case_id).campaign_correlations
+
+    def get_incident_campaign_relations(
+        self, case_id: int, incident_id: int
+    ) -> Optional[IncidentCampaignCorrelation]:
+        """Retrieve correlation details for a specific related incident."""
+        corrs = self.get_campaign_correlations(case_id)
+        for c in corrs:
+            if c.related_incident_id == incident_id:
+                return c
+        return None
+
+    def review_temporal_transition(
+        self,
+        case_id: int,
+        transition_id: str,
+        review_state: str,
+        notes: str = "",
+        actor: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Record analyst review for a temporal transition preserving epistemic separation."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        res = self.case_repo.upsert_transition_review(
+            case_id=case_id,
+            transition_id=transition_id,
+            review_state=review_state,
+            analyst_notes=notes,
+            reviewed_by=actor,
+        )
+        res["epistemic_status_preserved"] = True
+        return res
+
+    def explain_temporal_reconstruction(
+        self,
+        case_id: int,
+        target_id: Optional[str] = None,
+        question: Optional[str] = None,
+    ) -> TemporalExplanationResponse:
+        """Generate strictly advisory-only local AI explanation of temporal reconstruction."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        dossier = self.get_temporal_reconstruction(case_id)
+        return self.temporal_engine.explain_temporal_reconstruction(
+            case=case,
+            dossier=dossier,
+            target_id=target_id,
+            question=question,
+        )
+
+    def export_temporal_reconstruction(self, case_id: int, format: str = "json") -> str:
+        """Export temporal reconstruction in JSON, CSV, or GraphML format."""
+        dossier = self.get_temporal_reconstruction(case_id)
+        fmt = format.lower().strip()
+        if fmt == "csv":
+            return self.temporal_engine.export_reconstruction_csv(dossier)
+        elif fmt == "graphml":
+            return self.temporal_engine.export_reconstruction_graphml(dossier)
+        else:
+            return self.temporal_engine.export_reconstruction_json(dossier)
 
 
 # Singleton case service instance

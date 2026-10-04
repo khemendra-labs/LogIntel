@@ -1141,3 +1141,231 @@ export interface CorrelationExplanationResponse {
   generated_at: string;
 }
 
+// =============================================================================
+// Milestone 5.10: Temporal Investigation Reconstruction & Campaign Correlation
+// =============================================================================
+
+export type EpisodeType =
+  | "AUTHENTICATION_BURST"
+  | "PROCESS_EXECUTION_EPISODE"
+  | "PRIVILEGE_CHANGE_EPISODE"
+  | "LATERAL_MOVEMENT_EPISODE"
+  | "NETWORK_ACTIVITY_EPISODE"
+  | "PERSISTENCE_EPISODE"
+  | "GENERIC_EPISODE";
+
+export type TransitionType =
+  | "USER_TO_HOST"
+  | "HOST_TO_HOST"
+  | "USER_TO_PROCESS"
+  | "PROCESS_TO_NETWORK_DESTINATION"
+  | "PROCESS_TO_FILE"
+  | "ALERT_TO_INCIDENT"
+  | "INCIDENT_TO_ENTITY"
+  | "STAGE_PROGRESSION"
+  | "SESSION_HANDOFF";
+
+export type TemporalGapType =
+  | "NO_TELEMETRY"
+  | "MISSING_HOST_VISIBILITY"
+  | "MISSING_PROCESS_TELEMETRY"
+  | "MISSING_NETWORK_TELEMETRY"
+  | "TIMESTAMP_GAP"
+  | "UNRESOLVED_TRANSITION"
+  | "INSUFFICIENT_EVIDENCE";
+
+export type CampaignCorrelationStatus =
+  | "POTENTIALLY_RELATED"
+  | "CORRELATED"
+  | "INSUFFICIENT_EVIDENCE"
+  | "UNRELATED";
+
+export type CampaignRelationReason =
+  | "SHARED_ENTITY"
+  | "SHARED_ACCOUNT"
+  | "SHARED_SOURCE"
+  | "SHARED_DESTINATION"
+  | "TEMPORAL_PROXIMITY"
+  | "COMMON_SEQUENCE"
+  | "COMMON_EVIDENCE"
+  | "COMMON_TECHNIQUE";
+
+export type TransitionReviewState = "UNREVIEWED" | "ACCEPTED" | "REJECTED" | "DISPUTED";
+
+export type ContinuityType =
+  | "SAME_ACCOUNT_ACROSS_HOSTS"
+  | "SAME_PROCESS_LINEAGE"
+  | "SAME_SOURCE_IP"
+  | "SAME_DESTINATION"
+  | "SAME_ENTITY_MULTIPLE_INCIDENTS";
+
+export interface TemporalEpisode {
+  episode_id: string;
+  case_id: number;
+  episode_type: EpisodeType;
+  title: string;
+  summary: string;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  entities: string[];
+  evidence_references: GraphEvidenceItem[];
+  evidence_event_ids: string[];
+  epistemic_status: EpistemicStatus;
+  corroboration_status: string;
+}
+
+export interface TemporalTransition {
+  transition_id: string;
+  case_id: number;
+  transition_type: TransitionType;
+  from_entity: string;
+  to_entity: string;
+  from_episode_id?: string | null;
+  to_episode_id?: string | null;
+  timestamp: string;
+  reason: string;
+  correlation_basis: string;
+  evidence_references: GraphEvidenceItem[];
+  epistemic_status: EpistemicStatus;
+  review_state: TransitionReviewState;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_notes?: string | null;
+}
+
+export interface EvidenceChainStep {
+  step_index: number;
+  source_record_type: string;
+  source_record_id: string;
+  citation_tag: string;
+  timestamp: string;
+  entity_key: string;
+  action_or_relation: string;
+  epistemic_status: EpistemicStatus;
+}
+
+export interface TemporalEvidenceChain {
+  chain_id: string;
+  case_id: number;
+  name: string;
+  description: string;
+  steps: EvidenceChainStep[];
+  total_steps: number;
+  start_time: string;
+  end_time: string;
+  epistemic_status: EpistemicStatus;
+}
+
+export interface TemporalGap {
+  gap_id: string;
+  case_id: number;
+  gap_type: TemporalGapType;
+  title: string;
+  description: string;
+  affected_entities: string[];
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_seconds?: number | null;
+  remedy: string;
+  governed_hunt_proposal?: QueryProposal | null;
+}
+
+export interface MultiHostTrace {
+  trace_id: string;
+  case_id: number;
+  source_host: string;
+  target_host: string;
+  actor: string;
+  hop_count: number;
+  transitions: TemporalTransition[];
+  evidence_references: GraphEvidenceItem[];
+  start_time: string;
+  end_time: string;
+  epistemic_status: EpistemicStatus;
+}
+
+export interface EntityContinuity {
+  continuity_id: string;
+  case_id: number;
+  continuity_type: ContinuityType;
+  entity_key: string;
+  occurrences_count: number;
+  participating_hosts: string[];
+  evidence_references: GraphEvidenceItem[];
+  description: string;
+}
+
+export interface IncidentCampaignCorrelation {
+  correlation_id: string;
+  primary_incident_id: number;
+  related_incident_id: number;
+  related_incident_title: string;
+  relationship_reason: CampaignRelationReason;
+  correlation_status: CampaignCorrelationStatus;
+  shared_entities: string[];
+  shared_evidence_count: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  epistemic_status: EpistemicStatus;
+  summary: string;
+}
+
+export interface AttackSequenceStep {
+  step_number: number;
+  timestamp: string;
+  stage_name: string;
+  entity: string;
+  evidence_citation: string;
+  reason: string;
+  epistemic_status: EpistemicStatus;
+  mitre_technique_id?: string | null;
+  mitre_technique_name?: string | null;
+  rule_id?: string | null;
+}
+
+export interface AttackSequenceReconstruction {
+  sequence_id: string;
+  case_id: number;
+  name: string;
+  description: string;
+  steps: AttackSequenceStep[];
+  total_steps: number;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  epistemic_status: EpistemicStatus;
+}
+
+export interface TemporalReconstructionDossier {
+  reconstruction_id: string;
+  case_id: number;
+  incident_id: number;
+  generated_at: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_seconds: number;
+  episodes: TemporalEpisode[];
+  transitions: TemporalTransition[];
+  evidence_chains: TemporalEvidenceChain[];
+  gaps: TemporalGap[];
+  multi_host_traces: MultiHostTrace[];
+  continuities: EntityContinuity[];
+  campaign_correlations: IncidentCampaignCorrelation[];
+  attack_sequences: AttackSequenceReconstruction[];
+  mitre_summary: Array<Record<string, any>>;
+  provenance_hash: string;
+}
+
+export interface TemporalExplanationResponse {
+  explanation_id: string;
+  case_id: number;
+  target_id: string;
+  explanation_text: string;
+  is_authoritative: boolean;
+  generated_by: string;
+  referenced_citations: string[];
+  epistemic_status: EpistemicStatus;
+  generated_at: string;
+}
+

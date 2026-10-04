@@ -89,6 +89,23 @@ import type {
   EntityWorkbenchDossier,
   CorrelationExplanationRequest,
   CorrelationExplanationResponse,
+  EpisodeType,
+  TransitionType,
+  TemporalGapType,
+  CampaignCorrelationStatus,
+  CampaignRelationReason,
+  TransitionReviewState,
+  ContinuityType,
+  TemporalEpisode,
+  TemporalTransition,
+  TemporalEvidenceChain,
+  TemporalGap,
+  MultiHostTrace,
+  EntityContinuity,
+  IncidentCampaignCorrelation,
+  AttackSequenceReconstruction,
+  TemporalReconstructionDossier,
+  TemporalExplanationResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -1814,4 +1831,187 @@ export async function explainCorrelationCluster(
   }
   return res.json();
 }
+
+// ============================================================================
+// Milestone 5.10: Temporal Investigation Reconstruction & Campaign Correlation
+// ============================================================================
+
+export async function fetchTemporalReconstruction(
+  caseId: number,
+  params?: {
+    max_events?: number;
+    max_episodes?: number;
+    max_transitions?: number;
+  }
+): Promise<TemporalReconstructionDossier> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (params?.max_events !== undefined) query.set("max_events", String(params.max_events));
+  if (params?.max_episodes !== undefined) query.set("max_episodes", String(params.max_episodes));
+  if (params?.max_transitions !== undefined) query.set("max_transitions", String(params.max_transitions));
+  const qs = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/reconstruction${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch temporal reconstruction: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTemporalEpisodes(
+  caseId: number,
+  episodeType?: string
+): Promise<{ case_id: number; episodes: TemporalEpisode[]; total_episodes: number }> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (episodeType) query.set("episode_type", episodeType);
+  const qs = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/episodes${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch temporal episodes: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTemporalTransitions(
+  caseId: number,
+  params?: {
+    transition_type?: string;
+    epistemic_status?: string;
+  }
+): Promise<{ case_id: number; transitions: TemporalTransition[]; total_transitions: number }> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (params?.transition_type) query.set("transition_type", params.transition_type);
+  if (params?.epistemic_status) query.set("epistemic_status", params.epistemic_status);
+  const qs = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/transitions${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch temporal transitions: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTemporalGaps(
+  caseId: number
+): Promise<{ case_id: number; gaps: TemporalGap[]; total_gaps: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/gaps`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch temporal gaps: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTemporalSequences(
+  caseId: number
+): Promise<{ case_id: number; sequences: AttackSequenceReconstruction[]; total_sequences: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/sequences`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch temporal attack sequences: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCampaignCorrelations(
+  caseId: number
+): Promise<{ case_id: number; correlations: IncidentCampaignCorrelation[]; total_correlations: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/incidents`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch campaign correlations: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchIncidentCampaignRelation(
+  caseId: number,
+  incidentId: number
+): Promise<IncidentCampaignCorrelation> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/incidents/${incidentId}/relations`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch incident campaign relation: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function reviewTemporalTransition(
+  caseId: number,
+  transitionId: string,
+  reviewState: TransitionReviewState,
+  reviewer: string,
+  notes?: string
+): Promise<{ case_id: number; transition_id: string; review_state: string; epistemic_status_preserved: boolean }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/transitions/${encodeURIComponent(transitionId)}/review`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      review_state: reviewState,
+      reviewer,
+      notes: notes || null,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to review temporal transition: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function explainTemporalReconstruction(
+  caseId: number,
+  targetId: string,
+  question?: string
+): Promise<TemporalExplanationResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/explain`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      target_id: targetId,
+      question: question || null,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to explain temporal reconstruction: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportTemporalReconstruction(
+  caseId: number,
+  format: "json" | "csv" | "graphml" = "json"
+): Promise<{ case_id: number; format: string; content: string }> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams({ format });
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/export?${query.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to export temporal reconstruction: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 

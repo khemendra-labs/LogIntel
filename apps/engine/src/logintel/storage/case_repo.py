@@ -213,6 +213,20 @@ class CaseRepository:
                     );
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS case_transition_reviews (
+                        review_id TEXT PRIMARY KEY,
+                        case_id INTEGER NOT NULL REFERENCES investigation_cases(case_id) ON DELETE CASCADE,
+                        transition_id TEXT NOT NULL,
+                        review_state TEXT NOT NULL DEFAULT 'UNREVIEWED',
+                        analyst_notes TEXT NOT NULL DEFAULT '',
+                        reviewed_by TEXT NOT NULL,
+                        reviewed_at TEXT NOT NULL,
+                        UNIQUE (case_id, transition_id)
+                    );
+                    """
+                )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_incident ON investigation_cases(incident_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_status ON investigation_cases(status);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_hypotheses_case ON case_hypotheses(case_id);")
@@ -220,6 +234,7 @@ class CaseRepository:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_reports_case ON case_reports(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_audit_case ON case_audit_log(case_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_case_finding_reviews_case ON case_finding_reviews(case_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_case_transition_reviews_case ON case_transition_reviews(case_id);")
 
                 # Database-level enforcement of append-only audit log
                 conn.execute(
@@ -1230,5 +1245,83 @@ class CaseRepository:
                     json.dumps(details or {}),
                 ),
             )
+
+    def upsert_transition_review(
+        self,
+        case_id: int,
+        transition_id: str,
+        review_state: str,
+        analyst_notes: str = "",
+        reviewed_by: str = "SecAnalyst-1",
+    ) -> Dict[str, Any]:
+        """Record or update analyst review for a temporal transition."""
+        valid_states = {"UNREVIEWED", "ACCEPTED", "REJECTED", "DISPUTED"}
+        if review_state not in valid_states:
+            raise ValueError(f"Invalid review state '{review_state}'. Must be one of: {sorted(valid_states)}")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        review_id = f"trev-{case_id}-{transition_id}"
+
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                existing = conn.execute(
+                    "SELECT review_state FROM case_transition_reviews WHERE case_id = ? AND transition_id = ?",
+                    (case_id, transition_id),
+                ).fetchone()
+
+                old_state = existing["review_state"] if existing else "UNREVIEWED"
+
+                conn.execute(
+                    """
+                    INSERT INTO case_transition_reviews (
+                        review_id, case_id, transition_id, review_state, analyst_notes, reviewed_by, reviewed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(case_id, transition_id) DO UPDATE SET
+                        review_state = excluded.review_state,
+                        analyst_notes = excluded.analyst_notes,
+                        reviewed_by = excluded.reviewed_by,
+                        reviewed_at = excluded.reviewed_at
+                    """,
+                    (review_id, case_id, transition_id, review_state, analyst_notes, reviewed_by, now_iso),
+                )
+
+                self.append_audit_log(
+                    case_id=case_id,
+                    actor=reviewed_by,
+                    action="TRANSITION_REVIEW_UPDATED",
+                    previous_value=old_state,
+                    new_value=review_state,
+                    reason=f"Transition {transition_id} marked {review_state}",
+                    details={"transition_id": transition_id, "notes": analyst_notes},
+                )
+
+        return {
+            "review_id": review_id,
+            "case_id": case_id,
+            "transition_id": transition_id,
+            "review_state": review_state,
+            "analyst_notes": analyst_notes,
+            "reviewed_by": reviewed_by,
+            "reviewed_at": now_iso,
+        }
+
+    def get_transition_reviews(self, case_id: int) -> Dict[str, Dict[str, Any]]:
+        """Retrieve all transition review records for a case keyed by transition_id."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT * FROM case_transition_reviews WHERE case_id = ? ORDER BY reviewed_at ASC",
+            (case_id,),
+        ).fetchall()
+        return {r["transition_id"]: dict(r) for r in rows}
+
+    def get_transition_review(self, case_id: int, transition_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific transition review record."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM case_transition_reviews WHERE case_id = ? AND transition_id = ?",
+            (case_id, transition_id),
+        ).fetchone()
+        return dict(row) if row else None
 
 
