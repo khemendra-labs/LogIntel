@@ -1976,6 +1976,142 @@ def export_investigation_graph_endpoint(case_id: int, format: str = "json") -> D
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# =============================================================================
+# Milestone 5.9: Advanced Evidence Correlation, Clusters & Decision Support
+# =============================================================================
+
+class CorrelationExplanationApiRequest(BaseModel):
+    cluster_id: Optional[str] = None
+    sequence_id: Optional[str] = None
+    question: Optional[str] = None
+
+
+@protected_router.get("/cases/{case_id}/correlation/clusters")
+def get_evidence_clusters_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve multi-dimensional evidence clusters, behavioral sequences, and gaps for a case (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        clusters, sequences, gaps = case_service.get_evidence_clusters(case_id)
+        return {
+            "case_id": case_id,
+            "clusters": [c.model_dump(mode="json") for c in clusters],
+            "sequences": [s.model_dump(mode="json") for s in sequences],
+            "gaps": [g.model_dump(mode="json") for g in gaps],
+            "total_clusters": len(clusters),
+            "total_sequences": len(sequences),
+            "total_gaps": len(gaps),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/correlation/clusters/{cluster_id}")
+def get_evidence_cluster_detail_endpoint(case_id: int, cluster_id: str) -> Dict[str, Any]:
+    """Retrieve single evidence cluster detail by ID (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        cluster = case_service.get_evidence_cluster_detail(case_id, cluster_id)
+        if not cluster:
+            raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found in case {case_id}")
+        return cluster.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/correlation/sequences")
+def get_behavioral_sequences_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve detected behavioral sequences and progression patterns (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        sequences = case_service.get_behavioral_sequences(case_id)
+        return {
+            "case_id": case_id,
+            "sequences": [s.model_dump(mode="json") for s in sequences],
+            "total_sequences": len(sequences),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/correlation/hypotheses/{hypothesis_id}/support")
+def get_hypothesis_correlation_support_endpoint(case_id: int, hypothesis_id: str) -> Dict[str, Any]:
+    """Evaluate hypothesis support, contradiction, and gaps across evidence clusters (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        support = case_service.get_hypothesis_correlation_support(case_id, hypothesis_id)
+        return support.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/correlation/gaps")
+def get_correlation_evidence_gaps_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve identified telemetry and corroboration gaps with recommended governed hunts (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        gaps = case_service.get_correlation_evidence_gaps(case_id)
+        return {
+            "case_id": case_id,
+            "gaps": [g.model_dump(mode="json") for g in gaps],
+            "total_gaps": len(gaps),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/correlation/findings/generate")
+def generate_findings_from_clusters_endpoint(case_id: int, actor: str = "SecAnalyst-1") -> Dict[str, Any]:
+    """Deterministically derive investigation findings from evidence clusters and record audit entry (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        findings = case_service.generate_findings_from_clusters(case_id, actor=actor)
+        return {
+            "case_id": case_id,
+            "generated_findings": [f.model_dump(mode="json") for f in findings],
+            "total_generated": len(findings),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/correlation/workbench/{entity_type}/{entity_value}")
+def get_entity_workbench_dossier_endpoint(case_id: int, entity_type: str, entity_value: str) -> Dict[str, Any]:
+    """Synthesize deep entity-centric investigation workbench dossier (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        workbench = case_service.get_entity_workbench_dossier(case_id, entity_type, entity_value)
+        return workbench.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/correlation/explain")
+def explain_correlation_cluster_endpoint(
+    case_id: int,
+    req: CorrelationExplanationApiRequest,
+) -> Dict[str, Any]:
+    """Generate advisory-only local AI explanation of correlation clusters and patterns (M5.9)."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        explanation = case_service.explain_correlation_cluster(
+            case_id=case_id,
+            cluster_id=req.cluster_id,
+            sequence_id=req.sequence_id,
+            question=req.question,
+        )
+        return explanation.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

@@ -1504,6 +1504,180 @@ describe("Frontend API Client and Authentication", () => {
     const exportRes = await exportCaseInvestigationGraph(701, "json");
     expect(exportRes.format).toBe("json");
   });
+
+  it("M5.9 evidence correlation, clusters, sequences, hypotheses, gaps, and workbench", async () => {
+    setEngineToken("m59_test_token");
+
+    const mockClusters = {
+      case_id: 801,
+      clusters: [
+        {
+          cluster_id: "cluster-801-test",
+          case_id: 801,
+          title: "Multi-Entity Host Authentication Cluster",
+          summary: "Deterministic cluster",
+          cluster_type: "ENTITY",
+          correlation_reasons: [
+            {
+              reason_type: "SHARED_ENTITY",
+              description: "Shared user alice",
+              dimension_value: "user:alice",
+              confidence_basis: "Exact entity equality",
+            },
+          ],
+          temporal_bounds: { start_time: "2026-10-04T10:00:00Z", end_time: "2026-10-04T10:05:00Z" },
+          participating_entities: ["user:alice", "host:srv-01"],
+          evidence_references: [],
+          evidence_event_ids: ["evt-1"],
+          epistemic_status: "OBSERVED",
+          corroboration_status: "CORROBORATED",
+          contradictions: [],
+          gaps: [],
+          created_at: "2026-10-04T10:05:00Z",
+        },
+      ],
+      total_clusters: 1,
+    };
+
+    const mockClusterDetail = {
+      cluster: mockClusters.clusters[0],
+      related_findings: [],
+      related_entities: [],
+    };
+
+    const mockSequences = {
+      case_id: 801,
+      sequences: [
+        {
+          sequence_id: "seq-801-1",
+          case_id: 801,
+          pattern_name: "Auth -> Execution",
+          description: "Login followed by command",
+          steps: [],
+          total_steps: 1,
+          epistemic_status: "OBSERVED",
+          supporting_evidence_count: 1,
+        },
+      ],
+      total_sequences: 1,
+    };
+
+    const mockHypSupport = {
+      hypothesis_id: "hyp-801",
+      case_id: 801,
+      statement: "Credential compromise",
+      support_status: "SUPPORTED BY EVIDENCE",
+      supporting_evidence: [],
+      contradicting_evidence: [],
+      contextual_evidence: [],
+      missing_evidence_descriptions: [],
+      unresolved_questions: [],
+      recommended_governed_queries: [],
+    };
+
+    const mockGaps = {
+      case_id: 801,
+      gaps: [
+        {
+          gap_id: "gap-801-1",
+          case_id: 801,
+          gap_type: "EXPECTED_TELEMETRY_MISSING",
+          title: "Process tree gap",
+          description: "Missing parent process",
+          affected_entities: ["process:powershell.exe"],
+          affected_hypotheses: [],
+          resolution_remedy: "Query host sysmon",
+          status: "OPEN",
+        },
+      ],
+      total_gaps: 1,
+    };
+
+    const mockFindingsGen = {
+      case_id: 801,
+      generated_count: 1,
+      findings: [{ finding_id: "finding-801-1", title: "Generated Finding" }],
+    };
+
+    const mockWorkbench = {
+      case_id: 801,
+      entity_key: "user:alice",
+      entity_type: "user",
+      display_name: "alice",
+      related_clusters: [],
+      related_findings: [],
+      related_sequences: [],
+      adjacent_graph_entities: ["host:srv-01"],
+      evidence_references: [],
+      identified_gaps: [],
+      mitre_techniques: [],
+    };
+
+    const mockExplain = {
+      explanation_id: "exp-801-1",
+      case_id: 801,
+      target_cluster_id: "cluster-801-test",
+      summary: "Advisory summary",
+      reasoning_explanation: "Records grouped by shared entity user:alice",
+      supporting_citations: ["cit-1"],
+      identified_unknowns: [],
+      epistemic_status: "OBSERVED",
+      is_authoritative: false,
+      generated_by: "local_ollama_advisory",
+      generated_at: "2026-10-04T10:06:00Z",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ ok: true, json: async () => mockClusters } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockClusterDetail } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockSequences } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockHypSupport } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockGaps } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockFindingsGen } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockWorkbench } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => mockExplain } as Response);
+
+    const {
+      fetchEvidenceClusters,
+      fetchEvidenceClusterDetail,
+      fetchBehavioralSequences,
+      fetchHypothesisCorrelationSupport,
+      fetchCorrelationEvidenceGaps,
+      generateFindingsFromClusters,
+      fetchEntityWorkbenchDossier,
+      explainCorrelationCluster,
+    } = await import("../lib/api");
+
+    const clusters = await fetchEvidenceClusters(801, "ENTITY");
+    expect(clusters.total_clusters).toBe(1);
+    expect(clusters.clusters[0].cluster_type).toBe("ENTITY");
+
+    const clusterDetail = await fetchEvidenceClusterDetail(801, "cluster-801-test");
+    expect(clusterDetail.cluster.cluster_id).toBe("cluster-801-test");
+
+    const sequences = await fetchBehavioralSequences(801);
+    expect(sequences.total_sequences).toBe(1);
+
+    const hypSupport = await fetchHypothesisCorrelationSupport(801, "hyp-801");
+    expect(hypSupport.support_status).toBe("SUPPORTED BY EVIDENCE");
+
+    const gaps = await fetchCorrelationEvidenceGaps(801);
+    expect(gaps.total_gaps).toBe(1);
+    expect(gaps.gaps[0].gap_type).toBe("EXPECTED_TELEMETRY_MISSING");
+
+    const findingsGen = await generateFindingsFromClusters(801, ["cluster-801-test"]);
+    expect(findingsGen.generated_count).toBe(1);
+
+    const workbench = await fetchEntityWorkbenchDossier(801, "user", "alice");
+    expect(workbench.entity_key).toBe("user:alice");
+
+    const explanation = await explainCorrelationCluster(801, {
+      cluster_id: "cluster-801-test",
+      question: "Why correlated?",
+    });
+    expect(explanation.is_authoritative).toBe(false);
+    expect(explanation.generated_by).toBe("local_ollama_advisory");
+  });
 });
 
 

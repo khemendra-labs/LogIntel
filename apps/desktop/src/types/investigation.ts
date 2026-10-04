@@ -1009,3 +1009,135 @@ export interface GraphExplanationResponse {
   generated_by: string;
   generated_at: string;
 }
+
+// =============================================================================
+// Milestone 5.9: Evidence Correlation Intelligence & Decision Support Types
+// =============================================================================
+
+export type CorrelationReason =
+  | "SHARED_ENTITY"
+  | "SHARED_SESSION"
+  | "SHARED_PROCESS"
+  | "SHARED_SOURCE_IP"
+  | "SHARED_DESTINATION_IP"
+  | "SHARED_INCIDENT"
+  | "SHARED_DETECTION"
+  | "TEMPORAL_PROXIMITY"
+  | "EXPLICIT_RELATIONSHIP"
+  | "DIRECT_EVIDENCE_LINK"
+  | "BEHAVIORAL_SEQUENCE";
+
+export interface CorrelationReasonItem {
+  reason_type: CorrelationReason;
+  description: string;
+  dimension_value?: string | null;
+  confidence_basis: string;
+}
+
+export interface EvidenceCluster {
+  cluster_id: string;
+  case_id: number;
+  title: string;
+  summary: string;
+  cluster_type: string;
+  correlation_reasons: CorrelationReasonItem[];
+  temporal_bounds: {
+    start_time?: string | null;
+    end_time?: string | null;
+    duration_seconds?: string | null;
+  };
+  participating_entities: string[];
+  evidence_references: GraphEvidenceItem[];
+  evidence_event_ids: string[];
+  epistemic_status: EpistemicStatus;
+  corroboration_status: CorroborationStatus;
+  contradictions: string[];
+  gaps: string[];
+  created_at: string;
+}
+
+export interface BehavioralSequenceStep {
+  step_index: number;
+  timestamp: string;
+  stage_name: string;
+  action_summary: string;
+  actor_entity: string;
+  target_entity: string;
+  evidence_citation: string;
+  epistemic_status: EpistemicStatus;
+}
+
+export interface BehavioralSequence {
+  sequence_id: string;
+  case_id: number;
+  pattern_name: string;
+  description: string;
+  steps: BehavioralSequenceStep[];
+  total_steps: number;
+  epistemic_status: EpistemicStatus;
+  supporting_evidence_count: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_seconds?: number | null;
+}
+
+export interface HypothesisSupportDetail {
+  hypothesis_id: string;
+  case_id: number;
+  statement: string;
+  support_status: string;
+  supporting_evidence: GraphEvidenceItem[];
+  contradicting_evidence: GraphEvidenceItem[];
+  contextual_evidence: GraphEvidenceItem[];
+  missing_evidence_descriptions: string[];
+  unresolved_questions: string[];
+  recommended_governed_queries: QueryProposal[];
+}
+
+export interface EvidenceGapDetail {
+  gap_id: string;
+  case_id: number;
+  gap_type: string;
+  title: string;
+  description: string;
+  affected_entities: string[];
+  affected_hypotheses: string[];
+  resolution_remedy: string;
+  recommended_governed_query?: QueryProposal | null;
+  status: string;
+}
+
+export interface EntityWorkbenchDossier {
+  case_id: number;
+  entity_key: string;
+  entity_type: string;
+  display_name: string;
+  related_clusters: EvidenceCluster[];
+  related_findings: Array<Record<string, any>>;
+  related_sequences: BehavioralSequence[];
+  adjacent_graph_entities: string[];
+  evidence_references: GraphEvidenceItem[];
+  identified_gaps: EvidenceGapDetail[];
+  mitre_techniques: Array<Record<string, any>>;
+}
+
+export interface CorrelationExplanationRequest {
+  cluster_id?: string | null;
+  sequence_id?: string | null;
+  question?: string | null;
+}
+
+export interface CorrelationExplanationResponse {
+  explanation_id: string;
+  case_id: number;
+  target_cluster_id?: string | null;
+  summary: string;
+  reasoning_explanation: string;
+  supporting_citations: string[];
+  identified_unknowns: string[];
+  epistemic_status: EpistemicStatus;
+  is_authoritative: boolean;
+  generated_by: string;
+  generated_at: string;
+}
+

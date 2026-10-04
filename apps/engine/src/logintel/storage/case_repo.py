@@ -1200,3 +1200,35 @@ class CaseRepository:
         ).fetchone()
         return dict(row) if row else None
 
+    def append_audit_log(
+        self,
+        case_id: int,
+        actor: str,
+        action: str,
+        previous_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+        reason: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Append an entry to the immutable case_audit_log table."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO case_audit_log (
+                    case_id, timestamp, actor, action, previous_value, new_value, reason, details_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    case_id,
+                    now_iso,
+                    actor,
+                    action,
+                    previous_value,
+                    new_value,
+                    reason,
+                    json.dumps(details or {}),
+                ),
+            )
+
+

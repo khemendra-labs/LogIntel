@@ -59,6 +59,15 @@ from logintel.ai.domain.investigation_graph import (
     InvestigationPath,
     TemporalChain,
 )
+from logintel.ai.domain.investigation_correlation import (
+    BehavioralSequence,
+    CorrelationExplanationResponse,
+    EntityWorkbenchDossier,
+    EvidenceCluster,
+    EvidenceGapDetail,
+    HypothesisSupportDetail,
+)
+from logintel.ai.correlation.advanced_correlator import AdvancedEvidenceCorrelator
 from logintel.ai.dossier.dossier_builder import DossierBuilder
 from logintel.ai.graph.graph_builder import InvestigationGraphBuilder
 from logintel.ai.intelligence.service import InvestigationIntelligenceService
@@ -98,6 +107,7 @@ class CaseService:
             investigation_repo=self.investigation_repo,
         )
         self.graph_builder = InvestigationGraphBuilder(forensic_db=self.forensic_db)
+        self.advanced_correlator = AdvancedEvidenceCorrelator()
 
     def create_or_open_case(
         self,
@@ -1079,6 +1089,169 @@ class CaseService:
         if fmt == "graphml":
             return self.graph_builder.export_graphml(graph)
         return self.graph_builder.export_graph_json(graph)
+
+    # =========================================================================
+    # Milestone 5.9: Advanced Evidence Correlation, Clusters & Decision Support
+    # =========================================================================
+
+    def get_evidence_clusters(
+        self, case_id: int, cluster_type: Optional[str] = None
+    ) -> Tuple[List[EvidenceCluster], List[BehavioralSequence], List[EvidenceGapDetail]]:
+        """Compute deterministic multi-dimensional evidence clusters, sequences, and gaps for a case."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        graph = self.get_investigation_graph(case_id, max_nodes=100, max_edges=200)
+        clusters, sequences, gaps = self.advanced_correlator.build_evidence_clusters(case, graph=graph)
+        if cluster_type and cluster_type.upper() != "ALL":
+            clusters = [c for c in clusters if c.cluster_type.upper() == cluster_type.upper()]
+        return clusters, sequences, gaps
+
+    def get_evidence_cluster_detail(self, case_id: int, cluster_id: str) -> Optional[EvidenceCluster]:
+        """Retrieve detailed single evidence cluster by ID."""
+        clusters, _, _ = self.get_evidence_clusters(case_id)
+        for c in clusters:
+            if c.cluster_id == cluster_id:
+                return c
+        return None
+
+    def get_behavioral_sequences(self, case_id: int) -> List[BehavioralSequence]:
+        """Retrieve detected behavioral sequences and progression patterns."""
+        _, sequences, _ = self.get_evidence_clusters(case_id)
+        return sequences
+
+    def get_hypothesis_correlation_support(
+        self, case_id: int, hypothesis_id: str
+    ) -> HypothesisSupportDetail:
+        """Evaluate hypothesis support, contradiction, and gaps across evidence clusters."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        hyp = next((h for h in case.hypotheses if h.hypothesis_id == hypothesis_id), None)
+        statement = hyp.statement if hyp else f"Hypothesis {hypothesis_id}"
+
+        clusters, _, _ = self.get_evidence_clusters(case_id)
+        return self.advanced_correlator.evaluate_hypothesis_support(
+            case=case,
+            hypothesis_id=hypothesis_id,
+            hypothesis_statement=statement,
+            clusters=clusters,
+        )
+
+    def get_correlation_evidence_gaps(self, case_id: int) -> List[EvidenceGapDetail]:
+        """Retrieve identified telemetry and corroboration gaps with recommended governed hunts."""
+        _, _, gaps = self.get_evidence_clusters(case_id)
+        return gaps
+
+    def generate_findings_from_clusters(
+        self, case_id: int, actor: str = "SecAnalyst-1"
+    ) -> List[InvestigationFinding]:
+        """Deterministically derive investigation findings from evidence clusters and record audit entry."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        clusters, _, _ = self.get_evidence_clusters(case_id)
+        findings = self.advanced_correlator.generate_findings_from_clusters(case, clusters, actor=actor)
+
+        # Record action in append-only audit log
+        self.case_repo.append_audit_log(
+            case_id=case_id,
+            actor=actor,
+            action="FINDINGS_GENERATED_FROM_CLUSTERS",
+            reason="Derived findings from deterministic evidence clusters",
+            details={"findings_count": len(findings), "clusters_count": len(clusters)},
+        )
+        return findings
+
+    def get_entity_workbench_dossier(
+        self, case_id: int, entity_type: str, entity_value: str
+    ) -> EntityWorkbenchDossier:
+        """Synthesize deep entity-centric investigation workbench dossier."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        clusters, sequences, gaps = self.get_evidence_clusters(case_id)
+        return self.advanced_correlator.resolve_entity_workbench(
+            case=case,
+            entity_type=entity_type,
+            entity_value=entity_value,
+            clusters=clusters,
+            sequences=sequences,
+            gaps=gaps,
+        )
+
+    def explain_correlation_cluster(
+        self,
+        case_id: int,
+        cluster_id: Optional[str] = None,
+        sequence_id: Optional[str] = None,
+        question: Optional[str] = None,
+    ) -> CorrelationExplanationResponse:
+        """Generate advisory-only local AI explanation of correlation clusters and patterns."""
+        case = self.get_case(case_id)
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        clusters, sequences, gaps = self.get_evidence_clusters(case_id)
+
+        target_cluster = None
+        if cluster_id:
+            for c in clusters:
+                if c.cluster_id == cluster_id:
+                    target_cluster = c
+                    break
+
+        target_seq = None
+        if sequence_id:
+            for s in sequences:
+                if s.sequence_id == sequence_id:
+                    target_seq = s
+                    break
+
+        citations: List[str] = []
+        if target_cluster:
+            citations = [r.citation_tag for r in target_cluster.evidence_references if r.citation_tag]
+            summary = (
+                f"Advisory Correlation Analysis: Cluster '{target_cluster.title}' synthesizes "
+                f"{len(target_cluster.evidence_references)} evidence items ({target_cluster.epistemic_status.value}) "
+                f"via {len(target_cluster.correlation_reasons)} explicit correlation reasons."
+            )
+            reasons_desc = "; ".join(r.description for r in target_cluster.correlation_reasons)
+            reasoning = f"Corroboration: {target_cluster.corroboration_status.value}. Reasons: {reasons_desc}."
+            unknowns = target_cluster.gaps
+        elif target_seq:
+            citations = [st.evidence_citation for st in target_seq.steps if st.evidence_citation]
+            summary = (
+                f"Advisory Sequence Analysis: Progression '{target_seq.pattern_name}' contains "
+                f"{target_seq.total_steps} sequential stages ({target_seq.epistemic_status.value})."
+            )
+            reasoning = f"Observed progression across entities: {', '.join(st.target_entity for st in target_seq.steps)}."
+            unknowns = []
+        else:
+            summary = (
+                f"Advisory Correlation Overview: Case {case_id} contains {len(clusters)} evidence clusters, "
+                f"{len(sequences)} behavioral patterns, and {len(gaps)} telemetry gaps."
+            )
+            reasoning = "Multi-attribute correlation identifies common hosts, users, IPs, and temporal proximity."
+            unknowns = [g.title for g in gaps]
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        return CorrelationExplanationResponse(
+            case_id=case_id,
+            target_cluster_id=cluster_id,
+            summary=summary,
+            reasoning_explanation=reasoning,
+            supporting_citations=citations[:10],
+            identified_unknowns=unknowns[:5],
+            epistemic_status=EpistemicStatus.INFERRED,
+            is_authoritative=False,
+            generated_by="LOCAL_AI_ADVISORY",
+            generated_at=now_iso,
+        )
 
 
 # Singleton case service instance

@@ -82,6 +82,13 @@ import type {
   GraphExplanationRequest,
   GraphExplanationResponse,
   ReportDraftRequest,
+  EvidenceCluster,
+  BehavioralSequence,
+  HypothesisSupportDetail,
+  EvidenceGapDetail,
+  EntityWorkbenchDossier,
+  CorrelationExplanationRequest,
+  CorrelationExplanationResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -1676,3 +1683,135 @@ export async function exportCaseInvestigationGraph(
   }
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// M5.9 Evidence Correlation & Investigation Intelligence API Functions
+// ---------------------------------------------------------------------------
+
+export async function fetchEvidenceClusters(
+  caseId: number,
+  clusterType?: string
+): Promise<{ case_id: number; clusters: EvidenceCluster[]; total_clusters: number }> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (clusterType) query.set("cluster_type", clusterType);
+  const qs = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/clusters${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence clusters: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchEvidenceClusterDetail(
+  caseId: number,
+  clusterId: string
+): Promise<{ cluster: EvidenceCluster; related_findings: any[]; related_entities: any[] }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/clusters/${encodeURIComponent(clusterId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch cluster detail: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchBehavioralSequences(
+  caseId: number
+): Promise<{ case_id: number; sequences: BehavioralSequence[]; total_sequences: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/sequences`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch behavioral sequences: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchHypothesisCorrelationSupport(
+  caseId: number,
+  hypothesisId: string
+): Promise<HypothesisSupportDetail> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/hypotheses/${encodeURIComponent(hypothesisId)}/support`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch hypothesis correlation support: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCorrelationEvidenceGaps(
+  caseId: number
+): Promise<{ case_id: number; gaps: EvidenceGapDetail[]; total_gaps: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/gaps`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch correlation evidence gaps: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function generateFindingsFromClusters(
+  caseId: number,
+  clusterIds?: string[]
+): Promise<{ case_id: number; generated_count: number; findings: any[] }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/findings/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(clusterIds ? { cluster_ids: clusterIds } : {}),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to generate findings from clusters: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchEntityWorkbenchDossier(
+  caseId: number,
+  entityType: string,
+  entityValue: string
+): Promise<EntityWorkbenchDossier> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/correlation/workbench/${encodeURIComponent(entityType)}/${encodeURIComponent(entityValue)}`,
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to fetch entity workbench dossier: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function explainCorrelationCluster(
+  caseId: number,
+  req: CorrelationExplanationRequest
+): Promise<CorrelationExplanationResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/explain`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to explain correlation cluster: ${res.statusText}`);
+  }
+  return res.json();
+}
+
