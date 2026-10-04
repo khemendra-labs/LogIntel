@@ -1,0 +1,114 @@
+{
+  "Case Assessment Generation": {
+    "samples": 30,
+    "min": 17.833,
+    "median": 19.474,
+    "p95": 20.738,
+    "max": 21.374,
+    "failures": 0
+  },
+  "Key Findings Synthesis": {
+    "samples": 30,
+    "min": 18.049,
+    "median": 18.826,
+    "p95": 20.715,
+    "max": 46.11,
+    "failures": 0
+  },
+  "Competing Hypotheses Assessment": {
+    "samples": 30,
+    "min": 17.35,
+    "median": 20.221,
+    "p95": 35.838,
+    "max": 48.426,
+    "failures": 0
+  },
+  "Evidence Gaps Prioritization": {
+    "samples": 30,
+    "min": 18.867,
+    "median": 19.765,
+    "p95": 21.752,
+    "max": 51.52,
+    "failures": 0
+  },
+  "Investigation Questions Generation": {
+    "samples": 30,
+    "min": 19.435,
+    "median": 20.505,
+    "p95": 26.151,
+    "max": 52.136,
+    "failures": 0
+  },
+  "Closure Readiness Evaluation": {
+    "samples": 30,
+    "min": 19.689,
+    "median": 20.585,
+    "p95": 22.194,
+    "max": 46.932,
+    "failures": 0
+  },
+  "15-Section Briefing Generation": {
+    "samples": 30,
+    "min": 18.197,
+    "median": 20.57,
+    "p95": 22.692,
+    "max": 23.461,
+    "failures": 0
+  },
+  "Case Handoff Package Generation": {
+    "samples": 30,
+    "min": 13.859,
+    "median": 18.074,
+    "p95": 25.978,
+    "max": 44.301,
+    "failures": 0
+  },
+  "Multi-dimensional Correlation": {
+    "samples": 30,
+    "min": 1.928,
+    "median": 2.373,
+    "p95": 3.013,
+    "max": 3.041,
+    "failures": 0
+  },
+  "Temporal Reconstruction": {
+    "samples": 30,
+    "min": 9.536,
+    "median": 10.842,
+    "p95": 13.42,
+    "max": 34.106,
+    "failures": 0
+  },
+  "Investigation Graph Generation": {
+    "samples": 30,
+    "min": 1.259,
+    "median": 1.446,
+    "p95": 2.287,
+    "max": 2.39,
+    "failures": 0
+  },
+  "Entity Pivot & Dossier": {
+    "samples": 30,
+    "min": 5.537,
+    "median": 5.99,
+    "p95": 7.02,
+    "max": 7.799,
+    "failures": 0
+  },
+  "Forensic Dossier & Export": {
+    "samples": 30,
+    "min": 3.559,
+    "median": 4.248,
+    "p95": 5.686,
+    "max": 6.386,
+    "failures": 0
+  },
+  "Advisory AI Explanation": {
+    "samples": 30,
+    "min": 11.353,
+    "median": 11.733,
+    "p95": 13.752,
+    "max": 30.267,
+    "failures": 0
+  }
+}

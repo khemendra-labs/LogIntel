@@ -1672,8 +1672,9 @@ class CaseService:
         if not case:
             raise ValueError(f"Case {case_id} not found")
 
+        clean_assessment = analyst_assessment[:10000]
         assessment = self.get_case_assessment(case_id)
-        assessment.analyst_assessment = analyst_assessment
+        assessment.analyst_assessment = clean_assessment
         assessment.conclusion = self.assessment_engine.build_case_conclusion(
             case=case,
             findings=assessment.key_findings,

@@ -676,7 +676,7 @@ class AssessmentEngine:
             )
 
         if analyst_assessment_text:
-            statement += f" Analyst Note: {analyst_assessment_text.strip()}"
+            statement += f" Analyst Note: {analyst_assessment_text.strip()[:4000]}"
 
         return CaseConclusion(
             statement=statement,
