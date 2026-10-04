@@ -1522,7 +1522,7 @@ describe("Frontend API Client and Authentication", () => {
               reason_type: "SHARED_ENTITY",
               description: "Shared user alice",
               dimension_value: "user:alice",
-              confidence_basis: "Exact entity equality",
+              correlation_basis: "Exact entity equality",
             },
           ],
           temporal_bounds: { start_time: "2026-10-04T10:00:00Z", end_time: "2026-10-04T10:05:00Z" },

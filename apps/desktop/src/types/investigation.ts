@@ -1031,7 +1031,7 @@ export interface CorrelationReasonItem {
   reason_type: CorrelationReason;
   description: string;
   dimension_value?: string | null;
-  confidence_basis: string;
+  correlation_basis: string;
 }
 
 export interface EvidenceCluster {

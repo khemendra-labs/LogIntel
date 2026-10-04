@@ -597,7 +597,7 @@ export function InvestigationCorrelationExplorer({
                             borderRadius: "2px",
                           }}
                         >
-                          {r.confidence_basis}
+                          {r.correlation_basis}
                         </span>
                       </div>
                     ))}

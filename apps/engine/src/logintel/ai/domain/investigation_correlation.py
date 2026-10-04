@@ -43,7 +43,7 @@ class CorrelationReasonItem(BaseModel):
     reason_type: CorrelationReason
     description: str
     dimension_value: Optional[str] = None
-    confidence_basis: str = "Deterministic attribute equality"
+    correlation_basis: str = "Deterministic attribute equality"
 
 
 class EvidenceCluster(BaseModel):

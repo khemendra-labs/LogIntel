@@ -197,7 +197,7 @@ def test_m59_intel_003_explicit_correlation_reasons(m59_setup):
                 CorrelationReason.BEHAVIORAL_SEQUENCE,
             ]
             assert r.description != ""
-            assert r.confidence_basis != ""
+            assert r.correlation_basis != ""
             found_reason = True
 
     assert found_reason, "Expected at least one deterministic correlation reason across clusters"
