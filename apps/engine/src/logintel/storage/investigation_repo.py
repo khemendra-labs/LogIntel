@@ -1171,6 +1171,107 @@ class InvestigationRepository:
         host_graph = host_graph_builder.build_from_events(host=host, events=events_data)
         return host_graph.model_dump(mode="json")
 
+    def get_host_threat_assessment(self, incident_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve structured host threat assessment and MITRE kill chain for an incident."""
+        from logintel.correlation.host_threat import HostThreatCorrelator
+        inc = self.incidents_repo.get_incident(incident_id)
+        if not inc:
+            return None
+
+        # Gather alerts linked to the incident
+        alerts_data: List[Dict[str, Any]] = []
+        with self.db.connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT a.id, a.rule_id, a.title, a.description, a.severity, a.host, a.first_seen, a.last_seen
+                FROM incident_alerts ia
+                INNER JOIN alerts a ON ia.alert_id = a.id
+                WHERE ia.incident_id = ?
+                """,
+                (incident_id,),
+            )
+            alerts_data = [dict(r) for r in cur.fetchall()]
+
+            # Gather evidence event IDs
+            cur.execute(
+                """
+                SELECT DISTINCT de.event_id
+                FROM incident_alerts ia
+                INNER JOIN detections d ON ia.alert_id = d.alert_id
+                INNER JOIN detection_evidence de ON d.id = de.detection_id
+                WHERE ia.incident_id = ?
+                """,
+                (incident_id,),
+            )
+            event_ids = [r["event_id"] for r in cur.fetchall() if r["event_id"]]
+
+        events_data: List[Dict[str, Any]] = []
+        if event_ids:
+            placeholders = ",".join("?" for _ in event_ids)
+            with self.db.connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    f"""
+                    SELECT id, host, username, src_ip, dst_ip, dst_port, process_name, process_executable, process_command_line, event_type, outcome, summary, metadata_json, timestamp
+                    FROM events
+                    WHERE id IN ({placeholders})
+                    """,
+                    event_ids,
+                )
+                for r in cur.fetchall():
+                    row_dict = dict(r)
+                    if row_dict.get("metadata_json"):
+                        try:
+                            import json
+                            row_dict["metadata"] = json.loads(row_dict["metadata_json"])
+                        except Exception:
+                            row_dict["metadata"] = {}
+                    events_data.append(row_dict)
+
+        correlator = HostThreatCorrelator()
+        assessment = correlator.correlate_host_telemetry(
+            host=inc.primary_host,
+            events=events_data,
+            alerts=alerts_data,
+            incident_id=incident_id,
+        )
+        return assessment.model_dump(mode="json")
+
+    def evaluate_host_telemetry_threat(self, host: str, limit: int = 200) -> Dict[str, Any]:
+        """Generate host threat assessment from historical events for a specified host."""
+        from logintel.correlation.host_threat import HostThreatCorrelator
+        events_data: List[Dict[str, Any]] = []
+        with self.db.connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, host, username, src_ip, dst_ip, dst_port, process_name, process_executable, process_command_line, event_type, outcome, summary, metadata_json, timestamp
+                FROM events
+                WHERE LOWER(host) = LOWER(?)
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (host, limit),
+            )
+            for r in cur.fetchall():
+                row_dict = dict(r)
+                if row_dict.get("metadata_json"):
+                    try:
+                        import json
+                        row_dict["metadata"] = json.loads(row_dict["metadata_json"])
+                    except Exception:
+                        row_dict["metadata"] = {}
+                events_data.append(row_dict)
+
+        correlator = HostThreatCorrelator()
+        assessment = correlator.correlate_host_telemetry(
+            host=host,
+            events=events_data,
+        )
+        return assessment.model_dump(mode="json")
+
 
 # Global singleton investigation repository
 investigation_repo = InvestigationRepository()
+

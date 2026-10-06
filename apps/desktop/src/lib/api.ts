@@ -481,6 +481,95 @@ export async function fetchHostTelemetryGraph(
   return res.json();
 }
 
+export interface MitreTechnique {
+  id: string;
+  name: string;
+  tactic: string;
+  description?: string;
+  reference_url: string;
+}
+
+export interface HostThreatStage {
+  stage_id: string;
+  tactic: string;
+  technique?: MitreTechnique;
+  timestamp: string;
+  summary: string;
+  event_ids: string[];
+  alert_ids: number[];
+  entity_keys: string[];
+  epistemic_certainty: string;
+  severity: string;
+}
+
+export interface HostAttackSequence {
+  sequence_id: string;
+  host: string;
+  scenario_name: string;
+  first_seen: string;
+  last_seen: string;
+  stages: HostThreatStage[];
+  threat_score: number;
+  escalated_severity: string;
+  epistemic_confidence: number;
+  participating_users: string[];
+  participating_processes: string[];
+  external_ips: string[];
+}
+
+export interface HostThreatAssessment {
+  host: string;
+  incident_id?: number;
+  assessed_at: string;
+  overall_threat_score: number;
+  overall_severity: string;
+  primary_scenario: string;
+  epistemic_confidence: number;
+  attack_sequences: HostAttackSequence[];
+  mitre_tactics_observed: string[];
+  mitre_techniques_observed: MitreTechnique[];
+  telemetry_source_diversity: number;
+  summary: string;
+  node_count: number;
+  edge_count: number;
+}
+
+export async function fetchHostDetectionRules(): Promise<{ items: any[]; total: number }> {
+  const res = await apiFetch("/detection/host-rules");
+  if (!res.ok) {
+    throw new Error(`Failed to fetch host detection rules: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function evaluateHostThreats(
+  host: string,
+  limit: number = 200,
+  events?: any[],
+  alerts?: any[]
+): Promise<HostThreatAssessment> {
+  const res = await apiFetch("/correlation/host-threats/evaluate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ host, limit, events, alerts }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to evaluate host threats for ${host}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchHostThreatAssessment(
+  incidentId: number
+): Promise<HostThreatAssessment> {
+  const res = await apiFetch(`/correlation/host-threats/${incidentId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch host threat assessment for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+
 export async function fetchMitreMappings(
   incidentId: number
 ): Promise<{ incident_id: number; items: MitreMapping[]; total: number }> {

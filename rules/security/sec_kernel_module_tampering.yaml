@@ -1,0 +1,17 @@
+id: sec.kernel_module_tampering
+name: Kernel Module Insertion or Security Anomaly
+description: Detects unauthorized kernel module insertion or low-level kernel security anomaly events.
+severity: ALERT
+category: SECURITY
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: in
+      value:
+        - KERNEL_MODULE_LOAD
+        - KERNEL_SECURITY_ANOMALY
+
+cooldown_seconds: 1800

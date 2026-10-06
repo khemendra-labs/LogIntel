@@ -2082,7 +2082,63 @@ describe("Frontend API Client and Authentication", () => {
     expect(explanation.is_authoritative).toBe(false);
     expect(explanation.generated_by).toBe("LOCAL_AI_ADVISORY");
   });
+
+  it("M6.9 Host Threat Correlation API client methods perform bounded authenticated calls", async () => {
+    setEngineToken("m69_token");
+
+    const mockRules = {
+      items: [{ id: "sec.reverse_shell_socket", name: "Interactive Shell Outbound Socket Connection" }],
+      total: 1,
+    };
+    const mockAssessment = {
+      host: "srv-prod-01",
+      incident_id: 101,
+      overall_threat_score: 85.0,
+      overall_severity: "CRITICAL",
+      primary_scenario: "Interactive Reverse Shell & External C2",
+      epistemic_confidence: 1.0,
+      attack_sequences: [],
+      mitre_tactics_observed: ["Command and Control"],
+      mitre_techniques_observed: [],
+      telemetry_source_diversity: 2,
+      summary: "Host Threat Assessment for srv-prod-01",
+      node_count: 5,
+      edge_count: 4,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/detection/host-rules")) {
+        return { ok: true, json: async () => mockRules } as Response;
+      }
+      if (urlStr.includes("/correlation/host-threats/evaluate")) {
+        return { ok: true, json: async () => mockAssessment } as Response;
+      }
+      if (urlStr.includes("/correlation/host-threats/101")) {
+        return { ok: true, json: async () => mockAssessment } as Response;
+      }
+      return { ok: false, statusText: "Not Found" } as Response;
+    });
+
+    const {
+      fetchHostDetectionRules,
+      evaluateHostThreats,
+      fetchHostThreatAssessment,
+    } = await import("../lib/api");
+
+    const rules = await fetchHostDetectionRules();
+    expect(rules.total).toBe(1);
+
+    const evaluated = await evaluateHostThreats("srv-prod-01", 100);
+    expect(evaluated.host).toBe("srv-prod-01");
+    expect(evaluated.overall_threat_score).toBe(85.0);
+
+    const asmt = await fetchHostThreatAssessment(101);
+    expect(asmt.incident_id).toBe(101);
+    expect(asmt.primary_scenario).toBe("Interactive Reverse Shell & External C2");
+  });
 });
+
 
 
 

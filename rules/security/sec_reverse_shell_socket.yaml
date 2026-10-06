@@ -1,0 +1,30 @@
+id: sec.reverse_shell_socket
+name: Interactive Shell Outbound Socket Connection
+description: Detects an interactive system shell or script interpreter establishing an outbound network connection, indicative of a reverse shell or external C2 channel.
+severity: CRITICAL
+category: SECURITY
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: NETWORK_SOCKET_CONNECTION
+    - field: process_name
+      operator: in
+      value:
+        - bash
+        - sh
+        - zsh
+        - dash
+        - python
+        - python3
+        - perl
+        - ruby
+        - nc
+        - netcat
+        - ncat
+        - socat
+
+cooldown_seconds: 1800

@@ -33,18 +33,33 @@ from logintel.identity import (
     SessionState,
 )
 
+from logintel.correlation.host_threat import HostThreatCorrelator
+from logintel.correlation.host_threat_models import (
+    HostAttackSequence,
+    HostThreatAssessment,
+    HostThreatStage,
+    MitreTactic,
+    MitreTechnique,
+)
+
 __all__ = [
     "AttackStage",
     "AuditIdentity",
     "CATEGORY_TO_STAGE",
     "CorrelationConfig",
+    "HostAttackSequence",
     "HostEdgeType",
     "HostGraphBuilder",
     "HostGraphEdge",
     "HostGraphNode",
     "HostNodeType",
+    "HostThreatAssessment",
+    "HostThreatCorrelator",
+    "HostThreatStage",
     "IdentityContinuityChain",
     "IncidentCorrelationEngine",
+    "MitreTactic",
+    "MitreTechnique",
     "PrivilegeTransition",
     "PrivilegeTransitionType",
     "ProcessAncestryChain",
@@ -61,3 +76,4 @@ __all__ = [
     "evaluate_escalation",
     "host_graph_builder",
 ]
+

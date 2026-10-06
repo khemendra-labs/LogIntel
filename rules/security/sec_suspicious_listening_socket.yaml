@@ -1,0 +1,24 @@
+id: sec.suspicious_listening_socket
+name: Suspicious Inbound Listening Socket Spawned
+description: Detects creation of inbound listening sockets bound to known adversary, backdoor, or offensive listener ports (4444, 1337, 31337, 6667).
+severity: WARNING
+category: SECURITY
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: NETWORK_SOCKET_LISTEN
+    - field: dst_port
+      operator: in
+      value:
+        - 4444
+        - 1337
+        - 31337
+        - 6667
+        - 8888
+        - 9999
+
+cooldown_seconds: 1800

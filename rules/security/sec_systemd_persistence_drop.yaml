@@ -1,0 +1,20 @@
+id: sec.systemd_persistence_drop
+name: Systemd Service Persistence Unit Drop
+description: Detects creation or modification of systemd unit configuration files in system service directories, establishing host persistence across reboots.
+severity: ALERT
+category: SECURITY
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: in
+      value:
+        - FILE_PERSISTENCE_DROP
+        - FILE_INTEGRITY_MODIFY
+    - field: summary
+      operator: regex
+      value: '.*(systemd|\.service).*'
+
+cooldown_seconds: 1800

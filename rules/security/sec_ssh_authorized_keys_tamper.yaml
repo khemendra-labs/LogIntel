@@ -1,0 +1,20 @@
+id: sec.ssh_authorized_keys_tamper
+name: SSH Authorized Keys Backdoor Persistence
+description: Detects creation or modification of SSH authorized_keys files for persistence or backdoor remote access.
+severity: ALERT
+category: SECURITY
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: in
+      value:
+        - FILE_PERSISTENCE_DROP
+        - FILE_INTEGRITY_MODIFY
+    - field: summary
+      operator: regex
+      value: '.*authorized_keys.*'
+
+cooldown_seconds: 1800

@@ -1,0 +1,18 @@
+id: sec.memory_execution
+name: Memory or Temporary Directory Process Execution
+description: Detects process execution originating from memory filesystems, shared memory, or world-writable temporary directories (/dev/shm, /tmp, /var/tmp, memfd:).
+severity: ALERT
+category: SECURITY
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: PROCESS_EXECUTION
+    - field: process_executable
+      operator: regex
+      value: '^(/dev/shm|/tmp|/var/tmp|/memfd:|memfd:).*'
+
+cooldown_seconds: 1800

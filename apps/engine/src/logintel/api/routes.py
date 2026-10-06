@@ -584,6 +584,64 @@ def get_incident_host_graph(incident_id: int) -> Dict[str, Any]:
     return graph
 
 
+class HostThreatEvaluationRequest(BaseModel):
+    host: str = Field(description="Target host name")
+    limit: int = Field(default=200, ge=1, le=1000)
+    events: Optional[List[Dict[str, Any]]] = None
+    alerts: Optional[List[Dict[str, Any]]] = None
+
+
+@protected_router.get("/detection/host-rules")
+def get_host_detection_rules_endpoint() -> Dict[str, Any]:
+    """Retrieve all host security detection rules and associated MITRE ATT&CK techniques."""
+    from logintel.detection.loader import load_default_rules
+    from logintel.correlation.host_threat import TECHNIQUES_CATALOG
+    all_rules = load_default_rules()
+    host_rules = [r for r in all_rules if r.category == "SECURITY" or r.id.startswith("sec.")]
+    
+    items = []
+    for r in host_rules:
+        r_dict = r.model_dump(mode="json")
+        matched_tech = None
+        for tech in TECHNIQUES_CATALOG.values():
+            if tech.name.lower() in r.name.lower() or tech.id.lower() in r.description.lower():
+                matched_tech = tech.model_dump()
+                break
+        r_dict["mitre_technique"] = matched_tech
+        items.append(r_dict)
+
+    return {"items": items, "total": len(items)}
+
+
+@protected_router.post("/correlation/host-threats/evaluate")
+def evaluate_host_threats_endpoint(req: HostThreatEvaluationRequest) -> Dict[str, Any]:
+    """Evaluate host telemetry on-demand and produce structured HostThreatAssessment."""
+    from logintel.correlation.host_threat import HostThreatCorrelator
+    from logintel.storage.investigation_repo import investigation_repo
+
+    if req.events is not None:
+        correlator = HostThreatCorrelator()
+        assessment = correlator.correlate_host_telemetry(
+            host=req.host,
+            events=req.events,
+            alerts=req.alerts or [],
+        )
+        return assessment.model_dump(mode="json")
+    else:
+        return investigation_repo.evaluate_host_telemetry_threat(host=req.host, limit=req.limit)
+
+
+@protected_router.get("/correlation/host-threats/{incident_id}")
+def get_incident_host_threat_assessment_endpoint(incident_id: int) -> Dict[str, Any]:
+    """Retrieve structured host threat assessment and MITRE kill chain for an incident."""
+    from logintel.storage.investigation_repo import investigation_repo
+    assessment = investigation_repo.get_host_threat_assessment(incident_id)
+    if not assessment:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found or has no host threat data")
+    return assessment
+
+
+
 @protected_router.get("/investigations/{incident_id}")
 def get_investigation_dossier(incident_id: int) -> Dict[str, Any]:
     """Retrieve full investigation workspace dossier containing incident, attack path, MITRE, notes, and timeline."""

@@ -1,0 +1,15 @@
+id: sec.container_escape_attempt
+name: Container Namespace Escape or Host Breakout Attempt
+description: Detects attempts to break container namespace containment, join host namespaces, or access raw host kernel interfaces.
+severity: CRITICAL
+category: SECURITY
+rule_type: ATOMIC
+enabled: true
+
+conditions:
+  all:
+    - field: event_type
+      operator: equals
+      value: CONTAINER_SECURITY_ESCAPE_ATTEMPT
+
+cooldown_seconds: 1800
