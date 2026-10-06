@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from logintel.api.auth import verify_engine_token
 from logintel.config import settings
@@ -3349,7 +3349,266 @@ def export_evidence_collection_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# M7.4 Findings & Hypothesis Workbench Endpoints
+# -----------------------------------------------------------------------------
+
+from logintel.findings.models import (
+    AddFindingEvidenceRequest,
+    AddHypothesisGapRequest,
+    CreateFindingRequest,
+    CreateHypothesisM74Request,
+    ReviewFindingRequest,
+    UpdateFindingRequest,
+    UpdateHypothesisM74Request,
+)
+from logintel.findings.service import findings_workbench_service
+
+
+@protected_router.get("/cases/{case_id}/findings/workbench")
+def get_findings_workbench_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve full Findings & Hypothesis Workbench state (M7.4)."""
+    try:
+        wb = findings_workbench_service.get_findings_workbench(case_id)
+        return wb.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/findings/export")
+def export_findings_workbench_endpoint(
+    case_id: int,
+    format: str = Query(default="json", pattern="^(json|csv)$"),
+) -> Response:
+    """Export findings and hypotheses deterministically in JSON or CSV format (M7.4)."""
+    try:
+        res = findings_workbench_service.export_findings(case_id, format=format)
+        media_type = "text/csv" if format.lower() == "csv" else "application/json"
+        filename = f"case_{case_id}_findings_export.{format.lower()}"
+        return Response(
+            content=res.content,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/findings")
+def list_case_findings_endpoint(case_id: int) -> Dict[str, Any]:
+    """List all analyst-authored findings for a case (M7.4)."""
+    try:
+        findings = findings_workbench_service.get_findings(case_id)
+        return {
+            "case_id": case_id,
+            "findings": [f.model_dump(mode="json") for f in findings],
+            "total_findings": len(findings),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/findings")
+def create_case_finding_endpoint(
+    case_id: int,
+    req: CreateFindingRequest,
+) -> Dict[str, Any]:
+    """Create a new analyst-authored finding (M7.4)."""
+    try:
+        finding = findings_workbench_service.create_finding(case_id, req, actor=req.created_by)
+        return finding.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/findings/{finding_id}")
+def get_case_finding_endpoint(case_id: int, finding_id: str) -> Dict[str, Any]:
+    """Retrieve single finding with version history and evidence references (M7.4)."""
+    try:
+        finding = findings_workbench_service.get_finding(case_id, finding_id)
+        return finding.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.patch("/cases/{case_id}/findings/{finding_id}")
+def update_case_finding_endpoint(
+    case_id: int,
+    finding_id: str,
+    req: UpdateFindingRequest,
+) -> Dict[str, Any]:
+    """Update finding attributes, creating a new deterministic version (M7.4)."""
+    try:
+        finding = findings_workbench_service.update_finding(case_id, finding_id, req, actor=req.updated_by)
+        return finding.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/findings/{finding_id}")
+def delete_case_finding_endpoint(case_id: int, finding_id: str) -> Dict[str, Any]:
+    """Delete finding organizational record. Underlying evidence is preserved (M7.4)."""
+    try:
+        findings_workbench_service.delete_finding(case_id, finding_id)
+        return {"status": "DELETED", "finding_id": finding_id, "evidence_preserved": True}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/findings/{finding_id}/evidence")
+def add_finding_evidence_endpoint(
+    case_id: int,
+    finding_id: str,
+    req: AddFindingEvidenceRequest,
+) -> Dict[str, Any]:
+    """Attach supporting or contradicting evidence reference to finding (M7.4)."""
+    try:
+        finding = findings_workbench_service.add_finding_evidence(case_id, finding_id, req, actor=req.added_by)
+        return finding.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/findings/{finding_id}/evidence/{source_id}")
+def remove_finding_evidence_endpoint(
+    case_id: int,
+    finding_id: str,
+    source_id: str,
+) -> Dict[str, Any]:
+    """Remove evidence reference from finding. Underlying evidence is preserved (M7.4)."""
+    try:
+        finding = findings_workbench_service.remove_finding_evidence(case_id, finding_id, source_id)
+        return finding.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/findings/{finding_id}/review")
+def review_finding_m74_endpoint(
+    case_id: int,
+    finding_id: str,
+    req: ReviewFindingRequest,
+) -> Dict[str, Any]:
+    """Perform analyst review on finding. Epistemic status remains decoupled (M7.4)."""
+    try:
+        finding = findings_workbench_service.review_finding(case_id, finding_id, req, actor=req.reviewed_by)
+        return finding.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hypotheses/workbench")
+def get_hypotheses_workbench_endpoint(case_id: int) -> Dict[str, Any]:
+    """List enriched hypotheses with supporting/contradicting evidence and gaps (M7.4)."""
+    try:
+        hypotheses = findings_workbench_service.get_hypotheses(case_id)
+        return {
+            "case_id": case_id,
+            "hypotheses": [h.model_dump(mode="json") for h in hypotheses],
+            "total_hypotheses": len(hypotheses),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hypotheses/compare")
+def compare_hypotheses_endpoint(case_id: int) -> Dict[str, Any]:
+    """Categorical side-by-side comparison of competing hypotheses (M7.4)."""
+    try:
+        comp = findings_workbench_service.compare_hypotheses(case_id)
+        return comp.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hypotheses/m74")
+def create_hypothesis_m74_endpoint(
+    case_id: int,
+    req: CreateHypothesisM74Request,
+) -> Dict[str, Any]:
+    """Create an enriched investigative hypothesis (M7.4)."""
+    try:
+        hyp = findings_workbench_service.create_hypothesis(case_id, req, actor=req.created_by)
+        return hyp.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.patch("/cases/{case_id}/hypotheses/m74/{hypothesis_id}")
+def update_hypothesis_m74_endpoint(
+    case_id: int,
+    hypothesis_id: str,
+    req: UpdateHypothesisM74Request,
+) -> Dict[str, Any]:
+    """Update hypothesis statement, status, assessment, or tags (M7.4)."""
+    try:
+        hyp = findings_workbench_service.update_hypothesis(case_id, hypothesis_id, req, actor=req.updated_by)
+        return hyp.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/hypotheses/m74/{hypothesis_id}")
+def delete_hypothesis_m74_endpoint(
+    case_id: int,
+    hypothesis_id: str,
+) -> Dict[str, Any]:
+    """Delete hypothesis. Underlying evidence and findings remain preserved (M7.4)."""
+    try:
+        findings_workbench_service.delete_hypothesis(case_id, hypothesis_id)
+        return {"status": "DELETED", "hypothesis_id": hypothesis_id, "evidence_preserved": True}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hypotheses/{hypothesis_id}/evidence")
+def add_hypothesis_evidence_endpoint(
+    case_id: int,
+    hypothesis_id: str,
+    evidence_tag: str = Query(...),
+    is_contradicting: bool = Query(default=False),
+) -> Dict[str, Any]:
+    """Add supporting or contradicting evidence tag to hypothesis (M7.4)."""
+    try:
+        hyp = findings_workbench_service.add_hypothesis_evidence(
+            case_id, hypothesis_id, evidence_tag=evidence_tag, is_contradicting=is_contradicting
+        )
+        return hyp.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/hypotheses/{hypothesis_id}/evidence/{evidence_tag}")
+def remove_hypothesis_evidence_endpoint(
+    case_id: int,
+    hypothesis_id: str,
+    evidence_tag: str,
+) -> Dict[str, Any]:
+    """Remove evidence tag from hypothesis. Evidence remains preserved (M7.4)."""
+    try:
+        hyp = findings_workbench_service.remove_hypothesis_evidence(case_id, hypothesis_id, evidence_tag=evidence_tag)
+        return hyp.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hypotheses/{hypothesis_id}/gaps")
+def add_hypothesis_gap_endpoint(
+    case_id: int,
+    hypothesis_id: str,
+    req: AddHypothesisGapRequest,
+) -> Dict[str, Any]:
+    """Record an explicit evidence gap on a hypothesis (M7.4)."""
+    try:
+        hyp = findings_workbench_service.add_hypothesis_gap(case_id, hypothesis_id, req, actor=req.detected_by)
+        return hyp.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
+
+
 
 
 

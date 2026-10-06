@@ -1751,6 +1751,122 @@ export interface EvidenceWorkbenchResponse {
   deterministic_hash: string;
 }
 
+// -----------------------------------------------------------------------------
+// M7.4 Findings & Hypothesis Workbench Types
+// -----------------------------------------------------------------------------
 
+export type FindingReviewStatus = "UNREVIEWED" | "ACCEPTED" | "REJECTED" | "DISPUTED";
+export type FindingLifecycleStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
+export type HypothesisLifecycleStatus = "OPEN" | "SUPPORTED" | "WEAKENED" | "DISPUTED" | "INCONCLUSIVE" | "REJECTED";
+export type EvidenceGapType = "AUDIT_RULE_NOT_CONFIGURED" | "SOURCE_UNAVAILABLE" | "NO_EVENT_OBSERVED" | "TELEMETRY_DROPPED" | "UNKNOWN";
+export type FindingEvidenceRole = "SUPPORTING" | "CONTRADICTING" | "CONTEXTUAL" | "TEMPORAL" | "CORROBORATING";
 
+export interface FindingEvidenceReference {
+  reference_id: string;
+  source_type: string;
+  source_id: string;
+  citation_tag: string;
+  role: FindingEvidenceRole;
+  epistemic_status: EpistemicStatus;
+  collection_id?: string | null;
+  analyst_note?: string | null;
+  host?: string | null;
+  timestamp?: string | null;
+  added_at: string;
+  provenance_hash?: string | null;
+}
+
+export interface FindingVersion {
+  version: number;
+  title: string;
+  statement: string;
+  epistemic_status: EpistemicStatus;
+  updated_at: string;
+  updated_by: string;
+  change_summary: string;
+}
+
+export interface Finding {
+  finding_id: string;
+  case_id: number;
+  title: string;
+  statement: string;
+  epistemic_status: EpistemicStatus;
+  review_status: FindingReviewStatus;
+  lifecycle_status: FindingLifecycleStatus;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL";
+  supporting_evidence: FindingEvidenceReference[];
+  contradicting_evidence: FindingEvidenceReference[];
+  supporting_collections: string[];
+  related_hypotheses: string[];
+  contradicting_hypotheses: string[];
+  analyst_notes?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  version: number;
+  version_history: FindingVersion[];
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  provenance: Record<string, any>;
+}
+
+export interface EvidenceGapM74 {
+  gap_id: string;
+  gap_type: EvidenceGapType;
+  description: string;
+  expected_source: string;
+  affected_hypotheses: string[];
+  detected_at?: string | null;
+}
+
+export interface HypothesisAssessmentView {
+  hypothesis_id: string;
+  case_id: number;
+  title: string;
+  statement: string;
+  status: HypothesisLifecycleStatus;
+  version: number;
+  supporting_evidence: FindingEvidenceReference[];
+  contradicting_evidence: FindingEvidenceReference[];
+  evidence_gaps: EvidenceGapM74[];
+  relevant_collections: string[];
+  supporting_findings: string[];
+  contradicting_findings: string[];
+  analyst_assessment?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HypothesisComparisonItem {
+  hypothesis_id: string;
+  title: string;
+  statement: string;
+  status: HypothesisLifecycleStatus;
+  supporting_count: number;
+  contradicting_count: number;
+  gaps_count: number;
+  supporting_evidence_ids: string[];
+  contradicting_evidence_ids: string[];
+  gap_descriptions: string[];
+  analyst_assessment?: string | null;
+}
+
+export interface HypothesisComparisonResponse {
+  case_id: number;
+  hypotheses: HypothesisComparisonItem[];
+  total_hypotheses: number;
+  generated_at: string;
+}
+
+export interface FindingsWorkbenchResponse {
+  case_id: number;
+  findings: Finding[];
+  hypotheses: HypothesisAssessmentView[];
+  evidence_gaps: EvidenceGapM74[];
+  total_findings: number;
+  total_hypotheses: number;
+  total_gaps: number;
+}
 

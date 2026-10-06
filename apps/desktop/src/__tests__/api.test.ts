@@ -2430,7 +2430,70 @@ describe("Frontend API Client and Authentication", () => {
     const delCol = await deleteCaseCollection(1, "col-persistence-123");
     expect(delCol.success).toBe(true);
   });
+
+  it("M7.4: findings & hypothesis workbench API client methods", async () => {
+    setEngineToken("m74_token");
+    const {
+      fetchFindingsWorkbench,
+      createCaseFindingM74,
+      reviewCaseFindingM74,
+      compareHypothesesM74,
+      createHypothesisM74,
+      exportFindingsWorkbenchM74,
+    } = await import("../lib/api");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    // 1. Fetch workbench
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 1, findings: [], hypotheses: [], evidence_gaps: [], total_findings: 0, total_hypotheses: 0, total_gaps: 0 }),
+    } as Response);
+    const wb = await fetchFindingsWorkbench(1);
+    expect(wb.case_id).toBe(1);
+
+    // 2. Create finding
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ finding_id: "FND-1", title: "Test", epistemic_status: "INFERRED", review_status: "UNREVIEWED" }),
+    } as Response);
+    const fnd = await createCaseFindingM74(1, { title: "Test", statement: "Stmt" });
+    expect(fnd.finding_id).toBe("FND-1");
+
+    // 3. Review finding
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ finding_id: "FND-1", review_status: "ACCEPTED", epistemic_status: "INFERRED" }),
+    } as Response);
+    const rev = await reviewCaseFindingM74(1, "FND-1", "ACCEPTED");
+    expect(rev.review_status).toBe("ACCEPTED");
+
+    // 4. Create hypothesis
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hypothesis_id: "HYP-1", statement: "Hyp Stmt", status: "OPEN" }),
+    } as Response);
+    const hyp = await createHypothesisM74(1, { statement: "Hyp Stmt" });
+    expect(hyp.hypothesis_id).toBe("HYP-1");
+
+    // 5. Compare hypotheses
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 1, hypotheses: [{ hypothesis_id: "HYP-1", supporting_count: 2, contradicting_count: 0, gaps_count: 1 }], total_hypotheses: 1 }),
+    } as Response);
+    const comp = await compareHypothesesM74(1);
+    expect(comp.total_hypotheses).toBe(1);
+
+    // 6. Export findings
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      text: async () => '{"case_id": 1, "findings": []}',
+    } as Response);
+    const exported = await exportFindingsWorkbenchM74(1, "json");
+    expect(exported).toContain("findings");
+  });
 });
+
 
 
 

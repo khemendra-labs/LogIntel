@@ -45,6 +45,7 @@ import { AttackGraphVisualizer } from "./AttackGraphVisualizer";
 import { InvestigationTimeline } from "./InvestigationTimeline";
 import { InvestigationUnifiedTimeline } from "./InvestigationUnifiedTimeline";
 import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench";
+import { InvestigationFindingsWorkbench } from "./InvestigationFindingsWorkbench";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -69,7 +70,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "ai"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "ai"
   >("graph");
 
   // Attack Path state
@@ -557,6 +558,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("evidence")}
                 >
                   Evidence Workbench (M7.3)
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "findings" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "findings" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "findings" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("findings")}
+                >
+                  Findings & Hypotheses (M7.4)
                 </button>
 
                 <button
@@ -1265,6 +1279,16 @@ export function IncidentWorkspaceModal({
                 {/* 9. Evidence Workbench & Collections Tab (M7.3) */}
                 {activeTab === "evidence" && (
                   <InvestigationEvidenceWorkbench
+                    caseId={incidentId}
+                    onSelectEventId={onSelectEventId}
+                    onSelectAlertId={onSelectAlertId}
+                    onSelectEntityKey={onSelectEntityKey}
+                  />
+                )}
+
+                {/* 10. Findings & Hypothesis Workbench Tab (M7.4) */}
+                {activeTab === "findings" && (
+                  <InvestigationFindingsWorkbench
                     caseId={incidentId}
                     onSelectEventId={onSelectEventId}
                     onSelectAlertId={onSelectAlertId}

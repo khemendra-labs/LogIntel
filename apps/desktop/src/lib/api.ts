@@ -130,6 +130,11 @@ import type {
   CollectionFilterParams,
   WorkbenchFilterParams,
   EvidenceWorkbenchResponse,
+  Finding,
+  FindingReviewStatus,
+  HypothesisAssessmentView,
+  HypothesisComparisonResponse,
+  FindingsWorkbenchResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -2756,6 +2761,235 @@ export async function exportCaseCollection(
   }
   return res.text();
 }
+
+// -----------------------------------------------------------------------------
+// M7.4 Findings & Hypothesis Workbench API Methods
+// -----------------------------------------------------------------------------
+
+export async function fetchFindingsWorkbench(caseId: number): Promise<FindingsWorkbenchResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings/workbench`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch findings workbench: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseFindingsM74(caseId: number): Promise<{ case_id: number; findings: Finding[]; total_findings: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch findings: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createCaseFindingM74(caseId: number, data: Partial<Finding>): Promise<Finding> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create finding: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseFindingM74(caseId: number, findingId: string, data: Partial<Finding>): Promise<Finding> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings/${encodeURIComponent(findingId)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update finding: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function deleteCaseFindingM74(caseId: number, findingId: string): Promise<{ status: string; finding_id: string; evidence_preserved: boolean }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings/${encodeURIComponent(findingId)}`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to delete finding: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function reviewCaseFindingM74(
+  caseId: number,
+  findingId: string,
+  reviewStatus: FindingReviewStatus,
+  analystNotes: string = "",
+  reviewedBy: string = "SecAnalyst-1"
+): Promise<Finding> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings/${encodeURIComponent(findingId)}/review`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      review_status: reviewStatus,
+      analyst_notes: analystNotes,
+      reviewed_by: reviewedBy,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to review finding: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function addFindingEvidenceM74(
+  caseId: number,
+  findingId: string,
+  evidenceData: Record<string, any>
+): Promise<Finding> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings/${encodeURIComponent(findingId)}/evidence`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(evidenceData),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to add finding evidence: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function removeFindingEvidenceM74(
+  caseId: number,
+  findingId: string,
+  sourceId: string
+): Promise<Finding> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(sourceId)}`,
+    {
+      method: "DELETE",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to remove finding evidence: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchHypothesesWorkbenchM74(caseId: number): Promise<{ case_id: number; hypotheses: HypothesisAssessmentView[]; total_hypotheses: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/workbench`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch hypotheses: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function compareHypothesesM74(caseId: number): Promise<HypothesisComparisonResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/compare`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to compare hypotheses: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createHypothesisM74(caseId: number, data: Record<string, any>): Promise<HypothesisAssessmentView> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/m74`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create hypothesis: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateHypothesisM74(caseId: number, hypothesisId: string, data: Record<string, any>): Promise<HypothesisAssessmentView> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/m74/${encodeURIComponent(hypothesisId)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update hypothesis: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function deleteHypothesisM74(caseId: number, hypothesisId: string): Promise<{ status: string; hypothesis_id: string; evidence_preserved: boolean }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/m74/${encodeURIComponent(hypothesisId)}`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to delete hypothesis: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function addHypothesisGapM74(caseId: number, hypothesisId: string, data: Record<string, any>): Promise<HypothesisAssessmentView> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hypotheses/${encodeURIComponent(hypothesisId)}/gaps`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to add hypothesis gap: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportFindingsWorkbenchM74(caseId: number, format: "json" | "csv" = "json"): Promise<string> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/findings/export?format=${format}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to export findings workbench: ${res.statusText}`);
+  }
+  return res.text();
+}
+
 
 
 
