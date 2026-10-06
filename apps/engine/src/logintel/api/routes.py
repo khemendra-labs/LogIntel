@@ -3096,6 +3096,259 @@ def export_unified_timeline_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# M7.3 Logical Evidence Collections & Evidence Workbench Endpoints
+# -----------------------------------------------------------------------------
+
+@protected_router.get("/cases/{case_id}/evidence/collections")
+def list_case_evidence_collections_endpoint(
+    case_id: int,
+    status: Optional[str] = None,
+    search_text: Optional[str] = Query(default=None, max_length=512),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> List[Dict[str, Any]]:
+    """List logical evidence collections scoped to an investigation case (M7.3)."""
+    from logintel.collections.service import workbench_service
+    from logintel.collections.models import EvidenceCollectionStatus
+
+    try:
+        st = EvidenceCollectionStatus(status) if status else None
+    except Exception:
+        st = None
+
+    try:
+        cols = workbench_service.get_collections(
+            case_id=case_id,
+            status=st,
+            search_text=search_text,
+            limit=limit,
+            offset=offset,
+        )
+        return [c.model_dump(mode="json") for c in cols]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/evidence/collections")
+def create_case_evidence_collection_endpoint(
+    case_id: int,
+    req: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Create a new logical evidence collection within a case (M7.3)."""
+    from logintel.collections.service import workbench_service
+    from logintel.collections.models import CreateCollectionRequest
+
+    try:
+        validated = CreateCollectionRequest(**req)
+        col = workbench_service.create_collection(
+            case_id=case_id,
+            name=validated.name,
+            description=validated.description,
+            tags=validated.tags,
+            actor="SecAnalyst-1",
+        )
+        return col.model_dump(mode="json")
+    except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/evidence/collections/{collection_id}")
+def get_case_evidence_collection_endpoint(
+    case_id: int,
+    collection_id: str,
+) -> Dict[str, Any]:
+    """Get single collection details and its resolved evidence references (M7.3)."""
+    from logintel.collections.service import workbench_service
+
+    try:
+        col = workbench_service.get_collection(case_id, collection_id)
+        return col.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.patch("/cases/{case_id}/evidence/collections/{collection_id}")
+def update_case_evidence_collection_endpoint(
+    case_id: int,
+    collection_id: str,
+    req: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Update collection metadata or lifecycle status (M7.3)."""
+    from logintel.collections.service import workbench_service
+    from logintel.collections.models import UpdateCollectionRequest
+
+    try:
+        validated = UpdateCollectionRequest(**req)
+        col = workbench_service.update_collection(
+            case_id=case_id,
+            collection_id=collection_id,
+            name=validated.name,
+            description=validated.description,
+            status=validated.status,
+            tags=validated.tags,
+            actor="SecAnalyst-1",
+        )
+        return col.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/evidence/collections/{collection_id}")
+def delete_case_evidence_collection_endpoint(
+    case_id: int,
+    collection_id: str,
+) -> Dict[str, Any]:
+    """Delete an evidence collection without mutating or deleting underlying evidence (M7.3)."""
+    from logintel.collections.service import workbench_service
+
+    try:
+        workbench_service.delete_collection(case_id, collection_id, actor="SecAnalyst-1")
+        return {"success": True, "deleted_collection_id": collection_id}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/evidence/collections/{collection_id}/items")
+def add_collection_item_endpoint(
+    case_id: int,
+    collection_id: str,
+    req: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Add an evidence reference to an investigation collection (M7.3)."""
+    from logintel.collections.service import workbench_service
+    from logintel.collections.models import AddCollectionItemRequest
+
+    try:
+        validated = AddCollectionItemRequest(**req)
+        item = workbench_service.add_item_to_collection(
+            case_id=case_id,
+            collection_id=collection_id,
+            source_type=validated.source_type,
+            source_id=validated.source_id,
+            role=validated.role or "SUPPORTING",
+            epistemic_status=validated.epistemic_status,
+            citation_tag=validated.citation_tag,
+            analyst_annotation=validated.analyst_annotation,
+            actor="SecAnalyst-1",
+        )
+        return item.model_dump(mode="json")
+    except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@protected_router.patch("/cases/{case_id}/evidence/collections/{collection_id}/items/{item_id}")
+def update_collection_item_endpoint(
+    case_id: int,
+    collection_id: str,
+    item_id: str,
+    req: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Update role, annotation, or order index of a collection member (M7.3)."""
+    from logintel.collections.service import workbench_service
+    from logintel.collections.models import UpdateCollectionItemRequest
+
+    try:
+        validated = UpdateCollectionItemRequest(**req)
+        item = workbench_service.update_collection_item(
+            case_id=case_id,
+            collection_id=collection_id,
+            item_id=item_id,
+            role=validated.role,
+            analyst_annotation=validated.analyst_annotation,
+            order_index=validated.order_index,
+            actor="SecAnalyst-1",
+        )
+        return item.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/evidence/collections/{collection_id}/items/{item_id}")
+def remove_collection_item_endpoint(
+    case_id: int,
+    collection_id: str,
+    item_id: str,
+) -> Dict[str, Any]:
+    """Remove an item from a collection without modifying underlying forensic evidence (M7.3)."""
+    from logintel.collections.service import workbench_service
+
+    try:
+        removed = workbench_service.remove_item_from_collection(
+            case_id=case_id,
+            collection_id=collection_id,
+            item_id=item_id,
+            actor="SecAnalyst-1",
+        )
+        return {"success": removed, "removed_item_id": item_id}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/evidence/workbench")
+def get_evidence_workbench_endpoint(
+    case_id: int,
+    collection_id: Optional[str] = None,
+    source_type: Optional[str] = None,
+    epistemic_status: Optional[str] = None,
+    host: Optional[str] = None,
+    search_text: Optional[str] = Query(default=None, max_length=512),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> Dict[str, Any]:
+    """Retrieve integrated Evidence Workbench state with collections, items, and filters (M7.3)."""
+    from logintel.collections.service import workbench_service
+    from logintel.collections.models import WorkbenchFilterParams
+    from logintel.timeline.models import EpistemicStatus
+
+    try:
+        ep_status = EpistemicStatus(epistemic_status) if epistemic_status else None
+    except Exception:
+        ep_status = None
+
+    params = WorkbenchFilterParams(
+        collection_id=collection_id,
+        source_type=source_type,
+        epistemic_status=ep_status,
+        host=host,
+        search_text=search_text,
+        limit=limit,
+        offset=offset,
+    )
+
+    try:
+        res = workbench_service.get_workbench_data(case_id, params)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/evidence/collections/{collection_id}/export")
+def export_evidence_collection_endpoint(
+    case_id: int,
+    collection_id: str,
+    format: str = Query(default="json", pattern="^(json|csv)$"),
+) -> Response:
+    """Export evidence collection deterministically in JSON or CSV format (M7.3)."""
+    from logintel.collections.service import workbench_service
+
+    try:
+        content = workbench_service.export_collection(case_id, collection_id, format_type=format)
+        media_type = "text/csv" if format.lower() == "csv" else "application/json"
+        filename = f"case_{case_id}_{collection_id}_export.{format.lower()}"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

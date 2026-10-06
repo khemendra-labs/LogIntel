@@ -44,6 +44,7 @@ import { InvestigationCorrelationExplorer } from "./InvestigationCorrelationExpl
 import { InvestigationTemporalExplorer } from "./InvestigationTemporalExplorer";
 import { InvestigationAssessmentExplorer } from "./InvestigationAssessmentExplorer";
 import { InvestigationUnifiedTimeline } from "./InvestigationUnifiedTimeline";
+import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench";
 
 interface InvestigationIntelligencePanelProps {
   incidentId: number;
@@ -58,8 +59,8 @@ export function InvestigationIntelligencePanel({
   onSelectAlertId,
   onSelectEntityKey,
 }: InvestigationIntelligencePanelProps) {
-  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9, M5.10, M5.11 & M7.2
-  const [subTab, setSubTab] = useState<"ask" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline" | "assessment" | "m72_timeline">("ask");
+  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9, M5.10, M5.11, M7.2 & M7.3
+  const [subTab, setSubTab] = useState<"ask" | "m73_workbench" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline" | "assessment" | "m72_timeline">("ask");
 
   // Persistent Case State (M5.5 Continuity)
   const [caseData, setCaseData] = useState<InvestigationCase | null>(null);
@@ -519,6 +520,7 @@ export function InvestigationIntelligencePanel({
       <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-color, #e2e8f0)", paddingBottom: "4px" }}>
         {[
           { id: "ask", label: "Analyst Questions & AI" },
+          { id: "m73_workbench", label: "Evidence Workbench & Collections (M7.3)" },
           { id: "m72_timeline", label: "Unified Timeline & Replay (M7.2)" },
           { id: "assessment", label: "Case Assessment & Closure (M5.11)" },
           { id: "timeline", label: "Temporal Reconstruction & Timeline (M5.10)" },
@@ -1283,6 +1285,16 @@ export function InvestigationIntelligencePanel({
       {/* 11. Unified Investigation Timeline & Interactive Evidence Replay (M7.2) */}
       {subTab === "m72_timeline" && (
         <InvestigationUnifiedTimeline
+          caseId={caseData?.case_id || incidentId}
+          onSelectEventId={onSelectEventId}
+          onSelectAlertId={onSelectAlertId}
+          onSelectEntityKey={onSelectEntityKey}
+        />
+      )}
+
+      {/* 12. Logical Evidence Collections & Forensic Workbench (M7.3) */}
+      {subTab === "m73_workbench" && (
+        <InvestigationEvidenceWorkbench
           caseId={caseData?.case_id || incidentId}
           onSelectEventId={onSelectEventId}
           onSelectAlertId={onSelectAlertId}

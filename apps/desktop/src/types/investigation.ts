@@ -1656,5 +1656,101 @@ export interface TimelineQueryResponse {
   deterministic_hash: string;
 }
 
+// ----------------------------------------------------------------------------
+// M7.3 Logical Evidence Collections & Evidence Workbench
+// ----------------------------------------------------------------------------
+
+export type EvidenceCollectionStatus = "ACTIVE" | "ARCHIVED";
+
+export interface EvidenceCollectionItem {
+  item_id: string;
+  collection_id: string;
+  case_id: number;
+  source_type: string;
+  source_id: string;
+  role: string;
+  epistemic_status: EpistemicStatus;
+  collection_status: CollectionStatus;
+  citation_tag: string;
+  analyst_annotation?: string | null;
+  order_index: number;
+  added_at: string;
+  added_by: string;
+  host_id?: string | null;
+  event_type?: string | null;
+  timestamp?: string | null;
+  display_summary?: string | null;
+  provenance: Record<string, any>;
+}
+
+export interface EvidenceCollection {
+  collection_id: string;
+  case_id: number;
+  name: string;
+  description?: string | null;
+  status: EvidenceCollectionStatus;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  items_count: number;
+  items: EvidenceCollectionItem[];
+}
+
+export interface CreateCollectionRequest {
+  name: string;
+  description?: string;
+  tags?: string[];
+}
+
+export interface UpdateCollectionRequest {
+  name?: string;
+  description?: string;
+  status?: EvidenceCollectionStatus;
+  tags?: string[];
+}
+
+export interface AddCollectionItemRequest {
+  source_type: string;
+  source_id: string;
+  role?: string;
+  epistemic_status?: EpistemicStatus;
+  citation_tag?: string;
+  analyst_annotation?: string;
+}
+
+export interface UpdateCollectionItemRequest {
+  role?: string;
+  analyst_annotation?: string;
+  order_index?: number;
+}
+
+export interface CollectionFilterParams {
+  status?: EvidenceCollectionStatus;
+  search_text?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface WorkbenchFilterParams {
+  collection_id?: string;
+  source_type?: string;
+  epistemic_status?: EpistemicStatus;
+  host?: string;
+  search_text?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface EvidenceWorkbenchResponse {
+  case_id: number;
+  total_evidence_count: number;
+  collections: EvidenceCollection[];
+  items: EvidenceCollectionItem[];
+  filter_applied: Record<string, any>;
+  deterministic_hash: string;
+}
+
+
 
 

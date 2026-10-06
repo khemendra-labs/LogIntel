@@ -121,6 +121,15 @@ import type {
   TimelineReplaySession,
   TimelineContextResponse,
   TimelineQueryResponse,
+  EvidenceCollection,
+  EvidenceCollectionItem,
+  CreateCollectionRequest,
+  UpdateCollectionRequest,
+  AddCollectionItemRequest,
+  UpdateCollectionItemRequest,
+  CollectionFilterParams,
+  WorkbenchFilterParams,
+  EvidenceWorkbenchResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -2546,6 +2555,208 @@ export async function exportUnifiedTimeline(
   }
   return res.text();
 }
+
+// ----------------------------------------------------------------------------
+// M7.3 Logical Evidence Collections & Evidence Workbench API Methods
+// ----------------------------------------------------------------------------
+
+export async function fetchCaseCollections(
+  caseId: number,
+  params?: CollectionFilterParams
+): Promise<EvidenceCollection[]> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.search_text) query.set("search_text", params.search_text);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const qs = query.toString() ? `?${query.toString()}` : "";
+
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/collections${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch collections: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createCaseCollection(
+  caseId: number,
+  req: CreateCollectionRequest
+): Promise<EvidenceCollection> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/collections`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create collection: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseCollection(
+  caseId: number,
+  collectionId: string
+): Promise<EvidenceCollection> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/collections/${encodeURIComponent(collectionId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch collection: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseCollection(
+  caseId: number,
+  collectionId: string,
+  req: UpdateCollectionRequest
+): Promise<EvidenceCollection> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/collections/${encodeURIComponent(collectionId)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update collection: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function deleteCaseCollection(
+  caseId: number,
+  collectionId: string
+): Promise<{ success: boolean; deleted_collection_id: string }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/collections/${encodeURIComponent(collectionId)}`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to delete collection: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function addCaseCollectionItem(
+  caseId: number,
+  collectionId: string,
+  req: AddCollectionItemRequest
+): Promise<EvidenceCollectionItem> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/evidence/collections/${encodeURIComponent(collectionId)}/items`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(req),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to add collection item: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseCollectionItem(
+  caseId: number,
+  collectionId: string,
+  itemId: string,
+  req: UpdateCollectionItemRequest
+): Promise<EvidenceCollectionItem> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/evidence/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(req),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to update collection item: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function removeCaseCollectionItem(
+  caseId: number,
+  collectionId: string,
+  itemId: string
+): Promise<{ success: boolean; removed_item_id: string }> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/evidence/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: "DELETE",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to remove collection item: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchEvidenceWorkbench(
+  caseId: number,
+  params?: WorkbenchFilterParams
+): Promise<EvidenceWorkbenchResponse> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (params?.collection_id) query.set("collection_id", params.collection_id);
+  if (params?.source_type) query.set("source_type", params.source_type);
+  if (params?.epistemic_status) query.set("epistemic_status", params.epistemic_status);
+  if (params?.host) query.set("host", params.host);
+  if (params?.search_text) query.set("search_text", params.search_text);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const qs = query.toString() ? `?${query.toString()}` : "";
+
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/workbench${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch evidence workbench: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportCaseCollection(
+  caseId: number,
+  collectionId: string,
+  format: "json" | "csv" = "json"
+): Promise<string> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/evidence/collections/${encodeURIComponent(collectionId)}/export?format=${format}`,
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to export collection: ${res.statusText}`);
+  }
+  return res.text();
+}
+
 
 
 

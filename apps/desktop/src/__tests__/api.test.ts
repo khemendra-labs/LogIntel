@@ -2309,6 +2309,127 @@ describe("Frontend API Client and Authentication", () => {
     const exportData = await exportUnifiedTimeline(1, "json");
     expect(exportData).toContain("evt-100");
   });
+
+  it("M7.3: fetchCaseCollections, create, add items, workbench, and export", async () => {
+    const {
+      createCaseCollection,
+      fetchCaseCollections,
+      fetchCaseCollection,
+      addCaseCollectionItem,
+      updateCaseCollectionItem,
+      removeCaseCollectionItem,
+      fetchEvidenceWorkbench,
+      exportCaseCollection,
+      deleteCaseCollection,
+    } = await import("../lib/api");
+
+    const mockCol = {
+      collection_id: "col-persistence-123",
+      case_id: 1,
+      name: "Persistence Evidence",
+      description: "Cron and systemd hooks",
+      status: "ACTIVE",
+      tags: ["persistence"],
+      created_at: "2026-03-30T10:00:00Z",
+      updated_at: "2026-03-30T10:00:00Z",
+      created_by: "SecAnalyst-1",
+      items_count: 1,
+      items: [
+        {
+          item_id: "col_item-col-persistence-123-event-101",
+          collection_id: "col-persistence-123",
+          case_id: 1,
+          source_type: "event",
+          source_id: "101",
+          role: "PERSISTENCE",
+          epistemic_status: "OBSERVED",
+          collection_status: "SOURCE_AVAILABLE",
+          citation_tag: "[event:101]",
+          analyst_annotation: "Cron tab created",
+          order_index: 1,
+          added_at: "2026-03-30T10:05:00Z",
+          added_by: "SecAnalyst-1",
+          provenance: { source: "test" },
+        },
+      ],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url: any, init: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/evidence/collections/col-persistence-123/export")) {
+        return { ok: true, text: async () => JSON.stringify(mockCol) } as Response;
+      }
+      if (urlStr.includes("/evidence/collections/col-persistence-123/items/col_item-1")) {
+        return { ok: true, json: async () => ({ success: true, removed_item_id: "col_item-1" }) } as Response;
+      }
+      if (urlStr.includes("/evidence/collections/col-persistence-123/items")) {
+        return { ok: true, json: async () => mockCol.items[0] } as Response;
+      }
+      if (urlStr.includes("/evidence/collections/col-persistence-123")) {
+        if (init?.method === "DELETE") {
+          return { ok: true, json: async () => ({ success: true, deleted_collection_id: "col-persistence-123" }) } as Response;
+        }
+        return { ok: true, json: async () => mockCol } as Response;
+      }
+      if (urlStr.includes("/evidence/collections")) {
+        if (init?.method === "POST") {
+          return { ok: true, json: async () => mockCol } as Response;
+        }
+        return { ok: true, json: async () => [mockCol] } as Response;
+      }
+      if (urlStr.includes("/evidence/workbench")) {
+        return {
+          ok: true,
+          json: async () => ({
+            case_id: 1,
+            total_evidence_count: 1,
+            collections: [mockCol],
+            items: mockCol.items,
+            filter_applied: {},
+            deterministic_hash: "hashworkbench123",
+          }),
+        } as Response;
+      }
+      return { ok: false, statusText: "Not Found" } as Response;
+    });
+
+    // 1. Create collection
+    const created = await createCaseCollection(1, { name: "Persistence Evidence", tags: ["persistence"] });
+    expect(created.collection_id).toBe("col-persistence-123");
+
+    // 2. List collections
+    const cols = await fetchCaseCollections(1);
+    expect(cols.length).toBe(1);
+
+    // 3. Fetch single collection
+    const col = await fetchCaseCollection(1, "col-persistence-123");
+    expect(col.items_count).toBe(1);
+
+    // 4. Add item
+    const item = await addCaseCollectionItem(1, "col-persistence-123", {
+      source_type: "event",
+      source_id: "101",
+      role: "PERSISTENCE",
+    });
+    expect(item.source_id).toBe("101");
+
+    // 5. Workbench
+    const wb = await fetchEvidenceWorkbench(1);
+    expect(wb.total_evidence_count).toBe(1);
+    expect(wb.deterministic_hash).toBe("hashworkbench123");
+
+    // 6. Export
+    const exported = await exportCaseCollection(1, "col-persistence-123", "json");
+    expect(exported).toContain("col-persistence-123");
+
+    // 7. Remove item
+    const remItem = await removeCaseCollectionItem(1, "col-persistence-123", "col_item-1");
+    expect(remItem.success).toBe(true);
+
+    // 8. Delete collection
+    const delCol = await deleteCaseCollection(1, "col-persistence-123");
+    expect(delCol.success).toBe(true);
+  });
 });
 
 

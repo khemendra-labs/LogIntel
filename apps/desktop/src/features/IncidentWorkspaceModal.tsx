@@ -44,6 +44,7 @@ import {
 import { AttackGraphVisualizer } from "./AttackGraphVisualizer";
 import { InvestigationTimeline } from "./InvestigationTimeline";
 import { InvestigationUnifiedTimeline } from "./InvestigationUnifiedTimeline";
+import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -68,7 +69,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "ai"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "ai"
   >("graph");
 
   // Attack Path state
@@ -543,6 +544,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("notes")}
                 >
                   <NoteIcon /> Notes & Annotations ({notes.length})
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "evidence" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "evidence" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "evidence" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("evidence")}
+                >
+                  Evidence Workbench (M7.3)
                 </button>
 
                 <button
@@ -1242,6 +1256,16 @@ export function IncidentWorkspaceModal({
                 {activeTab === "ai" && (
                   <InvestigationIntelligencePanel
                     incidentId={incidentId}
+                    onSelectEventId={onSelectEventId}
+                    onSelectAlertId={onSelectAlertId}
+                    onSelectEntityKey={onSelectEntityKey}
+                  />
+                )}
+
+                {/* 9. Evidence Workbench & Collections Tab (M7.3) */}
+                {activeTab === "evidence" && (
+                  <InvestigationEvidenceWorkbench
+                    caseId={incidentId}
                     onSelectEventId={onSelectEventId}
                     onSelectAlertId={onSelectAlertId}
                     onSelectEntityKey={onSelectEntityKey}
