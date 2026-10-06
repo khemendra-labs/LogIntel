@@ -60,6 +60,11 @@ class EventType(str, Enum):
     # Security & Access Control
     SECURITY_ACCESS_DENIED = "SECURITY_ACCESS_DENIED"
     
+    # Process & Execution (M6.2)
+    PROCESS_EXECUTION = "PROCESS_EXECUTION"
+    AUDIT_SESSION_START = "AUDIT_SESSION_START"
+    AUDIT_SESSION_END = "AUDIT_SESSION_END"
+
     # General & Unclassified
     SYSTEM_GENERIC = "SYSTEM_GENERIC"
     UNKNOWN = "UNKNOWN"

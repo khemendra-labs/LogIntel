@@ -49,6 +49,9 @@ class CollectorSettings(BaseModel):
     
     kern_log_enabled: bool = True
     kern_log_path: str = "/var/log/kern.log"
+
+    audit_log_enabled: bool = True
+    audit_log_path: str = "/var/log/audit/audit.log"
     
     poll_interval_seconds: float = 1.0
     batch_size: int = 100

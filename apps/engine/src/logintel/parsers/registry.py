@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 from logintel.logging import get_logger
 from logintel.models import CanonicalEvent, RawRecord
+from logintel.parsers.audit import AuditParser
 from logintel.parsers.base import BaseParser
 from logintel.parsers.generic import GenericSyslogParser
 from logintel.parsers.kernel import KernelParser
@@ -26,6 +27,7 @@ class ParserRegistry:
 
     def _load_default_parsers(self) -> None:
         # Specialized parsers registered in order of specificity
+        self.register_parser(AuditParser())
         self.register_parser(SSHAuthParser())
         self.register_parser(SudoParser())
         self.register_parser(PAMSessionParser())

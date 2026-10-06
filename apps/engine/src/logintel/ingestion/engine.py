@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Dict, List, Optional
 from logintel.collectors import (
+    AuditLogCollector,
     AuthLogCollector,
     Collector,
     JournalCollector,
@@ -94,6 +95,16 @@ class IngestionEngine:
                 current_inode=inode,
             )
             self.repo.upsert_source(name="kern.log", source_type="file", path=settings.collectors.kern_log_path, enabled=True)
+
+        if settings.collectors.audit_log_enabled:
+            aud_state = states.get("audit.log")
+            offset = int(aud_state.get("byte_offset", 0)) if aud_state else 0
+            inode = aud_state.get("inode") if aud_state else None
+            self.collectors["audit.log"] = AuditLogCollector(
+                current_offset=offset,
+                current_inode=inode,
+            )
+            self.repo.upsert_source(name="audit.log", source_type="file", path=settings.collectors.audit_log_path, enabled=True)
 
     def ingest_records(self, records: List[RawRecord]) -> int:
         """Process, normalize, and persist a batch of raw records."""

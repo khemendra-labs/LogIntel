@@ -1,5 +1,9 @@
-"""LogIntel Incident Correlation and Attack Graph Synthesis package."""
-
+from logintel.correlation.ancestry import (
+    ProcessAncestryChain,
+    ProcessAncestryResolver,
+    ProcessNode,
+    build_process_identity,
+)
 from logintel.correlation.config import CorrelationConfig
 from logintel.correlation.engine import IncidentCorrelationEngine, correlation_engine
 from logintel.correlation.scenarios import (
@@ -15,7 +19,11 @@ __all__ = [
     "CATEGORY_TO_STAGE",
     "CorrelationConfig",
     "IncidentCorrelationEngine",
+    "ProcessAncestryChain",
+    "ProcessAncestryResolver",
+    "ProcessNode",
     "SCENARIO_SIGNATURES",
+    "build_process_identity",
     "classify_stages",
     "correlation_engine",
     "evaluate_escalation",

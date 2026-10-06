@@ -68,3 +68,42 @@ def extract_iocs(text: str) -> List[str]:
             iocs.add(valid)
 
     return sorted(list(iocs))
+
+
+# Regex patterns for deterministic credential and secret masking
+CREDENTIAL_KEY_VALUE_PATTERN = re.compile(
+    r"(?i)\b(password|passwd|secret|token|api[-_]?key|auth[-_]?token|access[-_]?token)\s*([=:])\s*([^\s'\"]+|'[^']*'|\"[^\"]*\")"
+)
+FLAG_CREDENTIAL_PATTERN = re.compile(
+    r"(?i)(--(?:password|passwd|secret|token|api[-_]?key|auth[-_]?token|access[-_]?token))\s+([^\s'\"]+|'[^']*'|\"[^\"]*\")"
+)
+BEARER_TOKEN_PATTERN = re.compile(
+    r"(?i)\b(bearer|basic)\s+([A-Za-z0-9_\-\.\+/=]{8,})"
+)
+SHORT_P_FLAG_PATTERN = re.compile(
+    r"(?i)(\s-p\s*)([a-zA-Z!@#$%^&*()_+=\[\]{};:<>?~][^\s'\"]*|'[^']*'|\"[^\"]*\")"
+)
+
+
+def mask_credentials(cmd: str) -> str:
+    """Deterministically mask credentials, passwords, and tokens in process command lines.
+
+    Preserves raw command structure while concealing secret values.
+    Avoids false positives such as port flags (-p 80, -p 443) or directory paths (mkdir -p /path).
+    """
+    if not cmd:
+        return ""
+    # Check if command is mkdir -p
+    is_mkdir = bool(re.search(r"\bmkdir\b", cmd, re.IGNORECASE))
+
+    # Mask key=value and key:value
+    res = CREDENTIAL_KEY_VALUE_PATTERN.sub(r"\1\2[MASKED]", cmd)
+    # Mask flag value
+    res = FLAG_CREDENTIAL_PATTERN.sub(r"\1 [MASKED]", res)
+    # Mask bearer / basic tokens
+    res = BEARER_TOKEN_PATTERN.sub(r"\1 [MASKED]", res)
+    # Mask -p <password> when not a directory flag or numeric port
+    if not is_mkdir:
+        res = SHORT_P_FLAG_PATTERN.sub(r"\1[MASKED]", res)
+    return res
+
