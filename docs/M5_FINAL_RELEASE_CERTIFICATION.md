@@ -204,22 +204,22 @@ Synthetic workstation benchmark evaluated across $N=30$ iterations for all 14 co
 
 | Workload / Operation | Samples | Min (ms) | Median (ms) | P95 (ms) | Max (ms) | Failures |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Investigation Graph Generation** | 30 | 1.26 | 1.45 | 2.29 | 2.39 | 0 |
-| **Multi-dimensional Correlation** | 30 | 1.93 | 2.37 | 3.01 | 3.04 | 0 |
-| **Forensic Dossier & Export** | 30 | 3.56 | 4.25 | 5.69 | 6.39 | 0 |
-| **Entity Pivot & Dossier** | 30 | 5.54 | 5.99 | 7.02 | 7.80 | 0 |
-| **Temporal Reconstruction** | 30 | 9.54 | 10.84 | 13.42 | 34.11 | 0 |
-| **Advisory AI Explanation** | 30 | 11.35 | 11.73 | 13.75 | 30.27 | 0 |
-| **Case Handoff Package Generation** | 30 | 13.86 | 18.07 | 25.98 | 44.30 | 0 |
-| **Key Findings Synthesis** | 30 | 18.05 | 18.83 | 20.71 | 46.11 | 0 |
-| **Case Assessment Generation** | 30 | 17.83 | 19.47 | 20.74 | 21.37 | 0 |
-| **Evidence Gaps Prioritization** | 30 | 18.87 | 19.77 | 21.75 | 51.52 | 0 |
-| **Competing Hypotheses Assessment** | 30 | 17.35 | 20.22 | 35.84 | 48.43 | 0 |
-| **Investigation Questions Generation** | 30 | 19.43 | 20.50 | 26.15 | 52.14 | 0 |
-| **15-Section Briefing Generation** | 30 | 18.20 | 20.57 | 22.69 | 23.46 | 0 |
-| **Closure Readiness Evaluation** | 30 | 19.69 | 20.59 | 22.19 | 46.93 | 0 |
+| **Investigation Graph Generation** | 30 | 1.41 | 1.48 | 1.94 | 1.96 | 0 |
+| **Multi-dimensional Correlation** | 30 | 2.05 | 2.26 | 2.48 | 2.51 | 0 |
+| **Entity Pivot & Dossier** | 30 | 5.55 | 5.94 | 7.76 | 7.83 | 0 |
+| **Forensic Dossier & Export** | 30 | 4.95 | 5.99 | 7.70 | 7.72 | 0 |
+| **Temporal Reconstruction** | 30 | 9.65 | 10.10 | 10.90 | 27.74 | 0 |
+| **Case Handoff Package Generation** | 30 | 11.87 | 12.77 | 16.17 | 31.83 | 0 |
+| **Competing Hypotheses Assessment** | 30 | 12.34 | 12.78 | 14.57 | 32.52 | 0 |
+| **15-Section Briefing Generation** | 30 | 12.10 | 12.82 | 14.00 | 14.22 | 0 |
+| **Closure Readiness Evaluation** | 30 | 12.24 | 12.90 | 14.55 | 30.85 | 0 |
+| **Key Findings Synthesis** | 30 | 11.68 | 12.99 | 13.90 | 29.70 | 0 |
+| **Evidence Gaps Prioritization** | 30 | 12.19 | 13.14 | 20.36 | 31.32 | 0 |
+| **Investigation Questions Generation** | 30 | 11.84 | 13.48 | 15.60 | 33.01 | 0 |
+| **Case Assessment Generation** | 30 | 12.80 | 14.13 | 15.61 | 15.72 | 0 |
+| **Advisory AI Pipeline / Deterministic Advisory** | 30 | 14.08 | 19.15 | 23.76 | 45.71 | 0 |
 
-**Performance Verdict:** All operations execute within sub-55ms P95 latency on a synthetic workstation configuration with zero failures.
+**Performance Verdict:** Across the $N=30$ synthetic workstation workloads, measured P95 latency remained $\le 23.76$ ms and maximum observed latency remained $\le 45.71$ ms. *Synthetic workstation benchmark only. Does not extrapolate to enterprise-scale millions of events.*
 
 ---
 
@@ -241,9 +241,11 @@ The following limitations are factually documented and inherent to the current a
    - `test_m55_cor_002_authoritative_test_census_reconciliation`, `test_m55_cor_004_m53_count_reconciliation`, `test_m55_cor_005_canonical_row_hash_preservation`: Historical census assertions tied to early milestone test counts and historical 141,069-event dataset hashes that are not present in this workspace copy.
    - `test_m53_sec_013_malformed_structured_query`: Asserts HTTP 400 on malformed query route where the route returns HTTP 404 for unmapped endpoint.
    - `test_api_workspace_endpoints`: Asserts HTTP 200 on an experimental workspace route superseded by M5.4 case endpoints.
-2. **Local AI Engine Dependency:** Live AI advisory explanations require a locally running Ollama instance at `http://127.0.0.1:11434`. When unavailable, the engine falls back deterministically to rule-based synthesis without network leakage.
-3. **Synthetic Workstation Performance Scope:** Benchmark metrics reflect synthetic workstation testing ($N=30$) and do not claim enterprise-scale high-throughput ingestion.
-4. **Interactive UI Verification Scope:** Headless Vitest and Vite production compilation are fully verified. Physical interactive browser testing was not performed in this headless terminal environment.
+2. **Authoritative Historical Dataset Unavailable:** The historical 141,069-event dataset file is unavailable in this workspace; historical content hash reconciliation could not be executed.
+3. **Local AI Engine Dependency:** Live AI advisory explanations require a locally running Ollama instance at `http://127.0.0.1:11434`. When unavailable, the engine falls back deterministically to rule-based synthesis without network leakage.
+4. **Synthetic Workstation Performance Scope:** Benchmark metrics reflect synthetic workstation testing ($N=30$) and do not claim enterprise-scale high-throughput ingestion.
+5. **Interactive UI Verification Scope:** Headless Vitest and Vite production compilation are fully verified. Physical interactive browser testing was not performed in this headless terminal environment.
+6. **Clean-Machine Package Installation Scope:** Debian package artifacts and `postrm` preservation scripts are verified; live system installation requires external root privileges.
 
 ---
 

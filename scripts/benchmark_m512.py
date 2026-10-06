@@ -296,9 +296,9 @@ def main():
             lambda: service.get_investigation_dossier(case_id), iterations=30
         )
 
-        # 14. Advisory AI Explanation
-        print("  [14/14] Advisory AI Explanation...")
-        benchmarks["Advisory AI Explanation"] = measure_op(
+        # 14. Advisory AI Pipeline / Deterministic Advisory
+        print("  [14/14] Advisory AI Pipeline / Deterministic Advisory...")
+        benchmarks["Advisory AI Pipeline / Deterministic Advisory"] = measure_op(
             lambda: service.explain_case_assessment(
                 case_id=case_id,
                 query="Explain lateral movement between host-bench-0 and host-bench-1",
