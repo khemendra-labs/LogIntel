@@ -755,6 +755,40 @@ def get_filesystem_transitions(
     }
 
 
+@protected_router.get("/investigations/systemd/units")
+def get_systemd_units(
+    unit_type: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, Any]:
+    """Retrieve active and loaded systemd units and their operational lifecycle states."""
+    from logintel.systemd import SystemdUnitTracker
+    tracker = SystemdUnitTracker()
+    units = tracker.list_units(unit_type=unit_type)
+
+    if state:
+        st_lower = state.lower()
+        units = [u for u in units if u.active_state.value == st_lower]
+
+    paginated = units[:limit]
+    return {
+        "total": len(units),
+        "limit": limit,
+        "items": [u.model_dump(mode="json") for u in paginated],
+    }
+
+
+@protected_router.get("/investigations/systemd/units/{unit_name}")
+def get_systemd_unit_detail(unit_name: str) -> Dict[str, Any]:
+    """Retrieve detailed properties and process bindings for a specific systemd unit."""
+    from logintel.systemd import SystemdUnitTracker
+    tracker = SystemdUnitTracker()
+    unit = tracker.get_unit_details(unit_name=unit_name)
+    if not unit:
+        raise HTTPException(status_code=404, detail=f"Systemd unit '{unit_name}' could not be resolved")
+    return unit.model_dump(mode="json")
+
+
 @protected_router.get("/investigations/entities/{entity_key}/pivot")
 def inspect_entity_pivot(entity_key: str, incident_id: Optional[int] = None) -> Dict[str, Any]:
     """Investigate a specific security entity (IP, Host, User, Process) across telemetry and incidents."""

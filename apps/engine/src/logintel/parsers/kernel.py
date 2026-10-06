@@ -107,6 +107,47 @@ class KernelParser(BaseParser):
                 outcome = Outcome.FAILURE
                 summary = f"Application crash: segfault in '{seg_proc}' (PID: {seg_pid}) at memory address {addr}"
 
+        # Kernel Module Loading / Unloading & Security Anomalies
+        if not summary:
+            if "entered promiscuous mode" in body:
+                m_promisc = re.search(r"device\s+([^\s]+)\s+entered promiscuous mode", body)
+                dev = m_promisc.group(1) if m_promisc else "network"
+                event_type = EventType.KERNEL_SECURITY_ANOMALY
+                severity = Severity.ALERT
+                outcome = Outcome.SUCCESS
+                summary = f"Network interface '{dev}' entered promiscuous mode (possible packet sniffing)"
+            elif "left promiscuous mode" in body:
+                m_promisc = re.search(r"device\s+([^\s]+)\s+left promiscuous mode", body)
+                dev = m_promisc.group(1) if m_promisc else "network"
+                event_type = EventType.KERNEL_SECURITY_ANOMALY
+                severity = Severity.NOTICE
+                outcome = Outcome.SUCCESS
+                summary = f"Network interface '{dev}' left promiscuous mode"
+            elif "module verification failed" in body:
+                event_type = EventType.KERNEL_SECURITY_ANOMALY
+                severity = Severity.ALERT
+                outcome = Outcome.FAILURE
+                summary = "Kernel security anomaly: module signature verification failed (untrusted kernel module)"
+            elif "out-of-tree module taints kernel" in body or "loading out-of-tree module" in body:
+                event_type = EventType.KERNEL_MODULE_LOAD
+                severity = Severity.ALERT
+                outcome = Outcome.SUCCESS
+                summary = "Kernel module loaded: out-of-tree module taints kernel"
+            elif "unloading module" in body or "unloaded module" in body:
+                m_mod = re.search(r"(?:unloading|unloaded)\s+module\s+([^\s,]+)", body, re.IGNORECASE)
+                mod_name = m_mod.group(1) if m_mod else "unknown"
+                event_type = EventType.KERNEL_MODULE_UNLOAD
+                severity = Severity.NOTICE
+                outcome = Outcome.SUCCESS
+                summary = f"Kernel module unloaded: '{mod_name}'"
+            elif "loading module" in body or "loaded module" in body:
+                m_mod = re.search(r"(?:loading|loaded)\s+module\s+([^\s,]+)", body, re.IGNORECASE)
+                mod_name = m_mod.group(1) if m_mod else "unknown"
+                event_type = EventType.KERNEL_MODULE_LOAD
+                severity = Severity.NOTICE
+                outcome = Outcome.SUCCESS
+                summary = f"Kernel module loaded: '{mod_name}'"
+
         # Boot / Kernel start
         if not summary:
             if "Linux version" in body:

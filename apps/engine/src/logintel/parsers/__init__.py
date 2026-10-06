@@ -6,6 +6,7 @@ from logintel.parsers.pam import PAMSessionParser
 from logintel.parsers.registry import ParserRegistry, parser_registry
 from logintel.parsers.ssh import SSHAuthParser
 from logintel.parsers.sudo import SudoParser
+from logintel.parsers.systemd import SystemdParser
 from logintel.parsers.user_mgmt import UserManagementParser
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "ParserRegistry",
     "SSHAuthParser",
     "SudoParser",
+    "SystemdParser",
     "UserManagementParser",
     "parser_registry",
 ]

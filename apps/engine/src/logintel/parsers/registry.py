@@ -12,6 +12,7 @@ from logintel.parsers.kernel import KernelParser
 from logintel.parsers.pam import PAMSessionParser
 from logintel.parsers.ssh import SSHAuthParser
 from logintel.parsers.sudo import SudoParser
+from logintel.parsers.systemd import SystemdParser
 from logintel.parsers.user_mgmt import UserManagementParser
 
 logger = get_logger("parsers.registry")
@@ -33,6 +34,7 @@ class ParserRegistry:
         self.register_parser(PAMSessionParser())
         self.register_parser(UserManagementParser())
         self.register_parser(KernelParser())
+        self.register_parser(SystemdParser())
 
     def register_parser(self, parser: BaseParser) -> None:
         """Register a new parser."""
