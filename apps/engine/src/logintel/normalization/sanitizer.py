@@ -83,6 +83,9 @@ BEARER_TOKEN_PATTERN = re.compile(
 SHORT_P_FLAG_PATTERN = re.compile(
     r"(?i)(\s-p\s*)([a-zA-Z!@#$%^&*()_+=\[\]{};:<>?~][^\s'\"]*|'[^']*'|\"[^\"]*\")"
 )
+CURL_U_FLAG_PATTERN = re.compile(
+    r"(?i)(\s-u\s*)([^\s:]+):([^\s'\"]+|'[^']*'|\"[^\"]*\")"
+)
 
 
 def mask_credentials(cmd: str) -> str:
@@ -102,6 +105,8 @@ def mask_credentials(cmd: str) -> str:
     res = FLAG_CREDENTIAL_PATTERN.sub(r"\1 [MASKED]", res)
     # Mask bearer / basic tokens
     res = BEARER_TOKEN_PATTERN.sub(r"\1 [MASKED]", res)
+    # Mask -u user:pass
+    res = CURL_U_FLAG_PATTERN.sub(r"\1\2:[MASKED]", res)
     # Mask -p <password> when not a directory flag or numeric port
     if not is_mkdir:
         res = SHORT_P_FLAG_PATTERN.sub(r"\1[MASKED]", res)

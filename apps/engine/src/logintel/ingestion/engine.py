@@ -13,6 +13,7 @@ from logintel.collectors import (
     KernLogCollector,
     SyslogCollector,
 )
+from logintel.network import SocketStateCollector
 from logintel.config import settings
 from logintel.logging import get_logger
 from logintel.models import CanonicalEvent, RawRecord
@@ -105,6 +106,13 @@ class IngestionEngine:
                 current_inode=inode,
             )
             self.repo.upsert_source(name="audit.log", source_type="file", path=settings.collectors.audit_log_path, enabled=True)
+
+        if settings.collectors.socket_collector_enabled:
+            self.collectors["sockets"] = SocketStateCollector(
+                proc_net_path=settings.collectors.proc_net_path,
+                proc_path=settings.collectors.proc_path,
+            )
+            self.repo.upsert_source(name="sockets", source_type="procfs", path="/proc/net/tcp", enabled=True)
 
     def ingest_records(self, records: List[RawRecord]) -> int:
         """Process, normalize, and persist a batch of raw records."""

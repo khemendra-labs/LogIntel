@@ -661,6 +661,49 @@ def get_session_details(session_id: str, host: Optional[str] = None) -> Dict[str
     return session_data
 
 
+@protected_router.get("/investigations/network/sockets")
+def get_network_sockets(
+    state: Optional[str] = Query(default=None),
+    protocol: Optional[str] = Query(default=None),
+    outbound_only: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, Any]:
+    """Retrieve active and listening network sockets across host procfs."""
+    from logintel.network import SocketStateCollector
+    collector = SocketStateCollector()
+    snapshot = collector.take_snapshot()
+    entries = snapshot.entries
+
+    if state:
+        st_upper = state.upper()
+        entries = [e for e in entries if e.state.value == st_upper]
+
+    if protocol:
+        p_lower = protocol.lower()
+        entries = [e for e in entries if e.protocol.value == p_lower]
+
+    if outbound_only:
+        entries = [e for e in entries if e.is_outbound]
+
+    paginated = entries[:limit]
+    return {
+        "host": snapshot.host,
+        "timestamp": snapshot.timestamp.isoformat(),
+        "total": len(entries),
+        "limit": limit,
+        "items": [e.model_dump(mode="json") for e in paginated],
+    }
+
+
+@protected_router.get("/investigations/network/connections")
+def get_network_connections(
+    protocol: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, Any]:
+    """Retrieve established network connections (inbound and outbound)."""
+    return get_network_sockets(state="ESTABLISHED", protocol=protocol, outbound_only=False, limit=limit)
+
+
 @protected_router.get("/investigations/entities/{entity_key}/pivot")
 def inspect_entity_pivot(entity_key: str, incident_id: Optional[int] = None) -> Dict[str, Any]:
     """Investigate a specific security entity (IP, Host, User, Process) across telemetry and incidents."""

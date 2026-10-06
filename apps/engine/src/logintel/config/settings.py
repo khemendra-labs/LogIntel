@@ -52,6 +52,10 @@ class CollectorSettings(BaseModel):
 
     audit_log_enabled: bool = True
     audit_log_path: str = "/var/log/audit/audit.log"
+
+    socket_collector_enabled: bool = True
+    proc_net_path: str = "/proc/net"
+    proc_path: str = "/proc"
     
     poll_interval_seconds: float = 1.0
     batch_size: int = 100
