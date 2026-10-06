@@ -14,15 +14,32 @@ from logintel.correlation.scenarios import (
     evaluate_escalation,
 )
 
+from logintel.identity import (
+    AuditIdentity,
+    IdentityContinuityChain,
+    PrivilegeTransition,
+    PrivilegeTransitionType,
+    SessionContinuityResolver,
+    SessionRecord,
+    SessionState,
+)
+
 __all__ = [
     "AttackStage",
+    "AuditIdentity",
     "CATEGORY_TO_STAGE",
     "CorrelationConfig",
+    "IdentityContinuityChain",
     "IncidentCorrelationEngine",
+    "PrivilegeTransition",
+    "PrivilegeTransitionType",
     "ProcessAncestryChain",
     "ProcessAncestryResolver",
     "ProcessNode",
     "SCENARIO_SIGNATURES",
+    "SessionContinuityResolver",
+    "SessionRecord",
+    "SessionState",
     "build_process_identity",
     "classify_stages",
     "correlation_engine",

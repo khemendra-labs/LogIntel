@@ -627,10 +627,38 @@ def delete_investigation_note(
 def inspect_event_forensics(event_id: str) -> Dict[str, Any]:
     """Deep forensic inspection of a canonical event with provenance, detections, and incident lineage."""
     from logintel.storage.investigation_repo import investigation_repo
+    from logintel.identity.service import identity_service
     forensics = investigation_repo.get_event_forensics(event_id)
     if not forensics:
         raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
-    return forensics.model_dump(mode="json")
+    data = forensics.model_dump(mode="json")
+    try:
+        chain = identity_service.get_identity_chain_for_event(event_id)
+        if chain:
+            data["identity_chain"] = chain.model_dump(mode="json")
+    except Exception:
+        pass
+    return data
+
+
+@protected_router.get("/investigations/events/{event_id}/identity-chain")
+def get_event_identity_chain(event_id: str) -> Dict[str, Any]:
+    """Resolve end-to-end identity provenance chain and session continuity for a canonical event."""
+    from logintel.identity.service import identity_service
+    chain = identity_service.get_identity_chain_for_event(event_id)
+    if not chain:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+    return chain.model_dump(mode="json")
+
+
+@protected_router.get("/investigations/sessions/{session_id}")
+def get_session_details(session_id: str, host: Optional[str] = None) -> Dict[str, Any]:
+    """Retrieve forensic session lifecycle, process executions, and privilege transitions."""
+    from logintel.identity.service import identity_service
+    session_data = identity_service.get_session_details(session_id=session_id, host=host)
+    if not session_data:
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+    return session_data
 
 
 @protected_router.get("/investigations/entities/{entity_key}/pivot")

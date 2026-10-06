@@ -123,6 +123,19 @@ class SSHAuthParser(BaseParser):
         if src_ip and src_ip not in iocs:
             iocs.append(src_ip)
 
+        meta: Dict[str, Any] = {
+            "protocol": "ssh2",
+            "service": "ssh",
+        }
+        if "publickey" in body:
+            meta["auth_method"] = "publickey"
+        elif "password" in body:
+            meta["auth_method"] = "password"
+        if src_ip:
+            meta["remote_ip"] = src_ip
+        if src_port:
+            meta["remote_port"] = src_port
+
         return CanonicalEvent(
             timestamp=final_ts,
             host=final_host,
@@ -149,5 +162,5 @@ class SSHAuthParser(BaseParser):
             parser=self.name,
             source_file=record.source_file,
             source_offset=record.source_offset,
-            metadata={"protocol": "ssh2"},
+            metadata=meta,
         )

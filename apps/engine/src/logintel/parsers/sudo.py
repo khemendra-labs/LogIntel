@@ -14,7 +14,7 @@ from logintel.models import (
     RawRecord,
     Severity,
 )
-from logintel.normalization.sanitizer import extract_iocs, sanitize_message
+from logintel.normalization.sanitizer import extract_iocs, mask_credentials, sanitize_message
 from logintel.normalization.timestamps import parse_syslog_header
 from logintel.parsers.base import BaseParser
 
@@ -81,17 +81,18 @@ class SudoParser(BaseParser):
             pwd = m_exec.group(3).strip()
             target_user = m_exec.group(4).strip()
             command = m_exec.group(5).strip()
+            masked_command = mask_credentials(command)
             
             if "password is required" in body:
                 event_type = EventType.PRIVILEGE_ELEVATION_ATTEMPT
                 severity = Severity.WARNING
                 outcome = Outcome.ATTEMPT
-                summary = f"Sudo authentication required for '{user}' to run '{command}' as '{target_user}'"
+                summary = f"Sudo authentication required for '{user}' to run '{masked_command}' as '{target_user}'"
             elif outcome != Outcome.FAILURE:
                 event_type = EventType.SUDO_COMMAND
                 severity = Severity.NOTICE
                 outcome = Outcome.SUCCESS
-                summary = f"User '{user}' executed privileged command '{command}' as '{target_user}'"
+                summary = f"User '{user}' executed privileged command '{masked_command}' as '{target_user}'"
 
         if not summary:
             # Fallback for other sudo events (e.g. pam_unix session or auth)
@@ -105,9 +106,14 @@ class SudoParser(BaseParser):
                 severity = Severity.INFORMATIONAL
                 outcome = Outcome.SUCCESS
 
-        metadata = {}
+        metadata = {
+            "transition_type": "SUDO",
+            "is_privilege_transition": True,
+        }
         if target_user:
             metadata["target_user"] = target_user
+        if user:
+            metadata["source_user"] = user
         if pwd:
             metadata["working_directory"] = pwd
 
@@ -125,7 +131,7 @@ class SudoParser(BaseParser):
                 name=final_proc,
                 pid=final_pid,
                 executable="/usr/bin/sudo",
-                command_line=command,
+                command_line=mask_credentials(command) if command else None,
             ),
             action="sudo_command",
             outcome=outcome,

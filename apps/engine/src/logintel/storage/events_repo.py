@@ -74,10 +74,20 @@ class EventsRepository:
         outcome: Optional[str] = None,
         search: Optional[str] = None,
         sort_order: str = "DESC",
+        host: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Tuple[List[CanonicalEvent], int]:
         """Query canonical events with pagination, parameter filtering, and total count."""
         where_clauses: List[str] = []
         params: List[Any] = []
+
+        if host:
+            where_clauses.append("host = ?")
+            params.append(host)
+
+        if session_id:
+            where_clauses.append("session_id = ?")
+            params.append(session_id)
 
         if start_time:
             where_clauses.append("timestamp >= ?")

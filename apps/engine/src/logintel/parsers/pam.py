@@ -100,8 +100,18 @@ class PAMSessionParser(BaseParser):
 
                 summary = f"PAM authentication failure for user '{user or 'unknown'}' (service: {service})"
 
-        if not summary:
-            summary = f"PAM event: {body[:100]}"
+        metadata: Dict[str, Any] = {"service": service}
+        if m_open:
+            by_uid_str = m_open.group(5)
+            if by_user:
+                metadata["by_user"] = by_user
+            if by_uid_str:
+                metadata["by_uid"] = int(by_uid_str)
+            if by_user and by_user != user:
+                metadata["is_privilege_transition"] = True
+                metadata["transition_type"] = "SU" if service == "su" else ("SUDO" if service == "sudo" else "PAM_SWITCH")
+                metadata["source_user"] = by_user
+                metadata["target_user"] = user
 
         return CanonicalEvent(
             timestamp=final_ts,
@@ -128,5 +138,5 @@ class PAMSessionParser(BaseParser):
             parser=self.name,
             source_file=record.source_file,
             source_offset=record.source_offset,
-            metadata={"service": service},
+            metadata=metadata,
         )

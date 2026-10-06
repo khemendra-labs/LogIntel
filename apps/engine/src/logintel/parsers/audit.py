@@ -245,16 +245,28 @@ class AuditParser(BaseParser):
         action_word = "opened" if is_start else "closed"
         summary = f"Audit PAM session {action_word} for user '{acct}' (PID: {pid or 'unknown'}, AUID: {auid or 'unset'}, session: {ses or 'unset'})"
 
+        is_elevated_session = bool(
+            acct == "root"
+            and auid is not None
+            and auid not in ("0", "4294967295", "-1", "unset")
+        )
+
         metadata: Dict[str, Any] = {
             "audit_sequence": seq_id,
             "record_types": all_types,
             "auid": auid,
+            "ses": ses,
             "audit_session": ses,
             "op": session_kvs.get("op"),
             "grantors": session_kvs.get("grantors"),
             "terminal": terminal,
             "exe": exe,
+            "is_elevated_session": is_elevated_session,
         }
+        if is_elevated_session:
+            metadata["is_privilege_transition"] = True
+            metadata["transition_type"] = "PAM_ELEVATION"
+            metadata["target_user"] = "root"
 
         return CanonicalEvent(
             timestamp=timestamp,
@@ -402,19 +414,44 @@ class AuditParser(BaseParser):
             f"executed by '{username}' (AUID: {auid or 'unset'}): {masked_cmdline}"
         )
 
+        # Check for privilege transition in execution
+        is_elevated_exec = bool(
+            (euid == 0 and uid is not None and uid != 0)
+            or (euid is not None and uid is not None and euid != uid)
+        )
+        transition_type: Optional[str] = None
+        if is_elevated_exec:
+            if proc_name == "sudo" or "sudo" in (exe or ""):
+                transition_type = "SUDO"
+            elif proc_name == "su" or "su" in (exe or ""):
+                transition_type = "SU"
+            elif proc_name == "pkexec" or "pkexec" in (exe or ""):
+                transition_type = "POLKIT"
+            else:
+                transition_type = "SETUID"
+
         metadata: Dict[str, Any] = {
             "audit_sequence": seq_id,
             "record_types": all_types,
             "cmdline_source": cmd_source,
             "auid": auid,
+            "uid": uid,
             "euid": euid,
+            "suid": syscall_kvs.get("suid"),
+            "fsuid": syscall_kvs.get("fsuid"),
+            "ses": ses,
             "session_id": ses,
             "syscall": syscall_kvs.get("syscall"),
             "arch": syscall_kvs.get("arch"),
             "exit_code": exit_code,
             "execve_args": masked_execve_args,
             "proctitle": masked_proctitle,
+            "is_elevated": is_elevated_exec,
+            "transition_type": transition_type,
         }
+        if is_elevated_exec:
+            metadata["is_privilege_transition"] = True
+            metadata["target_user"] = "root" if euid == 0 else str(euid)
 
         # Check for discrepancy between EXECVE and PROCTITLE
         if execve_cmdline and proctitle_cmdline and execve_cmdline != proctitle_cmdline:
