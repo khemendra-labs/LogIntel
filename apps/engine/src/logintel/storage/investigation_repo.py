@@ -1094,6 +1094,83 @@ class InvestigationRepository:
 
         return "\n".join(md)
 
+    def get_unified_host_graph(self, incident_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve unified Linux host graph contextualized for an incident and its primary host."""
+        from logintel.correlation.host_graph import host_graph_builder
+        inc = self.incidents_repo.get_incident(incident_id)
+        if not inc:
+            return None
+
+        # Gather evidence event IDs across incident alerts
+        with self.db.connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT DISTINCT de.event_id
+                FROM incident_alerts ia
+                INNER JOIN detections d ON ia.alert_id = d.alert_id
+                INNER JOIN detection_evidence de ON d.id = de.detection_id
+                WHERE ia.incident_id = ?
+                """,
+                (incident_id,),
+            )
+            event_ids = [r["event_id"] for r in cur.fetchall() if r["event_id"]]
+
+        events_data: List[Dict[str, Any]] = []
+        if event_ids:
+            placeholders = ",".join("?" for _ in event_ids)
+            with self.db.connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    f"""
+                    SELECT id, host, username, src_ip, dst_ip, process_name, event_type, outcome, summary, metadata_json, timestamp
+                    FROM events
+                    WHERE id IN ({placeholders})
+                    """,
+                    event_ids,
+                )
+                for r in cur.fetchall():
+                    row_dict = dict(r)
+                    if row_dict.get("metadata_json"):
+                        try:
+                            import json
+                            row_dict["metadata"] = json.loads(row_dict["metadata_json"])
+                        except Exception:
+                            row_dict["metadata"] = {}
+                    events_data.append(row_dict)
+
+        host_graph = host_graph_builder.build_from_events(host=inc.primary_host, events=events_data)
+        return host_graph.model_dump(mode="json")
+
+    def get_host_telemetry_graph(self, host: str, limit: int = 200) -> Dict[str, Any]:
+        """Generate unified Linux host graph from historical events for a specified host."""
+        from logintel.correlation.host_graph import host_graph_builder
+        events_data: List[Dict[str, Any]] = []
+        with self.db.connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, host, username, src_ip, dst_ip, process_name, event_type, outcome, summary, metadata_json, timestamp
+                FROM events
+                WHERE LOWER(host) = LOWER(?)
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (host, limit),
+            )
+            for r in cur.fetchall():
+                row_dict = dict(r)
+                if row_dict.get("metadata_json"):
+                    try:
+                        import json
+                        row_dict["metadata"] = json.loads(row_dict["metadata_json"])
+                    except Exception:
+                        row_dict["metadata"] = {}
+                events_data.append(row_dict)
+
+        host_graph = host_graph_builder.build_from_events(host=host, events=events_data)
+        return host_graph.model_dump(mode="json")
+
 
 # Global singleton investigation repository
 investigation_repo = InvestigationRepository()

@@ -460,6 +460,27 @@ export async function fetchAttackPath(
   return res.json();
 }
 
+export async function fetchUnifiedHostGraph(
+  incidentId: number
+): Promise<any> {
+  const res = await apiFetch(`/investigations/${incidentId}/host-graph`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch unified host graph for incident #${incidentId}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchHostTelemetryGraph(
+  host: string,
+  limit: number = 200
+): Promise<any> {
+  const res = await apiFetch(`/investigations/hosts/${encodeURIComponent(host)}/graph?limit=${limit}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch host telemetry graph for host ${host}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 export async function fetchMitreMappings(
   incidentId: number
 ): Promise<{ incident_id: number; items: MitreMapping[]; total: number }> {

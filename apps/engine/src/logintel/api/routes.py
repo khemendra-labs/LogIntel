@@ -567,6 +567,23 @@ def get_process_namespace_profile(pid: int) -> Dict[str, Any]:
     return profile.model_dump(mode="json")
 
 
+@protected_router.get("/investigations/hosts/{host}/graph")
+def get_host_telemetry_graph(host: str, limit: int = Query(default=200, ge=1, le=1000)) -> Dict[str, Any]:
+    """Retrieve unified Linux host graph from telemetry events for a specified host."""
+    from logintel.storage.investigation_repo import investigation_repo
+    return investigation_repo.get_host_telemetry_graph(host=host, limit=limit)
+
+
+@protected_router.get("/investigations/{incident_id}/host-graph")
+def get_incident_host_graph(incident_id: int) -> Dict[str, Any]:
+    """Retrieve unified Linux host graph contextualized for an incident's primary host and corroborated evidence."""
+    from logintel.storage.investigation_repo import investigation_repo
+    graph = investigation_repo.get_unified_host_graph(incident_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found or has no host graph")
+    return graph
+
+
 @protected_router.get("/investigations/{incident_id}")
 def get_investigation_dossier(incident_id: int) -> Dict[str, Any]:
     """Retrieve full investigation workspace dossier containing incident, attack path, MITRE, notes, and timeline."""
