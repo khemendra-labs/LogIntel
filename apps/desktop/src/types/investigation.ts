@@ -1559,4 +1559,102 @@ export interface AssessmentExplanationResponse {
   generated_at: string;
 }
 
+// ----------------------------------------------------------------------------
+// M7.2 Unified Investigation Timeline & Interactive Evidence Replay
+// ----------------------------------------------------------------------------
+
+export type TimestampPrecision = "SECOND" | "MILLISECOND" | "UNKNOWN";
+
+export type CollectionStatus =
+  | "SOURCE_AVAILABLE"
+  | "SOURCE_UNAVAILABLE"
+  | "RULE_NOT_CONFIGURED"
+  | "NO_EVENT_OBSERVED"
+  | "TELEMETRY_DROPPED"
+  | "UNKNOWN";
+
+export type TimelineSourceLayer =
+  | "EVENT"
+  | "ALERT"
+  | "EVIDENCE"
+  | "HOST_TELEMETRY"
+  | "INCIDENT"
+  | "AUDIT";
+
+export interface InvestigationTimelineItem {
+  timeline_id: string;
+  case_id: number;
+  timestamp: string;
+  timestamp_precision: TimestampPrecision;
+  host_id: string;
+  event_type: string;
+  source_layer: TimelineSourceLayer;
+  source_id: string;
+  entity_refs: string[];
+  relationship_refs: string[];
+  detection_refs: string[];
+  incident_refs: number[];
+  evidence_refs: string[];
+  epistemic_status: EpistemicStatus;
+  collection_status: CollectionStatus;
+  display_summary: string;
+  provenance: Record<string, any>;
+  is_bookmarked?: boolean;
+}
+
+export interface TimelineFilterParams {
+  start_time?: string;
+  end_time?: string;
+  host?: string;
+  event_type?: string;
+  source_layer?: TimelineSourceLayer;
+  entity?: string;
+  epistemic_status?: EpistemicStatus;
+  collection_status?: CollectionStatus;
+  search_text?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TimelineReplayFrame {
+  frame_index: number;
+  timestamp: string;
+  item: InvestigationTimelineItem;
+  active_entities: string[];
+  active_hosts: string[];
+  epistemic_status: EpistemicStatus;
+}
+
+export interface TimelineReplaySession {
+  case_id: number;
+  total_frames: number;
+  frames: TimelineReplayFrame[];
+  session_fingerprint: string;
+  deterministic_order: string[];
+}
+
+export interface TimelineContextResponse {
+  timeline_id: string;
+  case_id: number;
+  item: InvestigationTimelineItem;
+  linked_entities: Array<Record<string, any>>;
+  linked_evidence: Array<Record<string, any>>;
+  linked_alerts: Array<Record<string, any>>;
+  traceable_path: Array<{
+    level: string;
+    id: string;
+    type: string;
+    epistemic_status: string;
+    details?: string;
+  }>;
+}
+
+export interface TimelineQueryResponse {
+  total: number;
+  items: InvestigationTimelineItem[];
+  filter_applied: Record<string, any>;
+  deterministic_hash: string;
+}
+
+
 

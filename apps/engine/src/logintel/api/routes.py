@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from logintel.api.auth import verify_engine_token
 from logintel.config import settings
@@ -2870,6 +2870,228 @@ def explain_case_assessment_endpoint(
             query=req.query,
         )
         return explanation.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class BookmarkRequest(BaseModel):
+    analyst_note: Optional[str] = None
+    actor: str = "SecAnalyst-1"
+
+
+@protected_router.get("/cases/{case_id}/timeline/unified")
+def get_unified_case_timeline_endpoint(
+    case_id: int,
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    host: Optional[str] = None,
+    layer: Optional[str] = None,
+    event_type: Optional[str] = None,
+    source: Optional[str] = None,
+    entity: Optional[str] = None,
+    epistemic_status: Optional[str] = None,
+    collection_status: Optional[str] = None,
+    bookmarked_only: bool = False,
+    search: Optional[str] = Query(default=None, max_length=200),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> Dict[str, Any]:
+    """Retrieve unified, multi-layer investigation timeline projection with deterministic ordering (M7.2)."""
+    from logintel.timeline.service import timeline_service
+    from logintel.timeline.models import TimelineFilterParams, EpistemicStatus, CollectionStatus
+
+    try:
+        ep_status = EpistemicStatus(epistemic_status) if epistemic_status else None
+    except Exception:
+        ep_status = None
+
+    try:
+        col_status = CollectionStatus(collection_status) if collection_status else None
+    except Exception:
+        col_status = None
+
+    params = TimelineFilterParams(
+        time_start=time_start,
+        time_end=time_end,
+        host=host,
+        layer=layer,
+        event_type=event_type,
+        source=source,
+        entity=entity,
+        epistemic_status=ep_status,
+        collection_status=col_status,
+        bookmarked_only=bookmarked_only,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+
+    try:
+        res = timeline_service.query_timeline(case_id, params)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/replay")
+def get_case_timeline_replay_endpoint(
+    case_id: int,
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    host: Optional[str] = None,
+    layer: Optional[str] = None,
+    event_type: Optional[str] = None,
+    source: Optional[str] = None,
+    entity: Optional[str] = None,
+    epistemic_status: Optional[str] = None,
+    collection_status: Optional[str] = None,
+    bookmarked_only: bool = False,
+    search: Optional[str] = Query(default=None, max_length=200),
+) -> Dict[str, Any]:
+    """Retrieve complete deterministic replay session context with frames and indexes (M7.2)."""
+    from logintel.timeline.service import timeline_service
+    from logintel.timeline.models import TimelineFilterParams, EpistemicStatus, CollectionStatus
+
+    try:
+        ep_status = EpistemicStatus(epistemic_status) if epistemic_status else None
+    except Exception:
+        ep_status = None
+
+    try:
+        col_status = CollectionStatus(collection_status) if collection_status else None
+    except Exception:
+        col_status = None
+
+    params = TimelineFilterParams(
+        time_start=time_start,
+        time_end=time_end,
+        host=host,
+        layer=layer,
+        event_type=event_type,
+        source=source,
+        entity=entity,
+        epistemic_status=ep_status,
+        collection_status=col_status,
+        bookmarked_only=bookmarked_only,
+        search=search,
+        limit=500,
+    )
+
+    try:
+        session = timeline_service.get_replay_session(case_id, params)
+        return session.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/context/{timeline_id}")
+def get_timeline_context_endpoint(
+    case_id: int,
+    timeline_id: str,
+) -> Dict[str, Any]:
+    """Retrieve synchronized context linking timeline event to graph, evidence, and raw source (M7.2)."""
+    from logintel.timeline.service import timeline_service
+
+    try:
+        ctx = timeline_service.get_timeline_context(case_id, timeline_id)
+        return ctx.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/timeline/{timeline_id}/bookmark")
+def bookmark_timeline_item_endpoint(
+    case_id: int,
+    timeline_id: str,
+    req: BookmarkRequest,
+) -> Dict[str, Any]:
+    """Record analyst bookmark reference in cases.db without mutating forensic telemetry (M7.2)."""
+    from logintel.timeline.service import timeline_service
+
+    try:
+        return timeline_service.bookmark_item(
+            case_id=case_id,
+            timeline_id=timeline_id,
+            analyst_note=req.analyst_note,
+            actor=req.actor,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.delete("/cases/{case_id}/timeline/{timeline_id}/bookmark")
+def remove_timeline_bookmark_endpoint(
+    case_id: int,
+    timeline_id: str,
+    actor: str = Query(default="SecAnalyst-1"),
+) -> Dict[str, Any]:
+    """Remove analyst bookmark reference in cases.db (M7.2)."""
+    from logintel.timeline.service import timeline_service
+
+    try:
+        return timeline_service.remove_bookmark(
+            case_id=case_id,
+            timeline_id=timeline_id,
+            actor=actor,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/timeline/unified/export")
+def export_unified_timeline_endpoint(
+    case_id: int,
+    format: str = Query(default="json", pattern="^(?i)(json|csv)$"),
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    host: Optional[str] = None,
+    layer: Optional[str] = None,
+    event_type: Optional[str] = None,
+    source: Optional[str] = None,
+    entity: Optional[str] = None,
+    epistemic_status: Optional[str] = None,
+    collection_status: Optional[str] = None,
+    bookmarked_only: bool = False,
+    search: Optional[str] = Query(default=None, max_length=200),
+) -> Response:
+    """Export case timeline deterministically in JSON or CSV format (M7.2)."""
+    from logintel.timeline.service import timeline_service
+    from logintel.timeline.models import TimelineFilterParams, EpistemicStatus, CollectionStatus
+
+    try:
+        ep_status = EpistemicStatus(epistemic_status) if epistemic_status else None
+    except Exception:
+        ep_status = None
+
+    try:
+        col_status = CollectionStatus(collection_status) if collection_status else None
+    except Exception:
+        col_status = None
+
+    params = TimelineFilterParams(
+        time_start=time_start,
+        time_end=time_end,
+        host=host,
+        layer=layer,
+        event_type=event_type,
+        source=source,
+        entity=entity,
+        epistemic_status=ep_status,
+        collection_status=col_status,
+        bookmarked_only=bookmarked_only,
+        search=search,
+        limit=500,
+    )
+
+    try:
+        content, media_type = timeline_service.export_timeline(case_id, export_format=format, params=params)
+        ext = "csv" if format.lower() == "csv" else "json"
+        filename = f"case_{case_id}_timeline.{ext}"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

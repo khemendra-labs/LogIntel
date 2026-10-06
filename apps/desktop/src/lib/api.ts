@@ -116,6 +116,11 @@ import type {
   CaseHandoffPackage,
   AssessmentExplanationResponse,
   FindingReviewState,
+  InvestigationTimelineItem,
+  TimelineFilterParams,
+  TimelineReplaySession,
+  TimelineContextResponse,
+  TimelineQueryResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -2411,5 +2416,136 @@ export async function explainCaseAssessment(
   }
   return res.json();
 }
+
+// ----------------------------------------------------------------------------
+// M7.2 Unified Investigation Timeline & Interactive Evidence Replay
+// ----------------------------------------------------------------------------
+
+function buildTimelineQueryString(params?: TimelineFilterParams): string {
+  if (!params) return "";
+  const query = new URLSearchParams();
+  if (params.start_time) query.set("start_time", params.start_time);
+  if (params.end_time) query.set("end_time", params.end_time);
+  if (params.host) query.set("host", params.host);
+  if (params.event_type) query.set("event_type", params.event_type);
+  if (params.source_layer) query.set("source_layer", params.source_layer);
+  if (params.entity) query.set("entity", params.entity);
+  if (params.epistemic_status) query.set("epistemic_status", params.epistemic_status);
+  if (params.collection_status) query.set("collection_status", params.collection_status);
+  if (params.search_text) query.set("search_text", params.search_text);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.offset !== undefined) query.set("offset", String(params.offset));
+  const qs = query.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function fetchUnifiedTimeline(
+  caseId: number,
+  params?: TimelineFilterParams
+): Promise<TimelineQueryResponse> {
+  const token = await getEngineToken();
+  const qs = buildTimelineQueryString(params);
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/unified${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch unified timeline: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTimelineReplay(
+  caseId: number,
+  params?: TimelineFilterParams
+): Promise<TimelineReplaySession> {
+  const token = await getEngineToken();
+  const qs = buildTimelineQueryString(params);
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/replay${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch timeline replay session: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTimelineContext(
+  caseId: number,
+  timelineId: string
+): Promise<TimelineContextResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/context/${encodeURIComponent(timelineId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch timeline context: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function bookmarkTimelineItem(
+  caseId: number,
+  timelineId: string,
+  annotation?: string
+): Promise<{ success: boolean; bookmark_ref_id: string }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/${encodeURIComponent(timelineId)}/bookmark`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ annotation: annotation || "Bookmarked from timeline" }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to bookmark timeline item: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function removeTimelineBookmark(
+  caseId: number,
+  timelineId: string
+): Promise<{ success: boolean }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/${encodeURIComponent(timelineId)}/bookmark`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to remove timeline bookmark: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportUnifiedTimeline(
+  caseId: number,
+  format: "json" | "csv" = "json",
+  params?: TimelineFilterParams
+): Promise<string> {
+  const token = await getEngineToken();
+  const baseParams = params ? { ...params } : {};
+  const qsObj = new URLSearchParams();
+  qsObj.set("format", format);
+  if (baseParams.start_time) qsObj.set("start_time", baseParams.start_time);
+  if (baseParams.end_time) qsObj.set("end_time", baseParams.end_time);
+  if (baseParams.host) qsObj.set("host", baseParams.host);
+  if (baseParams.event_type) qsObj.set("event_type", baseParams.event_type);
+  if (baseParams.source_layer) qsObj.set("source_layer", baseParams.source_layer);
+  if (baseParams.entity) qsObj.set("entity", baseParams.entity);
+  if (baseParams.epistemic_status) qsObj.set("epistemic_status", baseParams.epistemic_status);
+  if (baseParams.collection_status) qsObj.set("collection_status", baseParams.collection_status);
+  if (baseParams.search_text) qsObj.set("search_text", baseParams.search_text);
+  if (baseParams.limit !== undefined) qsObj.set("limit", String(baseParams.limit));
+
+  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/unified/export?${qsObj.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to export timeline: ${res.statusText}`);
+  }
+  return res.text();
+}
+
 
 

@@ -2199,7 +2199,118 @@ describe("Frontend API Client and Authentication", () => {
     expect(emu.passed).toBe(true);
     expect(emu.overall_threat_score).toBe(90.0);
   });
+
+  it("M7.2: fetchUnifiedTimeline, fetchTimelineReplay, context, bookmarks and export", async () => {
+    const {
+      fetchUnifiedTimeline,
+      fetchTimelineReplay,
+      fetchTimelineContext,
+      bookmarkTimelineItem,
+      removeTimelineBookmark,
+      exportUnifiedTimeline,
+    } = await import("../lib/api");
+
+    const mockItem = {
+      timeline_id: "evt-100",
+      case_id: 1,
+      timestamp: "2026-03-30T10:00:00Z",
+      timestamp_precision: "SECOND",
+      host_id: "sec-host-01",
+      event_type: "PROCESS_EXEC",
+      source_layer: "EVENT",
+      source_id: "100",
+      entity_refs: ["host:sec-host-01"],
+      relationship_refs: [],
+      detection_refs: [],
+      incident_refs: [1],
+      evidence_refs: [],
+      epistemic_status: "OBSERVED",
+      collection_status: "SOURCE_AVAILABLE",
+      display_summary: "Process /usr/bin/bash executed",
+      provenance: { source: "test" },
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url: any, init: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/timeline/unified/export")) {
+        return { ok: true, text: async () => JSON.stringify([mockItem]) } as Response;
+      }
+      if (urlStr.includes("/timeline/unified")) {
+        return {
+          ok: true,
+          json: async () => ({
+            total: 1,
+            items: [mockItem],
+            filter_applied: {},
+            deterministic_hash: "mockhash123",
+          }),
+        } as Response;
+      }
+      if (urlStr.includes("/timeline/replay")) {
+        return {
+          ok: true,
+          json: async () => ({
+            case_id: 1,
+            total_frames: 1,
+            frames: [{ frame_index: 0, timestamp: "2026-03-30T10:00:00Z", item: mockItem, active_entities: ["host:sec-host-01"], active_hosts: ["sec-host-01"], epistemic_status: "OBSERVED" }],
+            session_fingerprint: "sessionhash456",
+            deterministic_order: ["evt-100"],
+          }),
+        } as Response;
+      }
+      if (urlStr.includes("/timeline/context/evt-100")) {
+        return {
+          ok: true,
+          json: async () => ({
+            timeline_id: "evt-100",
+            case_id: 1,
+            item: mockItem,
+            linked_entities: [{ entity_key: "host:sec-host-01" }],
+            linked_evidence: [],
+            linked_alerts: [],
+            traceable_path: [{ level: "TIMELINE_ITEM", id: "evt-100", type: "EVENT", epistemic_status: "OBSERVED" }],
+          }),
+        } as Response;
+      }
+      if (urlStr.includes("/timeline/evt-100/bookmark")) {
+        if (init?.method === "DELETE") {
+          return { ok: true, json: async () => ({ success: true }) } as Response;
+        }
+        return { ok: true, json: async () => ({ success: true, bookmark_ref_id: "ref-timeline-evt-100" }) } as Response;
+      }
+      return { ok: false, statusText: "Not Found" } as Response;
+    });
+
+    // 1. fetchUnifiedTimeline
+    const timeline = await fetchUnifiedTimeline(1, { host: "sec-host-01", limit: 50 });
+    expect(timeline.total).toBe(1);
+    expect(timeline.items[0].timeline_id).toBe("evt-100");
+
+    // 2. fetchTimelineReplay
+    const replay = await fetchTimelineReplay(1);
+    expect(replay.total_frames).toBe(1);
+    expect(replay.session_fingerprint).toBe("sessionhash456");
+
+    // 3. fetchTimelineContext
+    const context = await fetchTimelineContext(1, "evt-100");
+    expect(context.item.timeline_id).toBe("evt-100");
+    expect(context.traceable_path[0].id).toBe("evt-100");
+
+    // 4. bookmarkTimelineItem
+    const bmRes = await bookmarkTimelineItem(1, "evt-100", "Critical anomaly");
+    expect(bmRes.success).toBe(true);
+    expect(bmRes.bookmark_ref_id).toBe("ref-timeline-evt-100");
+
+    // 5. removeTimelineBookmark
+    const unbmRes = await removeTimelineBookmark(1, "evt-100");
+    expect(unbmRes.success).toBe(true);
+
+    // 6. exportUnifiedTimeline
+    const exportData = await exportUnifiedTimeline(1, "json");
+    expect(exportData).toContain("evt-100");
+  });
 });
+
 
 
 

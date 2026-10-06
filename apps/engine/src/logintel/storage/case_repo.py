@@ -1759,4 +1759,4 @@ class CaseRepository:
         return result
 
 
-
+case_repo = CaseRepository()

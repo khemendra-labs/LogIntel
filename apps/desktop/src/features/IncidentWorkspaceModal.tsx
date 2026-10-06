@@ -43,6 +43,7 @@ import {
 } from "../types/investigation";
 import { AttackGraphVisualizer } from "./AttackGraphVisualizer";
 import { InvestigationTimeline } from "./InvestigationTimeline";
+import { InvestigationUnifiedTimeline } from "./InvestigationUnifiedTimeline";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -99,6 +100,9 @@ export function IncidentWorkspaceModal({
   // Export state
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+
+  // M7.2 Timeline mode
+  const [timelineMode, setTimelineMode] = useState<"unified" | "classic">("unified");
 
   const loadDossier = async () => {
     setLoading(true);
@@ -740,12 +744,42 @@ export function IncidentWorkspaceModal({
                 )}
 
                 {/* 3. Timeline Tab */}
-                {activeTab === "timeline" && detail?.timeline && (
-                  <InvestigationTimeline
-                    timeline={detail.timeline}
-                    onSelectAlertId={onSelectAlertId}
-                    onSelectEventId={onSelectEventId}
-                  />
+                {activeTab === "timeline" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}>
+                      <button
+                        className={timelineMode === "unified" ? "btn btn-primary" : "btn btn-secondary"}
+                        style={{ fontSize: "11px", padding: "3px 8px" }}
+                        onClick={() => setTimelineMode("unified")}
+                      >
+                        Unified Timeline & Replay (M7.2)
+                      </button>
+                      <button
+                        className={timelineMode === "classic" ? "btn btn-primary" : "btn btn-secondary"}
+                        style={{ fontSize: "11px", padding: "3px 8px" }}
+                        onClick={() => setTimelineMode("classic")}
+                      >
+                        Classic Incident Timeline
+                      </button>
+                    </div>
+
+                    {timelineMode === "unified" ? (
+                      <InvestigationUnifiedTimeline
+                        caseId={incidentId}
+                        onSelectEntityKey={onSelectEntityKey}
+                        onSelectAlertId={onSelectAlertId}
+                        onSelectEventId={onSelectEventId}
+                      />
+                    ) : (
+                      detail?.timeline && (
+                        <InvestigationTimeline
+                          timeline={detail.timeline}
+                          onSelectAlertId={onSelectAlertId}
+                          onSelectEventId={onSelectEventId}
+                        />
+                      )
+                    )}
+                  </div>
                 )}
 
                 {/* 4. Correlated Alerts Tab */}
