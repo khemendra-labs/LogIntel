@@ -56,6 +56,8 @@ class CollectorSettings(BaseModel):
     socket_collector_enabled: bool = True
     proc_net_path: str = "/proc/net"
     proc_path: str = "/proc"
+
+    filesystem_collector_enabled: bool = True
     
     poll_interval_seconds: float = 1.0
     batch_size: int = 100

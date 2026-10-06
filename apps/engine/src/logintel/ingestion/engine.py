@@ -14,6 +14,7 @@ from logintel.collectors import (
     SyslogCollector,
 )
 from logintel.network import SocketStateCollector
+from logintel.filesystem import FilesystemPersistenceCollector
 from logintel.config import settings
 from logintel.logging import get_logger
 from logintel.models import CanonicalEvent, RawRecord
@@ -113,6 +114,10 @@ class IngestionEngine:
                 proc_path=settings.collectors.proc_path,
             )
             self.repo.upsert_source(name="sockets", source_type="procfs", path="/proc/net/tcp", enabled=True)
+
+        if settings.collectors.filesystem_collector_enabled:
+            self.collectors["filesystem_hvt"] = FilesystemPersistenceCollector()
+            self.repo.upsert_source(name="filesystem_hvt", source_type="filesystem", path="/etc", enabled=True)
 
     def ingest_records(self, records: List[RawRecord]) -> int:
         """Process, normalize, and persist a batch of raw records."""

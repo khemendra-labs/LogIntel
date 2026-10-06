@@ -704,6 +704,57 @@ def get_network_connections(
     return get_network_sockets(state="ESTABLISHED", protocol=protocol, outbound_only=False, limit=limit)
 
 
+@protected_router.get("/investigations/filesystem/targets")
+def get_filesystem_targets(
+    category: Optional[str] = Query(default=None),
+    epistemic_status: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, Any]:
+    """Retrieve monitored high-value persistence targets and their current integrity states."""
+    from logintel.filesystem import FilesystemPersistenceCollector
+    collector = FilesystemPersistenceCollector()
+    states = collector.scanner.scan_all()
+    items = list(states.values())
+
+    if category:
+        cat_upper = category.upper()
+        items = [s for s in items if s.category.value == cat_upper]
+
+    if epistemic_status:
+        ep_upper = epistemic_status.upper()
+        items = [s for s in items if s.epistemic_status == ep_upper]
+
+    paginated = items[:limit]
+    return {
+        "total": len(items),
+        "limit": limit,
+        "items": [s.model_dump(mode="json") for s in paginated],
+    }
+
+
+@protected_router.get("/investigations/filesystem/transitions")
+def get_filesystem_transitions(
+    transition_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, Any]:
+    """Retrieve observed filesystem persistence drops and integrity transitions."""
+    from logintel.filesystem import FilesystemPersistenceCollector
+    collector = FilesystemPersistenceCollector()
+    collector.collect_events()
+    transitions = collector.get_transitions()
+
+    if transition_type:
+        tt_upper = transition_type.upper()
+        transitions = [t for t in transitions if t.transition_type.value == tt_upper]
+
+    paginated = transitions[:limit]
+    return {
+        "total": len(transitions),
+        "limit": limit,
+        "items": [t.model_dump(mode="json") for t in paginated],
+    }
+
+
 @protected_router.get("/investigations/entities/{entity_key}/pivot")
 def inspect_entity_pivot(entity_key: str, incident_id: Optional[int] = None) -> Dict[str, Any]:
     """Investigate a specific security entity (IP, Host, User, Process) across telemetry and incidents."""
