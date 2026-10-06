@@ -641,6 +641,37 @@ def get_incident_host_threat_assessment_endpoint(incident_id: int) -> Dict[str, 
     return assessment
 
 
+class HostValidationEmulationRequest(BaseModel):
+    scenario_type: str = Field(description="Emulated scenario type key")
+    host: Optional[str] = Field(default="prod-linux-01", description="Target host name")
+
+
+@protected_router.get("/system/host-validation")
+def get_system_host_validation_endpoint() -> Dict[str, Any]:
+    """Execute host readiness checks and full adversary emulation suite (Milestone M6.10)."""
+    from logintel.validation.host_emulator import HostScenarioEmulator
+    emulator = HostScenarioEmulator()
+    report = emulator.run_full_validation_suite()
+    return report.model_dump(mode="json")
+
+
+@protected_router.post("/system/host-validation/emulate")
+def emulate_host_scenario_endpoint(req: HostValidationEmulationRequest) -> Dict[str, Any]:
+    """Execute specific adversary campaign scenario emulation on-demand (Milestone M6.10)."""
+    from logintel.validation.host_emulator import EmulatedScenarioType, HostScenarioEmulator
+    try:
+        sc_type = EmulatedScenarioType(req.scenario_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid scenario type '{req.scenario_type}'. Valid types: {[t.value for t in EmulatedScenarioType]}",
+        )
+    emulator = HostScenarioEmulator()
+    result = emulator.emulate_scenario(scenario_type=sc_type, host=req.host or "prod-linux-01")
+    return result.model_dump(mode="json")
+
+
+
 
 @protected_router.get("/investigations/{incident_id}")
 def get_investigation_dossier(incident_id: int) -> Dict[str, Any]:

@@ -2137,7 +2137,70 @@ describe("Frontend API Client and Authentication", () => {
     expect(asmt.incident_id).toBe(101);
     expect(asmt.primary_scenario).toBe("Interactive Reverse Shell & External C2");
   });
+
+  it("M6.10 Host Validation & Adversary Emulation API client methods perform authenticated calls", async () => {
+    setEngineToken("m610_token");
+
+    const mockReport = {
+      host: "prod-linux-01",
+      platform: "Linux-6.8.0-generic",
+      kernel_version: "6.8.0-45-generic",
+      live_sources_available: { audit_log: true, proc_net_tcp: true },
+      scenario_results: [],
+      total_scenarios: 3,
+      passed_scenarios: 3,
+      overall_passed: true,
+      timestamp: "2026-10-06T12:00:00Z",
+      summary: "M6.10 Validation: 3/3 passed",
+    };
+
+    const mockEmulation = {
+      scenario_type: "web_shell_priv_esc_cron",
+      scenario_name: "Web Shell to Root Escalation & Cron Persistence",
+      host: "prod-linux-01",
+      events_generated: 5,
+      detections_triggered: 2,
+      rule_ids_triggered: ["sec.cron_persistence_tamper"],
+      attack_sequences_detected: 1,
+      primary_scenario_identified: "Multi-Stage Host Takeover Campaign",
+      mitre_tactics: ["Command and Control"],
+      mitre_techniques: ["T1071"],
+      overall_threat_score: 90.0,
+      overall_severity: "CRITICAL",
+      epistemic_confidence: 1.0,
+      graph_node_count: 5,
+      graph_edge_count: 4,
+      elapsed_ms: 1.5,
+      passed: true,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/system/host-validation/emulate")) {
+        return { ok: true, json: async () => mockEmulation } as Response;
+      }
+      if (urlStr.includes("/system/host-validation")) {
+        return { ok: true, json: async () => mockReport } as Response;
+      }
+      return { ok: false, statusText: "Not Found" } as Response;
+    });
+
+    const {
+      fetchHostValidationReport,
+      emulateHostScenario,
+    } = await import("../lib/api");
+
+    const report = await fetchHostValidationReport();
+    expect(report.host).toBe("prod-linux-01");
+    expect(report.overall_passed).toBe(true);
+
+    const emu = await emulateHostScenario("web_shell_priv_esc_cron", "prod-linux-01");
+    expect(emu.scenario_type).toBe("web_shell_priv_esc_cron");
+    expect(emu.passed).toBe(true);
+    expect(emu.overall_threat_score).toBe(90.0);
+  });
 });
+
 
 
 

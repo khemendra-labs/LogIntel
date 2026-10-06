@@ -569,6 +569,63 @@ export async function fetchHostThreatAssessment(
   return res.json();
 }
 
+export interface ScenarioEmulationResult {
+  scenario_type: string;
+  scenario_name: string;
+  host: string;
+  events_generated: number;
+  detections_triggered: number;
+  rule_ids_triggered: string[];
+  attack_sequences_detected: number;
+  primary_scenario_identified: string;
+  mitre_tactics: string[];
+  mitre_techniques: string[];
+  overall_threat_score: number;
+  overall_severity: string;
+  epistemic_confidence: number;
+  graph_node_count: number;
+  graph_edge_count: number;
+  elapsed_ms: number;
+  passed: boolean;
+}
+
+export interface HostValidationReport {
+  host: string;
+  platform: string;
+  kernel_version: string;
+  live_sources_available: Record<string, boolean>;
+  scenario_results: ScenarioEmulationResult[];
+  total_scenarios: number;
+  passed_scenarios: number;
+  overall_passed: boolean;
+  timestamp: string;
+  summary: string;
+}
+
+export async function fetchHostValidationReport(): Promise<HostValidationReport> {
+  const res = await apiFetch("/system/host-validation");
+  if (!res.ok) {
+    throw new Error(`Failed to fetch host validation report: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function emulateHostScenario(
+  scenarioType: string,
+  host: string = "prod-linux-01"
+): Promise<ScenarioEmulationResult> {
+  const res = await apiFetch("/system/host-validation/emulate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scenario_type: scenarioType, host }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to emulate host scenario ${scenarioType}: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+
 
 export async function fetchMitreMappings(
   incidentId: number
