@@ -7,6 +7,7 @@ from logintel.logging import get_logger
 from logintel.models import CanonicalEvent, RawRecord
 from logintel.parsers.audit import AuditParser
 from logintel.parsers.base import BaseParser
+from logintel.parsers.container import ContainerParser
 from logintel.parsers.generic import GenericSyslogParser
 from logintel.parsers.kernel import KernelParser
 from logintel.parsers.pam import PAMSessionParser
@@ -35,6 +36,7 @@ class ParserRegistry:
         self.register_parser(UserManagementParser())
         self.register_parser(KernelParser())
         self.register_parser(SystemdParser())
+        self.register_parser(ContainerParser())
 
     def register_parser(self, parser: BaseParser) -> None:
         """Register a new parser."""

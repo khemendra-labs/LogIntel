@@ -508,6 +508,65 @@ class ExportInvestigationResponse(BaseModel):
     filename: str
 
 
+@protected_router.get("/investigations/containers")
+def get_containers(
+    state: Optional[str] = Query(default=None),
+    runtime: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, Any]:
+    """Retrieve observed container instances across Docker socket and procfs namespaces."""
+    from logintel.containers import DockerSocketCollector, NamespaceInspector
+    docker_col = DockerSocketCollector()
+    containers = docker_col.list_containers(all_containers=True)
+    if not containers:
+        ns_insp = NamespaceInspector()
+        containers = ns_insp.discover_containers()
+
+    if state:
+        st_lower = state.lower()
+        containers = [c for c in containers if c.state.value == st_lower]
+
+    if runtime:
+        rt_lower = runtime.lower()
+        containers = [c for c in containers if c.runtime.value == rt_lower]
+
+    paginated = containers[:limit]
+    return {
+        "total": len(containers),
+        "limit": limit,
+        "items": [c.model_dump(mode="json") for c in paginated],
+    }
+
+
+@protected_router.get("/investigations/containers/{container_id}")
+def get_container_detail(container_id: str) -> Dict[str, Any]:
+    """Retrieve detailed properties, capabilities, and process bindings for a specific container."""
+    from logintel.containers import DockerSocketCollector, NamespaceInspector
+    docker_col = DockerSocketCollector()
+    container = docker_col.inspect_container(container_id=container_id)
+    if not container:
+        ns_insp = NamespaceInspector()
+        all_containers = ns_insp.discover_containers()
+        matched = [c for c in all_containers if c.container_id == container_id or c.container_id.startswith(container_id)]
+        if matched:
+            container = matched[0]
+
+    if not container:
+        raise HTTPException(status_code=404, detail=f"Container '{container_id}' could not be resolved")
+    return container.model_dump(mode="json")
+
+
+@protected_router.get("/investigations/processes/{pid}/namespace")
+def get_process_namespace_profile(pid: int) -> Dict[str, Any]:
+    """Retrieve kernel namespace isolation profile and container binding for a host process."""
+    from logintel.containers import NamespaceInspector
+    ns_insp = NamespaceInspector()
+    profile = ns_insp.inspect_process(pid=pid)
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Process PID '{pid}' could not be found or inspected")
+    return profile.model_dump(mode="json")
+
+
 @protected_router.get("/investigations/{incident_id}")
 def get_investigation_dossier(incident_id: int) -> Dict[str, Any]:
     """Retrieve full investigation workspace dossier containing incident, attack path, MITRE, notes, and timeline."""
