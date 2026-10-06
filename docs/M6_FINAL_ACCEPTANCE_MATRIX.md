@@ -53,6 +53,8 @@ New M6 regressions:
 0
 ```
 
+> **920 of 926 backend tests passed. The remaining six failures correspond to documented pre-existing historical baseline tests. No newly introduced M6 regression was identified in the executable regression comparison.**
+
 ```text
 FRONTEND TEST CENSUS
 
@@ -60,8 +62,10 @@ Collected: 46
 Passed: 46
 Failed: 0
 Build: Succeeded in 1.88s (0 errors, dist/ artifacts generated)
-Interactive browser: NOT PERFORMED (automated Vitest and production build only)
+Interactive browser verification: NOT PERFORMED
 ```
+
+> **46/46 frontend tests passed and the production Vite build completed successfully. No interactive browser/E2E verification was performed during this certification pass.**
 
 ---
 
@@ -91,20 +95,20 @@ All 300 M6 dedicated backend tests pass (100% pass rate). The 180 security tests
 | Certification Gate | Evaluation Standard | Executable Proof / Evidence | Result |
 | :--- | :--- | :--- | :---: |
 | **Telemetry Correctness** | Events accurately reflect host execution state without fabrication | Real host audit, procfs sockets, and systemd units decoded deterministically | **PASS** |
-| **Raw Evidence Preservation** | `raw_message` preserved byte-for-byte in pristine format | Verified via `test_m62_sec_009_raw_evidence_fidelity` and database rows; classified as sensitive forensic boundary | **PASS** |
+| **Raw Evidence Preservation** | `raw_message` preserved byte-for-byte in pristine format | Verified for audited M6.2 raw audit ingestion path via `test_m62_sec_009_raw_evidence_fidelity`; classified as sensitive forensic boundary | **PASS** |
 | **Canonical Normalization** | Strict deterministic conversion to `CanonicalEvent` model | Verified via `test_network_decoding_and_event_determinism` and schema types | **PASS** |
 | **Determinism** | Bit-for-bit identical outputs across $N \ge 10$ runs | 8 dedicated determinism suites certify identical hashes and tokens ($N=10$) | **PASS** |
 | **Database Integrity** | Zero SQLite corruption, WAL mode active, FK integrity clean | `PRAGMA integrity_check` $\rightarrow$ `ok`; `PRAGMA foreign_key_check` $\rightarrow$ `[]` | **PASS** |
-| **Migration Safety** | Schema preservation without breaking historical databases | Strict invariant `len(MIGRATIONS) == 5`; Migration 6 strictly absent; in-memory graph synthesis | **PASS** |
+| **Migration Safety** | Schema preservation without breaking historical databases | Strict invariant `len(MIGRATIONS) == 5`; Migration 6 not required / absent by design; in-memory graph synthesis | **PASS** |
 | **Case Isolation** | Telemetry linked to Case A never leaks to Case B | Parameterized isolation queries verified via `test_m62_sec_020_case_isolation_boundary` | **PASS** |
-| **Security Boundaries** | Metacharacters inert; zero `eval`, `exec`, `pickle`, `shell=True`, or SQL injection | Static code analysis confirms 0 unsafe patterns; 180 M6 security tests passed | **PASS** |
+| **Security Boundaries** | Audited static scan identified no occurrences of tested unsafe patterns | Static scan identified no occurrences of `eval`, `exec`, `pickle`, `shell=True`, `os.system`, or unparameterized SQL; 180 M6 security tests passed | **PASS** |
 | **AI Advisory Boundary** | AI remains strictly read-only advisory without execution rights | Context serializers sanitize credentials; zero mutation endpoints exposed to AI; loopback-only | **PASS** |
 | **Resource Bounds** | Hard limits on lines, args, cmdline, queues, and graph depth | Hard clamps enforced (32KB lines, 512 args, 16KB cmdline, 10K queues, 10MB file hash) | **PASS** |
 | **Failure Recovery** | Graceful handling of missing files, rotations, and denials | Verified via `FileTailer` offset tracking and permission error fallbacks | **PASS** |
-| **Real-Host Validation** | End-to-end execution of live host queries and campaigns | `scripts/validate_m610_e2e.py` executed live with 3/3 scenarios passing | **PASS** |
-| **M1–M5 Regression** | Zero newly introduced failures across complete historical suite | 926 total backend tests: 920 passed, exactly 6 historical failures, 0 regressions | **PASS** |
-| **Frontend Integration** | Desktop client API methods and build passing cleanly | 46/46 Vitest tests passed; Vite production build compiled cleanly in 1.88s | **PASS** (Automated) |
-| **Packaging & Systemd** | Standalone `.deb` build structure and systemd units intact | `packaging/deb/logintel_0.1.0_amd64.deb` and systemd services verified | **PASS** (Workstation baseline) |
+| **Real-Host Validation** | End-to-end execution of live host queries and campaigns | `scripts/validate_m610_e2e.py` executed live with 3/3 scenarios completing successfully | **PASS** |
+| **M1–M5 Regression** | Zero newly introduced failures across complete historical suite | 920 of 926 backend tests passed; exactly 6 historical baseline failures; 0 regressions | **PASS** |
+| **Frontend Integration** | Desktop client API methods and build passing cleanly | 46/46 Vitest tests passed; Vite production build compiled cleanly in 1.88s; interactive browser test not performed | **PASS** (Automated) |
+| **Packaging & Systemd** | Standalone `.deb` build structure and systemd units intact | `packaging/deb/logintel_0.1.0_amd64.deb` artifact inspected; M6 lifecycle not re-verified | **PASS** (Workstation baseline) |
 | **Documentation Integrity** | Claims grounded in executable source code and qualified | All 10 milestones fully documented with verified technical reports and qualified claims | **PASS** |
 | **Repository Hygiene** | Zero tracked secrets, debug artifacts, or temporary files | Clean working tree; zero secrets, tokens, or private keys committed | **PASS** |
 
