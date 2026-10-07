@@ -135,6 +135,14 @@ import type {
   HypothesisAssessmentView,
   HypothesisComparisonResponse,
   FindingsWorkbenchResponse,
+  HuntExecutionResult,
+  HuntQueryPreview,
+  HuntSequenceProposal,
+  HuntSequenceResult,
+  HuntExportResponse,
+  HuntHistoryRecord,
+  GovernedQueryModel,
+  HuntIntent,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -2988,6 +2996,246 @@ export async function exportFindingsWorkbenchM74(caseId: number, format: "json" 
     throw new Error(`Failed to export findings workbench: ${res.statusText}`);
   }
   return res.text();
+}
+
+// ============================================================================
+// M7.5 Threat Hunting & Governed Analyst Query API Client
+// ============================================================================
+
+export async function previewThreatHuntM75(caseId: number, proposal: Record<string, any>): Promise<HuntQueryPreview> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/preview`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(proposal),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Preview failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createThreatHuntProposalM75(caseId: number, proposal: Record<string, any>): Promise<{ hunt_id: string; approval_state: string }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(proposal),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Hunt creation failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function approveThreatHuntM75(caseId: number, huntId: string, rationale?: string): Promise<{ hunt_id: string; approval_state: string }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/${encodeURIComponent(huntId)}/approve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ approved_by: "SecAnalyst-1", rationale: rationale || "Analyst approval for bounded execution" }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Approval failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function executeThreatHuntM75(caseId: number, huntId: string): Promise<HuntExecutionResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/${encodeURIComponent(huntId)}/execute`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Hunt execution failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchHuntDetailM75(caseId: number, huntId: string): Promise<HuntExecutionResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/${encodeURIComponent(huntId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch hunt failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseHuntsM75(caseId: number): Promise<HuntHistoryRecord[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch hunt history failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function pivotThreatHuntEntityM75(caseId: number, entityType: string, entityValue: string): Promise<HuntExecutionResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/pivot/entity`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ entity_type: entityType, entity_value: entityValue }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Entity pivot failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function pivotThreatHuntTemporalM75(caseId: number, anchorTimestamp: string, windowMinutes: number = 15, direction: string = "around"): Promise<HuntExecutionResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/pivot/temporal`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ anchor_timestamp: anchorTimestamp, window_minutes: windowMinutes, direction }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Temporal pivot failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function executeSequenceThreatHuntM75(caseId: number, proposal: HuntSequenceProposal): Promise<HuntSequenceResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/sequence`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(proposal),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Sequence hunt failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function executeIocThreatHuntM75(caseId: number, iocValue: string, iocType?: string): Promise<HuntExecutionResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/ioc`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ ioc_value: iocValue, ioc_type: iocType }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `IOC hunt failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportThreatHuntM75(caseId: number, huntId: string, format: "json" | "csv" = "json"): Promise<HuntExportResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/${encodeURIComponent(huntId)}/export?format=${format}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Export hunt failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function aiAssistThreatHuntM75(caseId: number, question: string): Promise<GovernedQueryModel> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/ai-assist`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ natural_language_question: question }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `AI proposal failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function convertHuntToFindingM75(caseId: number, req: Record<string, any>): Promise<Finding> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/convert/finding`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Convert to finding failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function convertHuntToHypothesisM75(caseId: number, req: Record<string, any>): Promise<any> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/convert/hypothesis`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Convert to hypothesis failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function convertHuntToCollectionM75(caseId: number, req: Record<string, any>): Promise<any> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hunts/convert/collection`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Convert to collection failed: ${res.statusText}`);
+  }
+  return res.json();
 }
 
 

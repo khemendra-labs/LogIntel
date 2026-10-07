@@ -3606,6 +3606,194 @@ def add_hypothesis_gap_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# =========================================================================
+# Milestone 7.5: Advanced Threat Hunting & Governed Analyst Query Operations
+# =========================================================================
+
+from logintel.hunting.models import (
+    AIHuntProposalRequest,
+    ApproveHuntRequest,
+    ConvertHuntToCollectionRequest,
+    ConvertHuntToFindingRequest,
+    ConvertHuntToHypothesisEvidenceRequest,
+    CreateHuntProposalRequest,
+    HuntExportResponse,
+    HuntQueryPreview,
+    HuntSequenceProposal,
+)
+from logintel.hunting.service import threat_hunting_service
+
+
+@protected_router.post("/cases/{case_id}/hunts/preview")
+def preview_hunt_query_endpoint(case_id: int, req: CreateHuntProposalRequest) -> Dict[str, Any]:
+    """Validate and preview a governed threat hunt query without executing (M7.5)."""
+    try:
+        preview = threat_hunting_service.validate_and_preview_hunt(case_id, req)
+        return preview.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/sequence")
+def execute_sequence_hunt_endpoint(case_id: int, proposal: HuntSequenceProposal) -> Dict[str, Any]:
+    """Execute a multi-step sequence hunt proposal chronologically (M7.5)."""
+    try:
+        res = threat_hunting_service.execute_sequence_hunt(case_id, proposal)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/ioc")
+def execute_ioc_hunt_endpoint(case_id: int, req: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Execute normalized IOC search across case telemetry (M7.5)."""
+    ioc_val = req.get("ioc_value") or req.get("ioc") or ""
+    if not ioc_val:
+        raise HTTPException(status_code=422, detail="Missing required field 'ioc_value'")
+    try:
+        res = threat_hunting_service.execute_ioc_hunt(case_id, ioc_val)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/pivot/entity")
+def pivot_hunt_by_entity_endpoint(case_id: int, req: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Fast entity-centric threat hunt within case boundaries (M7.5)."""
+    etype = req.get("entity_type")
+    evalue = req.get("entity_value")
+    if not etype or not evalue:
+        raise HTTPException(status_code=422, detail="Missing 'entity_type' or 'entity_value'")
+    try:
+        res = threat_hunting_service.pivot_hunt_by_entity(case_id, etype, evalue)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/pivot/temporal")
+def pivot_hunt_temporal_endpoint(case_id: int, req: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Bounded temporal window threat hunt surrounding an anchor event (M7.5)."""
+    anchor = req.get("anchor_timestamp")
+    if not anchor:
+        raise HTTPException(status_code=422, detail="Missing 'anchor_timestamp'")
+    window = int(req.get("window_minutes", 15))
+    direction = req.get("direction", "around")
+    try:
+        res = threat_hunting_service.pivot_hunt_temporal(case_id, anchor, window_minutes=window, direction=direction)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/convert/finding")
+def convert_hunt_to_finding_endpoint(case_id: int, req: ConvertHuntToFindingRequest) -> Dict[str, Any]:
+    """Formulate an analyst finding from selected hunt result items (M7.5)."""
+    try:
+        finding = threat_hunting_service.convert_hunt_to_finding(case_id, req)
+        return finding
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/convert/hypothesis")
+def convert_hunt_to_hypothesis_endpoint(case_id: int, req: ConvertHuntToHypothesisEvidenceRequest) -> Dict[str, Any]:
+    """Attach selected hunt result items to hypothesis evaluation (M7.5)."""
+    try:
+        res = threat_hunting_service.convert_hunt_to_hypothesis(case_id, req)
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/convert/collection")
+def convert_hunt_to_collection_endpoint(case_id: int, req: ConvertHuntToCollectionRequest) -> Dict[str, Any]:
+    """Add selected hunt result items to a logical evidence collection (M7.5)."""
+    try:
+        res = threat_hunting_service.convert_hunt_to_collection(case_id, req)
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/ai-assist")
+def ai_assisted_hunt_proposal_endpoint(case_id: int, req: AIHuntProposalRequest) -> Dict[str, Any]:
+    """Local AI translation of natural language to governed structured query proposal (M7.5)."""
+    try:
+        model = threat_hunting_service.ai_assisted_hunt_proposal(case_id, req)
+        return model.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hunts")
+def list_case_hunts_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """List all recorded hunt proposals and executions for a case (M7.5)."""
+    try:
+        return threat_hunting_service.list_hunts(case_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts")
+def create_hunt_proposal_endpoint(case_id: int, req: CreateHuntProposalRequest) -> Dict[str, Any]:
+    """Create a validated hunt proposal with approval gate (M7.5)."""
+    try:
+        hunt_id, preview = threat_hunting_service.create_hunt_proposal(case_id, req)
+        return {
+            "hunt_id": hunt_id,
+            "case_id": case_id,
+            "preview": preview.model_dump(mode="json"),
+            "approval_state": "VALIDATED" if preview.validation_status == "VALID" else "DRAFT",
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hunts/{hunt_id}/export")
+def export_hunt_endpoint(case_id: int, hunt_id: str, format: str = Query("json", pattern="^(?i)(json|csv)$")) -> HuntExportResponse:
+    """Deterministic export of hunt definition, results, and manifest with Blake2b fingerprint (M7.5)."""
+    try:
+        return threat_hunting_service.export_hunt(case_id, hunt_id, format_type=format)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/{hunt_id}/approve")
+def approve_hunt_endpoint(case_id: int, hunt_id: str, req: ApproveHuntRequest) -> Dict[str, Any]:
+    """Analyst approval gate required before hunt query execution (M7.5)."""
+    try:
+        return threat_hunting_service.approve_hunt(case_id, hunt_id, req)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/hunts/{hunt_id}/execute")
+def execute_approved_hunt_endpoint(case_id: int, hunt_id: str, req: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+    """Execute an analyst-approved governed threat hunt query (M7.5)."""
+    actor = (req or {}).get("executed_by", "SecAnalyst-1")
+    try:
+        res = threat_hunting_service.execute_hunt(case_id, hunt_id, executed_by=actor)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        # Check if approval failure
+        if "approval" in str(e).lower():
+            raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hunts/{hunt_id}")
+def get_hunt_detail_endpoint(case_id: int, hunt_id: str) -> Dict[str, Any]:
+    """Retrieve details and results of a completed or draft hunt (M7.5)."""
+    try:
+        res = threat_hunting_service.get_hunt(case_id, hunt_id)
+        if not res:
+            raise HTTPException(status_code=404, detail=f"Hunt {hunt_id} results not found")
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

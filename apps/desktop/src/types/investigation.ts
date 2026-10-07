@@ -1870,3 +1870,215 @@ export interface FindingsWorkbenchResponse {
   total_gaps: number;
 }
 
+// ============================================================================
+// M7.5 Advanced Threat Hunting & Governed Analyst Queries Types
+// ============================================================================
+
+export type HuntIntent =
+  | "PROCESS_EXECUTION"
+  | "AUTHENTICATION_ACTIVITY"
+  | "PRIVILEGE_ESCALATION"
+  | "NETWORK_CONNECTION"
+  | "FILE_ACTIVITY"
+  | "PERSISTENCE"
+  | "SYSTEMD_SERVICE_ACTIVITY"
+  | "CONTAINER_ACTIVITY"
+  | "USER_SESSION"
+  | "CROSS_HOST_ACTIVITY"
+  | "IOC_LOOKUP"
+  | "ENTITY_ACTIVITY"
+  | "TEMPORAL_SEQUENCE"
+  | "CORRELATION";
+
+export type QueryOperator =
+  | "equals"
+  | "not_equals"
+  | "contains"
+  | "prefix"
+  | "suffix"
+  | "in"
+  | "not_in"
+  | "exists"
+  | "range"
+  | "before"
+  | "after"
+  | "between";
+
+export type HuntApprovalState =
+  | "DRAFT"
+  | "VALIDATED"
+  | "READY"
+  | "APPROVED"
+  | "EXECUTING"
+  | "COMPLETED"
+  | "REJECTED";
+
+export type HuntExecutionStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "MATCHED"
+  | "NO_MATCH"
+  | "RESOURCE_LIMIT_EXCEEDED"
+  | "INVALID_QUERY"
+  | "UNAUTHORIZED"
+  | "SOURCE_UNAVAILABLE"
+  | "RULE_NOT_CONFIGURED"
+  | "TELEMETRY_DROPPED"
+  | "EXECUTION_FAILED";
+
+export type EpistemicStatusM75 = "OBSERVED" | "INFERRED" | "UNKNOWN";
+
+export interface FieldFilter {
+  field: string;
+  operator: QueryOperator;
+  value: any;
+}
+
+export interface EntityFilter {
+  entity_type: string;
+  entity_value: string;
+}
+
+export interface TemporalWindow {
+  anchor_timestamp: string;
+  relative_window_minutes?: number;
+  direction?: "before" | "after" | "around";
+}
+
+export interface HuntResourceBounds {
+  max_result_count: number;
+  max_time_window_days: number;
+  max_query_complexity: number;
+  max_pagination_offset: number;
+  max_evidence_size_bytes: number;
+  max_execution_duration_sec: number;
+}
+
+export interface GovernedQueryModel {
+  hunt_id?: string | null;
+  case_id: number;
+  intent: HuntIntent;
+  question: string;
+  scope?: Record<string, any>;
+  temporal_window?: TemporalWindow | null;
+  source_types: string[];
+  entity_filters: EntityFilter[];
+  field_filters: FieldFilter[];
+  ordering_field?: string;
+  ordering_direction?: "ASC" | "DESC";
+  limit: number;
+  offset: number;
+  requested_pivots: string[];
+}
+
+export interface HuntQueryPreview {
+  case_id: number;
+  intent: HuntIntent;
+  question: string;
+  validation_status: "VALID" | "INVALID";
+  filter_count: number;
+  source_layers: string[];
+  preview_sql_summary: string;
+  resource_limits: HuntResourceBounds;
+  estimated_complexity: number;
+  requires_approval: boolean;
+  notes: string[];
+}
+
+export interface HuntResultItem {
+  result_id: string;
+  source_type: string;
+  source_id: string;
+  citation_tag: string;
+  host: string;
+  timestamp: string;
+  summary: string;
+  action: string;
+  outcome: string;
+  username?: string | null;
+  src_ip?: string | null;
+  dst_ip?: string | null;
+  process_name?: string | null;
+  epistemic_status: EpistemicStatusM75;
+  raw_preview: string;
+  provenance_hash: string;
+}
+
+export interface HuntExecutionResult {
+  hunt_id: string;
+  case_id: number;
+  intent: HuntIntent;
+  question: string;
+  status: HuntExecutionStatus;
+  approval_state: HuntApprovalState;
+  approved_by?: string | null;
+  executed_by?: string | null;
+  executed_at: string;
+  duration_ms: number;
+  result_count: number;
+  total_matches: number;
+  is_truncated: boolean;
+  resource_limit_exceeded: boolean;
+  results: HuntResultItem[];
+  query_fingerprint: string;
+  provenance_manifest: Record<string, any>;
+}
+
+export interface HuntSequenceStep {
+  step_number: number;
+  name: string;
+  action_type: string;
+  field_filters: FieldFilter[];
+  max_time_delta_seconds?: number;
+}
+
+export interface HuntSequenceProposal {
+  case_id: number;
+  sequence_name: string;
+  description: string;
+  steps: HuntSequenceStep[];
+}
+
+export interface HuntSequenceStepEvaluation {
+  step_number: number;
+  name: string;
+  action_type: string;
+  status: "MATCHED" | "MISSING_TELEMETRY" | "UNOBSERVED";
+  matched_event_id?: string | null;
+  timestamp?: string | null;
+  host?: string | null;
+  evidence_summary?: string | null;
+}
+
+export interface HuntSequenceResult {
+  case_id: number;
+  sequence_name: string;
+  total_steps: number;
+  matched_steps: number;
+  missing_steps: number;
+  epistemic_classification: EpistemicStatusM75;
+  step_evaluations: HuntSequenceStepEvaluation[];
+  evaluated_at: string;
+}
+
+export interface HuntExportResponse {
+  case_id: number;
+  hunt_id: string;
+  format: string;
+  export_content: string;
+  exported_at: string;
+  fingerprint: string;
+  result_count: number;
+}
+
+export interface HuntHistoryRecord {
+  query_id: string;
+  case_id: number;
+  query_template_id: string;
+  rationale: string;
+  executed_by: string;
+  executed_at: string;
+  result_count: number;
+  execution_status: string;
+}
+

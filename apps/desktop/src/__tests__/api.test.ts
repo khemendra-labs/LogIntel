@@ -2492,6 +2492,116 @@ describe("Frontend API Client and Authentication", () => {
     const exported = await exportFindingsWorkbenchM74(1, "json");
     expect(exported).toContain("findings");
   });
+
+  it("M7.5 Threat Hunting API endpoints execute correctly", async () => {
+    const {
+      previewThreatHuntM75,
+      createThreatHuntProposalM75,
+      approveThreatHuntM75,
+      executeThreatHuntM75,
+      fetchHuntDetailM75,
+      fetchCaseHuntsM75,
+      pivotThreatHuntEntityM75,
+      pivotThreatHuntTemporalM75,
+      executeSequenceThreatHuntM75,
+      executeIocThreatHuntM75,
+      exportThreatHuntM75,
+      aiAssistThreatHuntM75,
+      convertHuntToFindingM75,
+      convertHuntToHypothesisM75,
+      convertHuntToCollectionM75,
+    } = await import("../lib/api");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    // 1. Preview
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 1, intent: "PROCESS_EXECUTION", validation_status: "VALID", requires_approval: true }),
+    } as Response);
+    const preview = await previewThreatHuntM75(1, { intent: "PROCESS_EXECUTION" });
+    expect(preview.validation_status).toBe("VALID");
+
+    // 2. Create proposal
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hunt_id: "HNT-101", approval_state: "READY" }),
+    } as Response);
+    const created = await createThreatHuntProposalM75(1, { question: "Find suspicious logins" });
+    expect(created.hunt_id).toBe("HNT-101");
+
+    // 3. Approve
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hunt_id: "HNT-101", approval_state: "APPROVED" }),
+    } as Response);
+    const approved = await approveThreatHuntM75(1, "HNT-101");
+    expect(approved.approval_state).toBe("APPROVED");
+
+    // 4. Execute
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hunt_id: "HNT-101", status: "MATCHED", result_count: 2, results: [{ result_id: "R1" }] }),
+    } as Response);
+    const executed = await executeThreatHuntM75(1, "HNT-101");
+    expect(executed.result_count).toBe(2);
+
+    // 5. Entity Pivot
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hunt_id: "HNT-102", status: "MATCHED", result_count: 1 }),
+    } as Response);
+    const pivot = await pivotThreatHuntEntityM75(1, "USER", "admin");
+    expect(pivot.status).toBe("MATCHED");
+
+    // 6. Temporal Pivot
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hunt_id: "HNT-103", status: "MATCHED", result_count: 3 }),
+    } as Response);
+    const temp = await pivotThreatHuntTemporalM75(1, "2026-10-07T10:00:00Z");
+    expect(temp.result_count).toBe(3);
+
+    // 7. Sequence
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ sequence_name: "Seq1", matched_steps: 2, total_steps: 2 }),
+    } as Response);
+    const seq = await executeSequenceThreatHuntM75(1, { case_id: 1, sequence_name: "Seq1", description: "D", steps: [] });
+    expect(seq.matched_steps).toBe(2);
+
+    // 8. IOC
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hunt_id: "HNT-104", status: "MATCHED", result_count: 1 }),
+    } as Response);
+    const ioc = await executeIocThreatHuntM75(1, "198.51.100.22");
+    expect(ioc.result_count).toBe(1);
+
+    // 9. Export
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ hunt_id: "HNT-101", export_content: "{}", fingerprint: "fp-123" }),
+    } as Response);
+    const exp = await exportThreatHuntM75(1, "HNT-101", "json");
+    expect(exp.fingerprint).toBe("fp-123");
+
+    // 10. AI Assist
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 1, intent: "AUTHENTICATION_ACTIVITY", question: "SSH Logins" }),
+    } as Response);
+    const ai = await aiAssistThreatHuntM75(1, "Show SSH logins");
+    expect(ai.intent).toBe("AUTHENTICATION_ACTIVITY");
+
+    // 11. Convert to Finding
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ finding_id: "FND-H1", title: "Hunt finding" }),
+    } as Response);
+    const cFind = await convertHuntToFindingM75(1, { hunt_id: "HNT-101", title: "Hunt finding" });
+    expect(cFind.finding_id).toBe("FND-H1");
+  });
 });
 
 

@@ -46,6 +46,7 @@ import { InvestigationAssessmentExplorer } from "./InvestigationAssessmentExplor
 import { InvestigationUnifiedTimeline } from "./InvestigationUnifiedTimeline";
 import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench";
 import { InvestigationFindingsWorkbench } from "./InvestigationFindingsWorkbench";
+import { InvestigationThreatHuntWorkbench } from "./InvestigationThreatHuntWorkbench";
 
 interface InvestigationIntelligencePanelProps {
   incidentId: number;
@@ -60,8 +61,8 @@ export function InvestigationIntelligencePanel({
   onSelectAlertId,
   onSelectEntityKey,
 }: InvestigationIntelligencePanelProps) {
-  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9, M5.10, M5.11, M7.2, M7.3 & M7.4
-  const [subTab, setSubTab] = useState<"ask" | "m74_findings" | "m73_workbench" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline" | "assessment" | "m72_timeline">("ask");
+  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9, M5.10, M5.11, M7.2, M7.3, M7.4 & M7.5
+  const [subTab, setSubTab] = useState<"ask" | "m75_hunting" | "m74_findings" | "m73_workbench" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline" | "assessment" | "m72_timeline">("ask");
 
   // Persistent Case State (M5.5 Continuity)
   const [caseData, setCaseData] = useState<InvestigationCase | null>(null);
@@ -521,6 +522,7 @@ export function InvestigationIntelligencePanel({
       <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-color, #e2e8f0)", paddingBottom: "4px" }}>
         {[
           { id: "ask", label: "Analyst Questions & AI" },
+          { id: "m75_hunting", label: "Threat Hunting & Queries (M7.5)" },
           { id: "m74_findings", label: "Findings & Hypotheses (M7.4)" },
           { id: "m73_workbench", label: "Evidence Workbench & Collections (M7.3)" },
           { id: "m72_timeline", label: "Unified Timeline & Replay (M7.2)" },
@@ -1307,6 +1309,16 @@ export function InvestigationIntelligencePanel({
       {/* 13. Findings & Hypothesis Workbench (M7.4) */}
       {subTab === "m74_findings" && (
         <InvestigationFindingsWorkbench
+          caseId={caseData?.case_id || incidentId}
+          onSelectEventId={onSelectEventId}
+          onSelectAlertId={onSelectAlertId}
+          onSelectEntityKey={onSelectEntityKey}
+        />
+      )}
+
+      {/* 14. Advanced Threat Hunting & Governed Queries (M7.5) */}
+      {subTab === "m75_hunting" && (
+        <InvestigationThreatHuntWorkbench
           caseId={caseData?.case_id || incidentId}
           onSelectEventId={onSelectEventId}
           onSelectAlertId={onSelectAlertId}

@@ -46,6 +46,7 @@ import { InvestigationTimeline } from "./InvestigationTimeline";
 import { InvestigationUnifiedTimeline } from "./InvestigationUnifiedTimeline";
 import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench";
 import { InvestigationFindingsWorkbench } from "./InvestigationFindingsWorkbench";
+import { InvestigationThreatHuntWorkbench } from "./InvestigationThreatHuntWorkbench";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -70,7 +71,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "ai"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "ai"
   >("graph");
 
   // Attack Path state
@@ -571,6 +572,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("findings")}
                 >
                   Findings & Hypotheses (M7.4)
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "hunting" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "hunting" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "hunting" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("hunting")}
+                >
+                  Threat Hunting (M7.5)
                 </button>
 
                 <button
@@ -1289,6 +1303,16 @@ export function IncidentWorkspaceModal({
                 {/* 10. Findings & Hypothesis Workbench Tab (M7.4) */}
                 {activeTab === "findings" && (
                   <InvestigationFindingsWorkbench
+                    caseId={incidentId}
+                    onSelectEventId={onSelectEventId}
+                    onSelectAlertId={onSelectAlertId}
+                    onSelectEntityKey={onSelectEntityKey}
+                  />
+                )}
+
+                {/* 11. Threat Hunting Workbench Tab (M7.5) */}
+                {activeTab === "hunting" && (
+                  <InvestigationThreatHuntWorkbench
                     caseId={incidentId}
                     onSelectEventId={onSelectEventId}
                     onSelectAlertId={onSelectAlertId}
