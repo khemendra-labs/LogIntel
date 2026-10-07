@@ -2602,6 +2602,140 @@ describe("Frontend API Client and Authentication", () => {
     const cFind = await convertHuntToFindingM75(1, { hunt_id: "HNT-101", title: "Hunt finding" });
     expect(cFind.finding_id).toBe("FND-H1");
   });
+
+  it("M7.6 Reporting, Evidence Package and Case Handoff API operations succeed", async () => {
+    const {
+      createCaseReportM76,
+      listCaseReportsM76,
+      getCurrentCaseReportM76,
+      getCaseReportVersionM76,
+      updateCaseReportDraftM76,
+      submitCaseReportReviewM76,
+      finalizeCaseReportM76,
+      compareCaseReportsM76,
+      exportCaseReportM76,
+      requestAIReportDraftM76,
+      createEvidencePackageM76,
+      getEvidencePackageM76,
+      prepareCaseHandoffM76,
+      acknowledgeCaseHandoffM76,
+      returnCaseHandoffM76,
+      getCurrentCaseHandoffM76,
+    } = await import("../lib/api");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    // 1. Create Report
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        report_id: "rep-101",
+        case_id: 1,
+        version: 1,
+        lifecycle_status: "DRAFT",
+        provenance_manifest: { total_references: 5, manifest_blake2b_digest: "digest-1" },
+      }),
+    } as Response);
+    const rep = await createCaseReportM76(1, { title: "Test Report" });
+    expect(rep.report_id).toBe("rep-101");
+    expect(rep.lifecycle_status).toBe("DRAFT");
+
+    // 2. List Reports
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 1, versions: [{ version: 1 }], total_versions: 1 }),
+    } as Response);
+    const list = await listCaseReportsM76(1);
+    expect(list.total_versions).toBe(1);
+
+    // 3. Get Current Report
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ report_id: "rep-101", version: 1 }),
+    } as Response);
+    const curr = await getCurrentCaseReportM76(1);
+    expect(curr.report_id).toBe("rep-101");
+
+    // 4. Update Report Draft
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ report_id: "rep-101", version: 2, lifecycle_status: "DRAFT" }),
+    } as Response);
+    const updated = await updateCaseReportDraftM76(1, "rep-101", { title: "Updated Report" });
+    expect(updated.version).toBe(2);
+
+    // 5. Submit for Review
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ report_id: "rep-101", version: 3, lifecycle_status: "REVIEW_READY" }),
+    } as Response);
+    const sub = await submitCaseReportReviewM76(1, "rep-101", { review_notes: "Ready" });
+    expect(sub.lifecycle_status).toBe("REVIEW_READY");
+
+    // 6. Finalize Report
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ report_id: "rep-101", version: 4, lifecycle_status: "FINALIZED" }),
+    } as Response);
+    const fin = await finalizeCaseReportM76(1, "rep-101", { reviewed_by: "SecLead-1" });
+    expect(fin.lifecycle_status).toBe("FINALIZED");
+
+    // 7. Compare Reports
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 1, differences_count: 2, section_diffs: [] }),
+    } as Response);
+    const cmp = await compareCaseReportsM76(1, 1, 2);
+    expect(cmp.differences_count).toBe(2);
+
+    // 8. Export Report
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ case_id: 1, format: "json", fingerprint: "fp-rep" }),
+    } as Response);
+    const exp = await exportCaseReportM76(1, 1, "json");
+    expect(exp.fingerprint).toBe("fp-rep");
+
+    // 9. AI Draft
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ advisory_only: true, content_origin: "AI_GENERATED_DRAFT" }),
+    } as Response);
+    const ai = await requestAIReportDraftM76(1, { section_to_draft: "executive_summary" });
+    expect(ai.advisory_only).toBe(true);
+
+    // 10. Evidence Package
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ manifest: { package_id: "pkg-1", status: "COMPLETED" } }),
+    } as Response);
+    const pkg = await createEvidencePackageM76(1);
+    expect(pkg.manifest.package_id).toBe("pkg-1");
+
+    // 11. Prepare Handoff
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ handoff_id: "hnd-1", status: "READY_FOR_HANDOFF" }),
+    } as Response);
+    const hnd = await prepareCaseHandoffM76(1, { target_operator: "SecAnalyst-2" });
+    expect(hnd.status).toBe("READY_FOR_HANDOFF");
+
+    // 12. Acknowledge Handoff
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ handoff_id: "hnd-1", status: "ACKNOWLEDGED" }),
+    } as Response);
+    const ack = await acknowledgeCaseHandoffM76(1, "hnd-1");
+    expect(ack.status).toBe("ACKNOWLEDGED");
+
+    // 13. Return Handoff
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ handoff_id: "hnd-1", status: "RETURNED_FOR_FOLLOWUP" }),
+    } as Response);
+    const ret = await returnCaseHandoffM76(1, "hnd-1", { return_reason: "Needs more info" });
+    expect(ret.status).toBe("RETURNED_FOR_FOLLOWUP");
+  });
 });
 
 

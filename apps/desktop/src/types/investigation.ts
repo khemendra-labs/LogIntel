@@ -2082,3 +2082,241 @@ export interface HuntHistoryRecord {
   execution_status: string;
 }
 
+// =============================================================================
+// M7.6 Investigation Reporting, Evidence Package & Case Handoff Interfaces
+// =============================================================================
+
+export type ReportLifecycleStatus =
+  | "DRAFT"
+  | "REVIEW_READY"
+  | "UNDER_REVIEW"
+  | "FINALIZED"
+  | "SUPERSEDED";
+
+export type ReportContentOrigin =
+  | "AUTHORITATIVE_REFERENCE"
+  | "ANALYST_AUTHORED"
+  | "SYSTEM_GENERATED"
+  | "AI_GENERATED_DRAFT"
+  | "DERIVED_SUMMARY";
+
+export type HandoffStatus =
+  | "NOT_READY"
+  | "READY_FOR_HANDOFF"
+  | "HANDED_OFF"
+  | "ACKNOWLEDGED"
+  | "RETURNED_FOR_FOLLOWUP";
+
+export type PackageLifecycleStatus = "CREATING" | "COMPLETED" | "FAILED";
+
+export interface ProvenanceManifestEntry {
+  source_type: string;
+  source_id: string;
+  citation_tag: string;
+  epistemic_status: string;
+  cryptographic_source_hash: string;
+  selection_reason?: string | null;
+}
+
+export interface DeterministicProvenanceManifest {
+  case_id: number;
+  report_id: string;
+  report_version: number;
+  generated_at: string;
+  total_references: number;
+  entries: ProvenanceManifestEntry[];
+  manifest_blake2b_digest: string;
+}
+
+export interface StructuredReport {
+  report_id: string;
+  case_id: number;
+  version: number;
+  lifecycle_status: ReportLifecycleStatus;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+
+  case_identification: {
+    case_id: number;
+    title: string;
+    incident_id: number;
+    owner: string;
+    status: string;
+    case_version: number;
+    created_at: string;
+    updated_at: string;
+  };
+  investigation_scope: {
+    hosts: string[];
+    users: string[];
+    ip_subnets: string[];
+    time_window_start?: string | null;
+    time_window_end?: string | null;
+    boundary_notes?: string | null;
+  };
+  executive_summary: {
+    summary_text: string;
+    content_origin: ReportContentOrigin;
+    generated_by_model?: string | null;
+  };
+  investigation_objective: {
+    primary_objective: string;
+    triggering_indicators: string[];
+  };
+  evidence_sources: {
+    sources_inspected: string[];
+    total_telemetry_events_considered: number;
+  };
+  evidence_collections: {
+    collections: Array<Record<string, any>>;
+  };
+  unified_timeline_summary: {
+    milestones: Array<Record<string, any>>;
+    earliest_observed_event?: string | null;
+    latest_observed_event?: string | null;
+  };
+  key_findings: {
+    findings: Array<Record<string, any>>;
+  };
+  hypotheses: {
+    hypotheses: Array<Record<string, any>>;
+  };
+  threat_hunting_activity: {
+    hunts_executed: Array<Record<string, any>>;
+  };
+  evidence_correlation: {
+    correlated_clusters: Array<Record<string, any>>;
+    multi_host_traces: Array<Record<string, any>>;
+  };
+  case_assessment: {
+    assessment_state?: string | null;
+    closure_readiness?: string | null;
+    analyst_assessment_text?: string | null;
+  };
+  evidence_gaps: {
+    gaps: Array<Record<string, any>>;
+  };
+  outstanding_questions: {
+    questions: Array<Record<string, any>>;
+  };
+  analyst_interpretation: {
+    interpretation_notes: string;
+    author: string;
+  };
+  conclusion: {
+    current_conclusion: string;
+    requires_further_monitoring: boolean;
+  };
+  limitations: {
+    limitations: string[];
+  };
+  handoff_notes: {
+    handoff_instructions: string;
+    recommended_next_actions: string[];
+  };
+  provenance_manifest: DeterministicProvenanceManifest;
+  metadata: {
+    report_id: string;
+    case_id: number;
+    version: number;
+    lifecycle_status: ReportLifecycleStatus;
+    created_by: string;
+    created_at: string;
+    updated_at: string;
+    reviewed_by?: string | null;
+    reviewed_at?: string | null;
+    blake2b_fingerprint: string;
+  };
+}
+
+export interface ReportVersionSummary {
+  report_id: string;
+  case_id: number;
+  version: number;
+  title: string;
+  lifecycle_status: ReportLifecycleStatus;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  is_final: boolean;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  blake2b_fingerprint: string;
+  references_count: number;
+}
+
+export interface ReportComparisonSectionDiff {
+  section_name: string;
+  status: "IDENTICAL" | "MODIFIED" | "ADDED" | "REMOVED";
+  details?: Record<string, any>;
+}
+
+export interface ReportComparisonResult {
+  case_id: number;
+  report_id: string;
+  version_older: number;
+  version_newer: number;
+  compared_at: string;
+  differences_count: number;
+  section_diffs: ReportComparisonSectionDiff[];
+  older_fingerprint: string;
+  newer_fingerprint: string;
+}
+
+export interface EvidencePackageManifest {
+  package_id: string;
+  case_id: number;
+  report_id: string;
+  report_version: number;
+  created_by: string;
+  created_at: string;
+  status: PackageLifecycleStatus;
+  schema_version: string;
+  generator_version: string;
+  included_artifacts: string[];
+  source_reference_count: number;
+  package_blake2b_digest: string;
+}
+
+export interface EvidencePackage {
+  manifest: EvidencePackageManifest;
+  report_snapshot: StructuredReport;
+  artifacts_json: Record<string, any>;
+}
+
+export interface CaseHandoffPacket {
+  handoff_id: string;
+  case_id: number;
+  report_id: string;
+  report_version: number;
+  status: HandoffStatus;
+  prepared_by: string;
+  prepared_at: string;
+  handed_off_to?: string | null;
+  handed_off_at?: string | null;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  return_reason?: string | null;
+  investigated_scope_summary: string;
+  observed_facts_count: number;
+  active_hypotheses_count: number;
+  evidence_gaps_count: number;
+  outstanding_questions: string[];
+  recommended_next_actions: string[];
+  operational_notes?: string | null;
+}
+
+export interface ReportExportResponse {
+  case_id: number;
+  report_id: string;
+  version: number;
+  format: string;
+  content: string;
+  fingerprint: string;
+  exported_at: string;
+}
+
+

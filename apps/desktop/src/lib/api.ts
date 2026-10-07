@@ -143,6 +143,12 @@ import type {
   HuntHistoryRecord,
   GovernedQueryModel,
   HuntIntent,
+  StructuredReport,
+  ReportVersionSummary,
+  ReportComparisonResult,
+  EvidencePackage,
+  CaseHandoffPacket,
+  ReportExportResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -3237,6 +3243,345 @@ export async function convertHuntToCollectionM75(caseId: number, req: Record<str
   }
   return res.json();
 }
+
+// =============================================================================
+// M7.6 Investigation Reporting, Evidence Package & Case Handoff API Functions
+// =============================================================================
+
+export async function createCaseReportM76(
+  caseId: number,
+  req: {
+    title: string;
+    objective?: string;
+    selected_evidence_ids?: string[];
+    selected_collection_ids?: string[];
+    selected_finding_ids?: string[];
+    selected_hypothesis_ids?: string[];
+    selected_hunt_ids?: string[];
+    analyst_notes?: string;
+  },
+  actor: string = "SecAnalyst-1"
+): Promise<StructuredReport> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Create report draft failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function listCaseReportsM76(
+  caseId: number
+): Promise<{ case_id: number; versions: ReportVersionSummary[]; total_versions: number }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `List case reports failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCurrentCaseReportM76(caseId: number): Promise<StructuredReport> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/current`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Get current report failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCaseReportVersionM76(caseId: number, version: number): Promise<StructuredReport> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/versions/${version}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Get report version failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateCaseReportDraftM76(
+  caseId: number,
+  reportId: string,
+  req: {
+    title?: string;
+    executive_summary?: string;
+    analyst_interpretation?: string;
+    conclusion?: string;
+    handoff_instructions?: string;
+    recommended_next_actions?: string[];
+    limitations?: string[];
+  },
+  actor: string = "SecAnalyst-1"
+): Promise<StructuredReport> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/${reportId}/draft?actor=${encodeURIComponent(actor)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Update report draft failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function submitCaseReportReviewM76(
+  caseId: number,
+  reportId: string,
+  req: { review_notes?: string },
+  actor: string = "SecAnalyst-1"
+): Promise<StructuredReport> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/${reportId}/submit-review?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Submit report review failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function finalizeCaseReportM76(
+  caseId: number,
+  reportId: string,
+  req: { reviewed_by: string; finalization_notes?: string },
+  actor: string = "SecAnalyst-1"
+): Promise<StructuredReport> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/${reportId}/finalize?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Finalize report failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function compareCaseReportsM76(
+  caseId: number,
+  versionOlder: number,
+  versionNewer: number,
+  reportId?: string
+): Promise<ReportComparisonResult> {
+  const token = await getEngineToken();
+  const params = new URLSearchParams({
+    version_older: String(versionOlder),
+    version_newer: String(versionNewer),
+  });
+  if (reportId) params.append("report_id", reportId);
+
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/compare?${params.toString()}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Compare reports failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportCaseReportM76(
+  caseId: number,
+  version?: number,
+  format: string = "json"
+): Promise<ReportExportResponse> {
+  const token = await getEngineToken();
+  const params = new URLSearchParams({ format });
+  if (version !== undefined) params.append("version", String(version));
+
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/export?${params.toString()}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Export report failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function requestAIReportDraftM76(
+  caseId: number,
+  req: { section_to_draft: string; custom_guidance?: string },
+  actor: string = "SecAnalyst-1"
+): Promise<any> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/ai-draft?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `AI draft failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createEvidencePackageM76(
+  caseId: number,
+  req: { report_version?: number; package_notes?: string } = {},
+  actor: string = "SecAnalyst-1"
+): Promise<EvidencePackage> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/packages?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Create evidence package failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getEvidencePackageM76(caseId: number, packageId: string): Promise<EvidencePackage> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/packages/${packageId}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Get evidence package failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function prepareCaseHandoffM76(
+  caseId: number,
+  req: {
+    target_operator: string;
+    report_version?: number;
+    operational_notes?: string;
+    recommended_next_actions?: string[];
+  },
+  actor: string = "SecAnalyst-1"
+): Promise<CaseHandoffPacket> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/handoff/prepare?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Prepare case handoff failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function acknowledgeCaseHandoffM76(
+  caseId: number,
+  handoffId: string,
+  req: { acknowledgement_notes?: string } = {},
+  actor: string = "SecAnalyst-2"
+): Promise<CaseHandoffPacket> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/handoff/${handoffId}/acknowledge?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Acknowledge case handoff failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function returnCaseHandoffM76(
+  caseId: number,
+  handoffId: string,
+  req: { return_reason: string },
+  actor: string = "SecAnalyst-2"
+): Promise<CaseHandoffPacket> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/handoff/${handoffId}/return?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Return case handoff failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getCurrentCaseHandoffM76(caseId: number): Promise<CaseHandoffPacket> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/handoff/current`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Get current case handoff failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 
 
 

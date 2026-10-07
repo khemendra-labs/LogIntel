@@ -114,8 +114,8 @@ class CaseReportVersion(BaseModel):
     facts: List[Dict[str, Any]] = Field(default_factory=list)
     inferences: List[Dict[str, Any]] = Field(default_factory=list)
     hypotheses: List[Dict[str, Any]] = Field(default_factory=list)
-    unknowns: List[str] = Field(default_factory=list)
-    recommendations: List[str] = Field(default_factory=list)
+    unknowns: List[Any] = Field(default_factory=list)
+    recommendations: List[Any] = Field(default_factory=list)
     analyst_notes: Optional[str] = None
     generated_by: ContentOrigin = ContentOrigin.AI_GENERATED
     model_id: Optional[str] = None

@@ -47,6 +47,7 @@ import { InvestigationUnifiedTimeline } from "./InvestigationUnifiedTimeline";
 import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench";
 import { InvestigationFindingsWorkbench } from "./InvestigationFindingsWorkbench";
 import { InvestigationThreatHuntWorkbench } from "./InvestigationThreatHuntWorkbench";
+import { InvestigationReportWorkbench } from "./InvestigationReportWorkbench";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -71,7 +72,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "ai"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "report" | "ai"
   >("graph");
 
   // Attack Path state
@@ -585,6 +586,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("hunting")}
                 >
                   Threat Hunting (M7.5)
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "report" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "report" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "report" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("report")}
+                >
+                  Investigation Report (M7.6)
                 </button>
 
                 <button
@@ -1317,6 +1331,15 @@ export function IncidentWorkspaceModal({
                     onSelectEventId={onSelectEventId}
                     onSelectAlertId={onSelectAlertId}
                     onSelectEntityKey={onSelectEntityKey}
+                  />
+                )}
+
+                {/* 12. Investigation Report & Handoff Tab (M7.6) */}
+                {activeTab === "report" && (
+                  <InvestigationReportWorkbench
+                    caseId={incidentId}
+                    onSelectEventId={onSelectEventId}
+                    onSelectAlertId={onSelectAlertId}
                   />
                 )}
               </div>

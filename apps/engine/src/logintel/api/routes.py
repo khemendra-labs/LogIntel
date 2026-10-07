@@ -3781,7 +3781,6 @@ def execute_approved_hunt_endpoint(case_id: int, hunt_id: str, req: Optional[Dic
             raise HTTPException(status_code=400, detail=str(e))
         raise HTTPException(status_code=404, detail=str(e))
 
-
 @protected_router.get("/cases/{case_id}/hunts/{hunt_id}")
 def get_hunt_detail_endpoint(case_id: int, hunt_id: str) -> Dict[str, Any]:
     """Retrieve details and results of a completed or draft hunt (M7.5)."""
@@ -3794,7 +3793,249 @@ def get_hunt_detail_endpoint(case_id: int, hunt_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# M7.6 Investigation Reporting, Evidence Package & Case Handoff Endpoints
+# -----------------------------------------------------------------------------
+
+from logintel.reporting.models import (
+    AIReportDraftRequest,
+    AcknowledgeHandoffRequest,
+    CreateEvidencePackageRequest,
+    CreateReportRequest,
+    FinalizeReportRequest,
+    PrepareHandoffRequest,
+    ReturnHandoffRequest,
+    SubmitReportReviewRequest,
+    UpdateReportDraftRequest,
+)
+from logintel.reporting.service import reporting_service
+
+
+@protected_router.post("/cases/{case_id}/reports")
+def create_case_report_endpoint(
+    case_id: int,
+    req: CreateReportRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Create a new structured investigation report draft (M7.6)."""
+    try:
+        report = reporting_service.create_report_draft(case_id, req, actor=actor)
+        return report.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/reports")
+def list_case_reports_endpoint(case_id: int) -> Dict[str, Any]:
+    """List all historical report versions for a case (M7.6)."""
+    try:
+        versions = reporting_service.list_report_versions(case_id)
+        return {"case_id": case_id, "versions": versions, "total_versions": len(versions)}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/reports/current")
+def get_current_case_report_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve the latest structured investigation report for a case (M7.6)."""
+    try:
+        report = reporting_service.get_report(case_id)
+        return report.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/reports/versions/{version}")
+def get_case_report_version_endpoint(case_id: int, version: int) -> Dict[str, Any]:
+    """Retrieve a specific historical report version for a case (M7.6)."""
+    try:
+        report = reporting_service.get_report(case_id, version=version)
+        return report.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.patch("/cases/{case_id}/reports/{report_id}/draft")
+def update_case_report_draft_endpoint(
+    case_id: int,
+    report_id: str,
+    req: UpdateReportDraftRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Update editable sections of a report draft, creating an immutable revision (M7.6)."""
+    try:
+        report = reporting_service.update_report_draft(case_id, report_id, req, actor=actor)
+        return report.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/reports/{report_id}/submit-review")
+def submit_report_review_endpoint(
+    case_id: int,
+    report_id: str,
+    req: SubmitReportReviewRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Submit report draft for peer/supervisor review (M7.6)."""
+    try:
+        report = reporting_service.submit_report_for_review(case_id, report_id, req, actor=actor)
+        return report.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/reports/{report_id}/finalize")
+def finalize_case_report_endpoint(
+    case_id: int,
+    report_id: str,
+    req: FinalizeReportRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Finalize investigation report after integrity & authorization validation (M7.6)."""
+    try:
+        report = reporting_service.finalize_report(case_id, report_id, req, actor=actor)
+        return report.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/reports/compare")
+def compare_case_reports_endpoint(
+    case_id: int,
+    version_older: int,
+    version_newer: int,
+    report_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Deterministically compare two report versions of a case (M7.6)."""
+    try:
+        res = reporting_service.compare_report_versions(
+            case_id, version_older=version_older, version_newer=version_newer, report_id=report_id
+        )
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/reports/export")
+def export_case_report_endpoint(
+    case_id: int,
+    version: Optional[int] = None,
+    format: str = "json",
+) -> Dict[str, Any]:
+    """Export investigation report deterministically in JSON, CSV, or Markdown format (M7.6)."""
+    try:
+        res = reporting_service.export_report(case_id, version=version, format_type=format)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/reports/ai-draft")
+def request_ai_report_draft_endpoint(
+    case_id: int,
+    req: AIReportDraftRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Request local advisory-only AI draft for a report section with injection containment (M7.6)."""
+    try:
+        return reporting_service.ai_draft_section(case_id, req, actor=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# -----------------------------------------------------------------------------
+# M7.6 Evidence Package Endpoints
+# -----------------------------------------------------------------------------
+
+@protected_router.post("/cases/{case_id}/packages")
+def create_evidence_package_endpoint(
+    case_id: int,
+    req: CreateEvidencePackageRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Generate a deterministic evidence package referencing case materials (M7.6)."""
+    try:
+        pkg = reporting_service.create_evidence_package(case_id, req, actor=actor)
+        return pkg.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/packages/{package_id}")
+def get_evidence_package_endpoint(case_id: int, package_id: str) -> Dict[str, Any]:
+    """Retrieve an assembled evidence package by package ID (M7.6)."""
+    try:
+        pkg = reporting_service.get_evidence_package(case_id, package_id)
+        return pkg.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# -----------------------------------------------------------------------------
+# M7.6 Case Handoff Endpoints
+# -----------------------------------------------------------------------------
+
+@protected_router.post("/cases/{case_id}/handoff/prepare")
+def prepare_case_handoff_endpoint(
+    case_id: int,
+    req: PrepareHandoffRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Prepare an operational case handoff packet (M7.6)."""
+    try:
+        pkt = reporting_service.prepare_handoff(case_id, req, actor=actor)
+        return pkt.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/handoff/{handoff_id}/acknowledge")
+def acknowledge_case_handoff_endpoint(
+    case_id: int,
+    handoff_id: str,
+    req: AcknowledgeHandoffRequest,
+    actor: str = "SecAnalyst-2",
+) -> Dict[str, Any]:
+    """Acknowledge receipt and accept custody of a transferred case (M7.6)."""
+    try:
+        pkt = reporting_service.acknowledge_handoff(case_id, handoff_id, req, actor=actor)
+        return pkt.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/handoff/{handoff_id}/return")
+def return_case_handoff_endpoint(
+    case_id: int,
+    handoff_id: str,
+    req: ReturnHandoffRequest,
+    actor: str = "SecAnalyst-2",
+) -> Dict[str, Any]:
+    """Return transferred case for additional investigative followup (M7.6)."""
+    try:
+        pkt = reporting_service.return_handoff(case_id, handoff_id, req, actor=actor)
+        return pkt.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/handoff/current")
+def get_current_case_handoff_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve the current active operational handoff packet for a case (M7.6)."""
+    try:
+        pkt = reporting_service.get_current_handoff(case_id)
+        if not pkt:
+            raise HTTPException(status_code=404, detail=f"No active handoff packet found for case #{case_id}")
+        return pkt.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
+
 
 
 
