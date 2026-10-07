@@ -9,10 +9,10 @@ from logintel.storage.case_repo import case_repo
 
 @pytest.fixture
 def perf_case():
-    case = case_repo.get_case(1, resolve_evidence=False)
+    case = case_repo.get_case_by_incident(7399, resolve_evidence=False)
     if not case:
         case = case_repo.create_case(
-            incident_id=1,
+            incident_id=7399,
             title="M7.3 Performance Benchmark Case",
             description="Synthetic case for measuring Evidence Collection latencies",
             created_by="SecAnalyst-1",
