@@ -14,14 +14,13 @@ from logintel.storage.case_repo import case_repo
 
 @pytest.fixture
 def bench_case():
-    case = case_repo.get_case_by_incident(200, resolve_evidence=False)
-    if not case:
-        case = case_repo.create_case(
-            incident_id=200,
-            title="M7.4 Benchmark Case",
-            description="Synthetic case for performance measurements",
-            created_by="SecAnalyst-1",
-        )
+    t_inc = int(time.time() * 1000) % 50000 + 740000
+    case = case_repo.create_case(
+        incident_id=t_inc,
+        title="M7.4 Benchmark Case",
+        description="Synthetic case for performance measurements",
+        created_by="SecAnalyst-1",
+    )
     case_id = case.case_id
     # Clean up previous benchmark findings and hypotheses for test idempotency
     existing = findings_workbench_service.get_findings(case_id)

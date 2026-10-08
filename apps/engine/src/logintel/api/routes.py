@@ -4034,6 +4034,175 @@ def get_current_case_handoff_endpoint(case_id: int) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# M7.7 Case Comparison, Campaign Correlation & Cross-Investigation Analysis
+# -----------------------------------------------------------------------------
+
+from logintel.comparison import (
+    ComparisonAISummaryRequest,
+    CreateCaseComparisonRequest,
+    ReviewCorrelationRequest,
+    case_comparison_service,
+)
+
+
+@protected_router.post("/cases/{case_id}/comparison")
+def create_case_comparison_endpoint(
+    case_id: int,
+    req: CreateCaseComparisonRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Execute deterministic multi-case comparison and campaign correlation (M7.7)."""
+    try:
+        res = case_comparison_service.compare_cases(case_id, req, actor=actor)
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
+
+
+@protected_router.get("/cases/{case_id}/comparison/{comparison_id}")
+def get_case_comparison_endpoint(
+    case_id: int,
+    comparison_id: str,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Retrieve full case comparison and correlation result (M7.7)."""
+    try:
+        res = case_comparison_service.get_comparison(case_id, comparison_id, actor=actor)
+        if not res:
+            raise HTTPException(status_code=404, detail=f"Comparison {comparison_id} not found")
+        return res.model_dump(mode="json")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/comparison/{comparison_id}/entities")
+def get_comparison_entities_endpoint(
+    case_id: int,
+    comparison_id: str,
+    actor: str = "SecAnalyst-1",
+) -> List[Dict[str, Any]]:
+    """Retrieve shared entities breakdown for a comparison (M7.7)."""
+    try:
+        res = case_comparison_service.get_comparison(case_id, comparison_id, actor=actor)
+        if not res:
+            raise HTTPException(status_code=404, detail=f"Comparison {comparison_id} not found")
+        return [e.model_dump(mode="json") for e in res.shared_entities]
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/comparison/{comparison_id}/timeline")
+def get_comparison_timeline_endpoint(
+    case_id: int,
+    comparison_id: str,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Retrieve comparative temporal alignment and window analysis (M7.7)."""
+    try:
+        res = case_comparison_service.get_comparison(case_id, comparison_id, actor=actor)
+        if not res:
+            raise HTTPException(status_code=404, detail=f"Comparison {comparison_id} not found")
+        return res.temporal_overlap.model_dump(mode="json")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/comparison/{comparison_id}/correlations")
+def list_comparison_correlations_endpoint(
+    case_id: int,
+    comparison_id: str,
+    actor: str = "SecAnalyst-1",
+) -> List[Dict[str, Any]]:
+    """List derived campaign correlation candidates under analyst review (M7.7)."""
+    try:
+        res = case_comparison_service.get_comparison(case_id, comparison_id, actor=actor)
+        if not res:
+            raise HTTPException(status_code=404, detail=f"Comparison {comparison_id} not found")
+        return [c.model_dump(mode="json") for c in res.correlation_candidates]
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/comparison/{comparison_id}/correlations/{candidate_id}/review")
+def review_correlation_candidate_endpoint(
+    case_id: int,
+    comparison_id: str,
+    candidate_id: str,
+    req: ReviewCorrelationRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Submit analyst review status and notes for a correlation candidate (M7.7)."""
+    try:
+        cand = case_comparison_service.review_correlation_candidate(
+            case_id=case_id,
+            comparison_id=comparison_id,
+            candidate_id=candidate_id,
+            review=req,
+            actor=actor,
+        )
+        return cand.model_dump(mode="json")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/comparison/{comparison_id}/ai-summary")
+def generate_comparison_ai_summary_endpoint(
+    case_id: int,
+    comparison_id: str,
+    req: ComparisonAISummaryRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Generate local advisory AI summary of comparison results with prompt containment (M7.7)."""
+    try:
+        summary = case_comparison_service.generate_ai_summary(
+            case_id=case_id,
+            comparison_id=comparison_id,
+            request=req,
+            actor=actor,
+        )
+        return summary.model_dump(mode="json")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/comparison/{comparison_id}/export")
+def export_comparison_endpoint(
+    case_id: int,
+    comparison_id: str,
+    format: str = Query("json", pattern="^(json|csv|markdown|md)$"),
+    actor: str = "SecAnalyst-1",
+) -> Response:
+    """Export comparison results as byte-deterministic JSON, CSV, or Markdown (M7.7)."""
+    try:
+        exp = case_comparison_service.export_comparison(
+            case_id=case_id,
+            comparison_id=comparison_id,
+            format=format,
+            actor=actor,
+        )
+        return Response(
+            content=exp["content"],
+            media_type=exp["media_type"],
+            headers={
+                "Content-Disposition": f'attachment; filename="{exp["filename"]}"',
+                "Content-Type": f'{exp["media_type"]}; charset=utf-8',
+            },
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

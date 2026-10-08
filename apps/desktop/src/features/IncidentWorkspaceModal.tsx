@@ -48,6 +48,7 @@ import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench
 import { InvestigationFindingsWorkbench } from "./InvestigationFindingsWorkbench";
 import { InvestigationThreatHuntWorkbench } from "./InvestigationThreatHuntWorkbench";
 import { InvestigationReportWorkbench } from "./InvestigationReportWorkbench";
+import { InvestigationCaseComparisonWorkbench } from "./InvestigationCaseComparisonWorkbench";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -72,7 +73,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "report" | "ai"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "report" | "comparison" | "ai"
   >("graph");
 
   // Attack Path state
@@ -599,6 +600,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("report")}
                 >
                   Investigation Report (M7.6)
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "comparison" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "comparison" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "comparison" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("comparison")}
+                >
+                  Case Comparison (M7.7)
                 </button>
 
                 <button
@@ -1340,6 +1354,13 @@ export function IncidentWorkspaceModal({
                     caseId={incidentId}
                     onSelectEventId={onSelectEventId}
                     onSelectAlertId={onSelectAlertId}
+                  />
+                )}
+
+                {/* 13. Case Comparison & Campaign Correlation Tab (M7.7) */}
+                {activeTab === "comparison" && (
+                  <InvestigationCaseComparisonWorkbench
+                    primaryCaseId={incidentId}
                   />
                 )}
               </div>

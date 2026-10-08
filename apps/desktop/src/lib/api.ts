@@ -3582,6 +3582,184 @@ export async function getCurrentCaseHandoffM76(caseId: number): Promise<CaseHand
   return res.json();
 }
 
+// ----------------------------------------------------------------------------
+// M7.7 Case Comparison & Campaign Correlation API Client Methods
+// ----------------------------------------------------------------------------
+
+import type {
+  CampaignCorrelationCandidate,
+  CaseComparisonResult,
+  ComparisonAISummaryResponse,
+  CreateCaseComparisonRequest,
+  ReviewCorrelationRequest,
+  SharedEntity,
+  TemporalOverlapResult,
+} from "../types/investigation";
+
+export async function createCaseComparison(
+  caseId: number,
+  req: CreateCaseComparisonRequest,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseComparisonResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/comparison?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Create case comparison failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseComparison(
+  caseId: number,
+  comparisonId: string,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseComparisonResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/comparison/${comparisonId}?actor=${encodeURIComponent(actor)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch case comparison failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchComparisonEntities(
+  caseId: number,
+  comparisonId: string,
+  actor: string = "SecAnalyst-1"
+): Promise<SharedEntity[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/comparison/${comparisonId}/entities?actor=${encodeURIComponent(actor)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch comparison entities failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchComparisonTimeline(
+  caseId: number,
+  comparisonId: string,
+  actor: string = "SecAnalyst-1"
+): Promise<TemporalOverlapResult> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/comparison/${comparisonId}/timeline?actor=${encodeURIComponent(actor)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch comparison timeline failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchComparisonCorrelations(
+  caseId: number,
+  comparisonId: string,
+  actor: string = "SecAnalyst-1"
+): Promise<CampaignCorrelationCandidate[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/comparison/${comparisonId}/correlations?actor=${encodeURIComponent(actor)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch comparison correlations failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function reviewCorrelationCandidate(
+  caseId: number,
+  comparisonId: string,
+  candidateId: string,
+  req: ReviewCorrelationRequest,
+  actor: string = "SecAnalyst-1"
+): Promise<CampaignCorrelationCandidate> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/comparison/${comparisonId}/correlations/${candidateId}/review?actor=${encodeURIComponent(actor)}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(req),
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Review correlation candidate failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function generateComparisonAISummary(
+  caseId: number,
+  comparisonId: string,
+  req: { prompt_instruction?: string } = {},
+  actor: string = "SecAnalyst-1"
+): Promise<ComparisonAISummaryResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/comparison/${comparisonId}/ai-summary?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Generate comparison AI summary failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportCaseComparison(
+  caseId: number,
+  comparisonId: string,
+  format: "json" | "csv" | "markdown" = "json",
+  actor: string = "SecAnalyst-1"
+): Promise<string> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/comparison/${comparisonId}/export?format=${encodeURIComponent(format)}&actor=${encodeURIComponent(actor)}`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Export case comparison failed: ${res.statusText}`);
+  }
+  return res.text();
+}
+
+
 
 
 

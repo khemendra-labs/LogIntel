@@ -48,6 +48,7 @@ import { InvestigationEvidenceWorkbench } from "./InvestigationEvidenceWorkbench
 import { InvestigationFindingsWorkbench } from "./InvestigationFindingsWorkbench";
 import { InvestigationThreatHuntWorkbench } from "./InvestigationThreatHuntWorkbench";
 import { InvestigationReportWorkbench } from "./InvestigationReportWorkbench";
+import { InvestigationCaseComparisonWorkbench } from "./InvestigationCaseComparisonWorkbench";
 
 interface InvestigationIntelligencePanelProps {
   incidentId: number;
@@ -62,8 +63,8 @@ export function InvestigationIntelligencePanel({
   onSelectAlertId,
   onSelectEntityKey,
 }: InvestigationIntelligencePanelProps) {
-  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9, M5.10, M5.11, M7.2, M7.3, M7.4, M7.5 & M7.6
-  const [subTab, setSubTab] = useState<"ask" | "m76_report" | "m75_hunting" | "m74_findings" | "m73_workbench" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline" | "assessment" | "m72_timeline">("ask");
+  // Navigation sub-tabs for M5.4, M5.5, M5.8, M5.9, M5.10, M5.11, M7.2, M7.3, M7.4, M7.5, M7.6 & M7.7
+  const [subTab, setSubTab] = useState<"ask" | "m77_comparison" | "m76_report" | "m75_hunting" | "m74_findings" | "m73_workbench" | "hypotheses" | "queries" | "summary" | "report" | "audit" | "graph" | "correlation" | "timeline" | "assessment" | "m72_timeline">("ask");
 
   // Persistent Case State (M5.5 Continuity)
   const [caseData, setCaseData] = useState<InvestigationCase | null>(null);
@@ -523,6 +524,7 @@ export function InvestigationIntelligencePanel({
       <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-color, #e2e8f0)", paddingBottom: "4px" }}>
         {[
           { id: "ask", label: "Analyst Questions & AI" },
+          { id: "m77_comparison", label: "Case Comparison & Campaign Correlation (M7.7)" },
           { id: "m76_report", label: "Investigation Report & Handoff (M7.6)" },
           { id: "m75_hunting", label: "Threat Hunting & Queries (M7.5)" },
           { id: "m74_findings", label: "Findings & Hypotheses (M7.4)" },
@@ -1334,6 +1336,13 @@ export function InvestigationIntelligencePanel({
           caseId={caseData?.case_id || incidentId}
           onSelectEventId={onSelectEventId}
           onSelectAlertId={onSelectAlertId}
+        />
+      )}
+
+      {/* 16. Case Comparison, Campaign Correlation & Cross-Investigation Analysis (M7.7) */}
+      {subTab === "m77_comparison" && (
+        <InvestigationCaseComparisonWorkbench
+          primaryCaseId={caseData?.case_id || incidentId}
         />
       )}
     </div>

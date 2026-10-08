@@ -2736,6 +2736,107 @@ describe("Frontend API Client and Authentication", () => {
     const ret = await returnCaseHandoffM76(1, "hnd-1", { return_reason: "Needs more info" });
     expect(ret.status).toBe("RETURNED_FOR_FOLLOWUP");
   });
+
+  it("M7.7 Case Comparison & Campaign Correlation API operations succeed", async () => {
+    setEngineToken("m77_token");
+
+    const {
+      createCaseComparison,
+      fetchCaseComparison,
+      fetchComparisonEntities,
+      fetchComparisonTimeline,
+      fetchComparisonCorrelations,
+      reviewCorrelationCandidate,
+      generateComparisonAISummary,
+      exportCaseComparison,
+    } = await import("../lib/api");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    // 1. Create Comparison
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        comparison_id: "cmp-1-abc",
+        primary_case_id: 1,
+        compared_case_ids: [2],
+        shared_entities: [{ entity_type: "IP", entity_value: "10.0.0.1" }],
+        correlation_candidates: [{ candidate_id: "cand-1", correlation_type: "SHARED_IP" }],
+      }),
+    } as Response);
+    const comp = await createCaseComparison(1, { compared_case_ids: [2] });
+    expect(comp.comparison_id).toBe("cmp-1-abc");
+    expect(comp.shared_entities.length).toBe(1);
+
+    // 2. Fetch Comparison
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => comp,
+    } as Response);
+    const fetchedComp = await fetchCaseComparison(1, "cmp-1-abc");
+    expect(fetchedComp.comparison_id).toBe("cmp-1-abc");
+
+    // 3. Fetch Entities
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ entity_type: "IP", entity_value: "10.0.0.1" }],
+    } as Response);
+    const ents = await fetchComparisonEntities(1, "cmp-1-abc");
+    expect(ents.length).toBe(1);
+
+    // 4. Fetch Timeline
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ relationship: "OVERLAPPING", delta_seconds: 3600 }),
+    } as Response);
+    const timeline = await fetchComparisonTimeline(1, "cmp-1-abc");
+    expect(timeline.relationship).toBe("OVERLAPPING");
+
+    // 5. Fetch Correlations
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ candidate_id: "cand-1", correlation_type: "SHARED_IP" }],
+    } as Response);
+    const corrs = await fetchComparisonCorrelations(1, "cmp-1-abc");
+    expect(corrs.length).toBe(1);
+
+    // 6. Review Correlation
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        candidate_id: "cand-1",
+        analyst_review_status: "CORROBORATED",
+        corroboration_nature: "CORROBORATING",
+      }),
+    } as Response);
+    const reviewed = await reviewCorrelationCandidate(1, "cmp-1-abc", "cand-1", {
+      status: "CORROBORATED",
+      corroboration_nature: "CORROBORATING",
+    });
+    expect(reviewed.analyst_review_status).toBe("CORROBORATED");
+
+    // 7. AI Summary
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        comparison_id: "cmp-1-abc",
+        draft_narrative: "Advisory summary text",
+        advisory_only: true,
+        content_origin: "AI_GENERATED",
+      }),
+    } as Response);
+    const aiSummary = await generateComparisonAISummary(1, "cmp-1-abc");
+    expect(aiSummary.advisory_only).toBe(true);
+    expect(aiSummary.content_origin).toBe("AI_GENERATED");
+
+    // 8. Export Comparison
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      text: async () => '{"comparison_id": "cmp-1-abc"}',
+    } as Response);
+    const exportedText = await exportCaseComparison(1, "cmp-1-abc", "json");
+    expect(exportedText).toContain("cmp-1-abc");
+  });
 });
 
 

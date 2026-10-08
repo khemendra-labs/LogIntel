@@ -2319,4 +2319,172 @@ export interface ReportExportResponse {
   exported_at: string;
 }
 
+// ----------------------------------------------------------------------------
+// M7.7 Case Comparison & Campaign Correlation Types
+// ----------------------------------------------------------------------------
+
+export type CorrelationBasis =
+  | "ENTITY_OVERLAP"
+  | "TEMPORAL_OVERLAP"
+  | "SEQUENCE_SIMILARITY"
+  | "TECHNIQUE_OVERLAP"
+  | "PROCESS_CONTINUITY"
+  | "NETWORK_CONTINUITY"
+  | "ACCOUNT_CONTINUITY"
+  | "FILE_CONTINUITY"
+  | "FINDING_OVERLAP"
+  | "HUNT_RESULT_OVERLAP"
+  | "MULTI_DIMENSIONAL_OVERLAP";
+
+export type CorrelationType =
+  | "SHARED_ENTITY"
+  | "SHARED_IP"
+  | "SHARED_HOST"
+  | "SHARED_USER"
+  | "SHARED_PROCESS"
+  | "SHARED_COMMAND"
+  | "SHARED_FILE"
+  | "SHARED_SESSION_PATTERN"
+  | "SHARED_TECHNIQUE"
+  | "SHARED_TIMELINE_PATTERN"
+  | "SHARED_FINDING_PATTERN"
+  | "SHARED_HUNT_PATTERN"
+  | "MULTI_DIMENSIONAL";
+
+export type CorroborationNature =
+  | "CORROBORATING"
+  | "CONTRADICTING"
+  | "CONTEXTUAL"
+  | "TEMPORAL"
+  | "ENTITY_LINK"
+  | "SUPPORTING"
+  | "UNKNOWN";
+
+export type CorrelationReviewStatus =
+  | "UNREVIEWED"
+  | "UNDER_REVIEW"
+  | "CORROBORATED"
+  | "WEAKENED"
+  | "DISPUTED"
+  | "INCONCLUSIVE"
+  | "REJECTED";
+
+export interface SharedEntity {
+  entity_type: string;
+  entity_value: string;
+  case_occurrences: Record<string, string[]>;
+  epistemic_status: "OBSERVED" | "INFERRED" | "UNKNOWN";
+  corroboration_nature: CorroborationNature;
+}
+
+export interface TemporalComparisonWindow {
+  case_id: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  event_count: number;
+}
+
+export interface TemporalOverlapResult {
+  relationship: string;
+  overlap_start?: string | null;
+  overlap_end?: string | null;
+  delta_seconds?: number | null;
+  case_windows: TemporalComparisonWindow[];
+}
+
+export interface SharedFindingPattern {
+  pattern_type: string;
+  description: string;
+  cases_involved: number[];
+  finding_ids: Record<string, string>;
+  epistemic_status: string;
+  corroboration_nature: CorroborationNature;
+}
+
+export interface SharedHuntPattern {
+  query_template_id: string;
+  intent: string;
+  cases_involved: number[];
+  query_ids: Record<string, string>;
+  result_counts: Record<string, number>;
+}
+
+export interface EvidenceGapComparison {
+  gap_type: string;
+  description: string;
+  case_status: Record<string, string>;
+  epistemic_status: string;
+}
+
+export interface CampaignCorrelationCandidate {
+  candidate_id: string;
+  case_ids: number[];
+  correlation_type: CorrelationType;
+  correlation_basis: CorrelationBasis;
+  corroboration_nature: CorroborationNature;
+  shared_entities: Array<Record<string, any>>;
+  shared_patterns: Array<Record<string, any>>;
+  temporal_relationships: Record<string, any>;
+  supporting_references: string[];
+  contradicting_references: string[];
+  evidence_gaps: Array<Record<string, any>>;
+  epistemic_status: "OBSERVED" | "INFERRED" | "UNKNOWN";
+  analyst_review_status: CorrelationReviewStatus;
+  created_at: string;
+  reviewed_by?: string | null;
+  review_notes?: string | null;
+}
+
+export interface ComparisonProvenanceManifest {
+  manifest_id: string;
+  comparison_id: string;
+  cases_included: number[];
+  source_reference_hashes: Record<string, string>;
+  provenance_digest: string;
+  created_at: string;
+  algorithm: string;
+}
+
+export interface CaseComparisonResult {
+  comparison_id: string;
+  primary_case_id: number;
+  compared_case_ids: number[];
+  all_case_ids: number[];
+  scope_dimensions: string[];
+  shared_entities: SharedEntity[];
+  temporal_overlap: TemporalOverlapResult;
+  shared_findings: SharedFindingPattern[];
+  shared_hunts: SharedHuntPattern[];
+  shared_mitre: Array<Record<string, any>>;
+  evidence_gaps: EvidenceGapComparison[];
+  correlation_candidates: CampaignCorrelationCandidate[];
+  provenance_manifest: ComparisonProvenanceManifest;
+  created_at: string;
+  created_by: string;
+  analyst_notes?: string | null;
+}
+
+export interface CreateCaseComparisonRequest {
+  compared_case_ids: number[];
+  dimensions?: string[];
+  time_window_start?: string | null;
+  time_window_end?: string | null;
+  analyst_notes?: string | null;
+}
+
+export interface ReviewCorrelationRequest {
+  status: CorrelationReviewStatus;
+  corroboration_nature?: CorroborationNature;
+  review_notes?: string | null;
+}
+
+export interface ComparisonAISummaryResponse {
+  comparison_id: string;
+  draft_narrative: string;
+  key_observations: string[];
+  recommended_questions: string[];
+  advisory_only: boolean;
+  content_origin: string;
+}
+
 
