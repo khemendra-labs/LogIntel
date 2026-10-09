@@ -2837,6 +2837,175 @@ describe("Frontend API Client and Authentication", () => {
     const exportedText = await exportCaseComparison(1, "cmp-1-abc", "json");
     expect(exportedText).toContain("cmp-1-abc");
   });
+
+  it("M7.8: Case Review, Quality Gates & Closure API operations succeed", async () => {
+    setEngineToken("valid_token_m78");
+
+    const {
+      fetchCaseReview,
+      runCaseReview,
+      fetchCaseReviewBlockers,
+      acknowledgeCaseReviewBlocker,
+      fetchCaseReviewHistory,
+      closeCaseWithReview,
+      reopenCaseWithReview,
+      generateCaseReviewAISummary,
+      exportCaseReview,
+    } = await import("../lib/api");
+
+    const mockSnapshot = {
+      review_id: "rev-1-test",
+      case_id: 1,
+      case_status: "ACTIVE",
+      case_version: 2,
+      closure_readiness: "READY_FOR_REVIEW",
+      gates: [
+        {
+          gate_type: "SCOPE",
+          title: "Investigation Scope Gate",
+          status: "PASS",
+          summary: "Scope verified",
+          blockers: [],
+          details: {},
+          recommendations: [],
+        },
+      ],
+      blockers: [
+        {
+          blocker_id: "blk-1",
+          gate_type: "QUESTIONS",
+          category: "OPEN_INVESTIGATION_QUESTION",
+          description: "Question open",
+          severity: "WARNING",
+          resolution_state: "UNRESOLVED",
+        },
+      ],
+      coverage: {
+        total_references: 5,
+        available_references: 5,
+        missing_references: 0,
+        unresolved_references: 0,
+        observed_evidence_count: 5,
+        inferred_evidence_count: 0,
+        telemetry_gaps_count: 0,
+        critical_gaps_count: 0,
+      },
+      provenance: {
+        manifest_id: "man-1",
+        case_id: 1,
+        closure_readiness: "READY_FOR_REVIEW",
+        gates_digest: "abcd",
+        blockers_digest: "ef01",
+        root_digest: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        generated_at: "2026-10-08T00:00:00Z",
+      },
+      reviewed_by: "SecAnalyst-1",
+      reviewed_at: "2026-10-08T00:00:00Z",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    // 1. Fetch Review Snapshot
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockSnapshot,
+    } as Response);
+    const snap = await fetchCaseReview(1);
+    expect(snap.case_id).toBe(1);
+    expect(snap.closure_readiness).toBe("READY_FOR_REVIEW");
+
+    // 2. Run Forensic Review
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockSnapshot,
+    } as Response);
+    const freshSnap = await runCaseReview(1, "Review notes");
+    expect(freshSnap.review_id).toBe("rev-1-test");
+
+    // 3. Fetch Blockers
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        case_id: 1,
+        total_blockers: 1,
+        blockers: mockSnapshot.blockers,
+      }),
+    } as Response);
+    const blkResp = await fetchCaseReviewBlockers(1, "WARNING", true);
+    expect(blkResp.total_blockers).toBe(1);
+
+    // 4. Acknowledge Blocker
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...mockSnapshot,
+        blockers: [{ ...mockSnapshot.blockers[0], resolution_state: "ACKNOWLEDGED" }],
+      }),
+    } as Response);
+    const ackSnap = await acknowledgeCaseReviewBlocker(1, "blk-1", {
+      resolution_state: "ACKNOWLEDGED",
+      notes: "Acknowledged in test",
+    });
+    expect(ackSnap.blockers[0].resolution_state).toBe("ACKNOWLEDGED");
+
+    // 5. Fetch Review History
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        case_id: 1,
+        total_records: 2,
+        records: [{ action: "CASE_REVIEW_EVALUATION" }],
+      }),
+    } as Response);
+    const hist = await fetchCaseReviewHistory(1);
+    expect(hist.total_records).toBe(2);
+
+    // 6. Close Case
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...mockSnapshot,
+        case_status: "CLOSED",
+        closure_readiness: "CLOSED",
+      }),
+    } as Response);
+    const closedSnap = await closeCaseWithReview(1, { closure_notes: "Closing test" });
+    expect(closedSnap.case_status).toBe("CLOSED");
+
+    // 7. Reopen Case
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...mockSnapshot,
+        case_status: "ACTIVE",
+        closure_readiness: "REOPENED",
+      }),
+    } as Response);
+    const reopenedSnap = await reopenCaseWithReview(1, { reopen_reason: "Reopening test" });
+    expect(reopenedSnap.case_status).toBe("ACTIVE");
+
+    // 8. AI Review Summary
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        summary: "Advisory review summary text",
+        key_blockers: ["Warning on open question"],
+        recommendations: ["Review question"],
+        is_authoritative: false,
+        advisory_only: true,
+      }),
+    } as Response);
+    const aiResp = await generateCaseReviewAISummary(1);
+    expect(aiResp.advisory_only).toBe(true);
+
+    // 9. Export Review
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      text: async () => '{"review_id": "rev-1-test"}',
+    } as Response);
+    const expText = await exportCaseReview(1, "json");
+    expect(expText).toContain("rev-1-test");
+  });
 });
 
 

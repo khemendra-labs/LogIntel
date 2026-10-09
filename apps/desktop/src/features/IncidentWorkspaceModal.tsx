@@ -49,6 +49,7 @@ import { InvestigationFindingsWorkbench } from "./InvestigationFindingsWorkbench
 import { InvestigationThreatHuntWorkbench } from "./InvestigationThreatHuntWorkbench";
 import { InvestigationReportWorkbench } from "./InvestigationReportWorkbench";
 import { InvestigationCaseComparisonWorkbench } from "./InvestigationCaseComparisonWorkbench";
+import InvestigationQualityReviewWorkbench from "./InvestigationQualityReviewWorkbench";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -73,7 +74,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "report" | "comparison" | "ai"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "report" | "comparison" | "review" | "ai"
   >("graph");
 
   // Attack Path state
@@ -613,6 +614,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("comparison")}
                 >
                   Case Comparison (M7.7)
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "review" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "review" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "review" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("review")}
+                >
+                  Forensic Review (M7.8)
                 </button>
 
                 <button
@@ -1361,6 +1375,13 @@ export function IncidentWorkspaceModal({
                 {activeTab === "comparison" && (
                   <InvestigationCaseComparisonWorkbench
                     primaryCaseId={incidentId}
+                  />
+                )}
+
+                {/* 14. Forensic Quality & Review Tab (M7.8) */}
+                {activeTab === "review" && (
+                  <InvestigationQualityReviewWorkbench
+                    caseId={incidentId}
                   />
                 )}
               </div>

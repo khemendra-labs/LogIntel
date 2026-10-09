@@ -4203,6 +4203,181 @@ def export_comparison_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# -----------------------------------------------------------------------------
+# M7.8 Investigation Quality, Closure & Forensic Review
+# -----------------------------------------------------------------------------
+
+from logintel.review import (
+    AIReviewSummaryRequest,
+    AcknowledgeBlockerRequest,
+    CloseCaseRequest,
+    ExportFormat,
+    ReopenCaseRequest,
+    RunReviewRequest,
+    case_review_service,
+)
+
+
+@protected_router.get("/cases/{case_id}/review")
+def get_case_review_endpoint(
+    case_id: int,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Retrieve current forensic review snapshot for a case (M7.8)."""
+    try:
+        snapshot = case_review_service.get_review_snapshot(case_id, actor=actor)
+        return snapshot.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/review/run")
+def run_case_review_endpoint(
+    case_id: int,
+    req: Optional[RunReviewRequest] = None,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Execute on-demand deterministic evaluation of all 12 forensic review gates (M7.8)."""
+    try:
+        snapshot = case_review_service.run_forensic_review(case_id, request=req, actor=actor)
+        return snapshot.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/review/blockers")
+def get_case_review_blockers_endpoint(
+    case_id: int,
+    severity: Optional[str] = Query(None, pattern="^(BLOCKER|WARNING|INFO)$"),
+    unresolved_only: bool = Query(False),
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Retrieve review blockers with optional severity or resolution filtering (M7.8)."""
+    try:
+        snapshot = case_review_service.get_review_snapshot(case_id, actor=actor)
+        blockers = snapshot.blockers
+        if severity:
+            blockers = [b for b in blockers if b.severity.value == severity]
+        if unresolved_only:
+            blockers = [b for b in blockers if b.resolution_state.value == "UNRESOLVED"]
+        return {
+            "case_id": case_id,
+            "total_blockers": len(blockers),
+            "blockers": [b.model_dump(mode="json") for b in blockers],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/review/blockers/{blocker_id}/acknowledge")
+def acknowledge_case_review_blocker_endpoint(
+    case_id: int,
+    blocker_id: str,
+    req: AcknowledgeBlockerRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Acknowledge or waive a specific review blocker with required analyst justification (M7.8)."""
+    try:
+        snapshot = case_review_service.acknowledge_blocker(
+            case_id=case_id,
+            blocker_id=blocker_id,
+            request=req,
+            actor=actor,
+        )
+        return snapshot.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/review/history")
+def get_case_review_history_endpoint(
+    case_id: int,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Retrieve immutable audit log history for review evaluations and case transitions (M7.8)."""
+    try:
+        history = case_review_service.get_review_history(case_id)
+        return {
+            "case_id": case_id,
+            "total_records": len(history),
+            "records": history,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/review/close")
+def close_case_endpoint(
+    case_id: int,
+    req: CloseCaseRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Formally close an investigation after verifying all mandatory review gates pass (M7.8)."""
+    try:
+        snapshot = case_review_service.close_case(case_id, request=req, actor=actor)
+        return snapshot.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/review/reopen")
+def reopen_case_endpoint(
+    case_id: int,
+    req: ReopenCaseRequest,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Formally reopen a CLOSED investigation with documented analyst justification (M7.8)."""
+    try:
+        snapshot = case_review_service.reopen_case(case_id, request=req, actor=actor)
+        return snapshot.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.post("/cases/{case_id}/review/ai-summary")
+def generate_review_ai_summary_endpoint(
+    case_id: int,
+    req: Optional[AIReviewSummaryRequest] = None,
+    actor: str = "SecAnalyst-1",
+) -> Dict[str, Any]:
+    """Generate advisory-only AI explanation of review blockers and closure readiness (M7.8)."""
+    try:
+        summary = case_review_service.generate_ai_review_summary(case_id, request=req, actor=actor)
+        return summary.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/review/export")
+def export_case_review_endpoint(
+    case_id: int,
+    format: str = Query("json", pattern="^(json|csv|markdown|md)$"),
+    actor: str = "SecAnalyst-1",
+) -> Response:
+    """Export review snapshot to deterministic JSON, defanged CSV, or Markdown (M7.8)."""
+    try:
+        fmt_enum = ExportFormat.JSON
+        if format.lower() == "csv":
+            fmt_enum = ExportFormat.CSV
+        elif format.lower() in ("markdown", "md"):
+            fmt_enum = ExportFormat.MARKDOWN
+
+        exp = case_review_service.export_review(case_id, export_format=fmt_enum, actor=actor)
+        media_type = "application/json" if fmt_enum == ExportFormat.JSON else (
+            "text/csv" if fmt_enum == ExportFormat.CSV else "text/markdown"
+        )
+        return Response(
+            content=exp.content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{exp.filename}"',
+                "Content-Type": f'{media_type}; charset=utf-8',
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

@@ -2487,4 +2487,139 @@ export interface ComparisonAISummaryResponse {
   content_origin: string;
 }
 
+// ----------------------------------------------------------------------------
+// M7.8 Investigation Quality, Closure & Forensic Review
+// ----------------------------------------------------------------------------
+
+export type ReviewGateType =
+  | "SCOPE"
+  | "EVIDENCE_COVERAGE"
+  | "FINDING_GROUNDING"
+  | "HYPOTHESIS_REVIEW"
+  | "CONTRADICTIONS"
+  | "QUESTIONS"
+  | "HUNTS"
+  | "TIMELINE_CONSISTENCY"
+  | "GRAPH_CONSISTENCY"
+  | "REPORT_CONSISTENCY"
+  | "PACKAGE_CONSISTENCY"
+  | "HANDOFF";
+
+export type GateEvaluationStatus = "PASS" | "NEEDS_REVIEW" | "BLOCKED" | "NOT_APPLICABLE";
+
+export type ReviewBlockerCategory =
+  | "MISSING_SCOPE"
+  | "UNRESOLVED_EVIDENCE_REFERENCE"
+  | "UNREVIEWED_FINDING"
+  | "UNREVIEWED_HYPOTHESIS"
+  | "OPEN_INVESTIGATION_QUESTION"
+  | "UNRESOLVED_CONTRADICTION"
+  | "TELEMETRY_GAP_REQUIRES_REVIEW"
+  | "STALE_REPORT"
+  | "PACKAGE_INCONSISTENCY"
+  | "HANDOFF_FOLLOWUP_REQUIRED"
+  | "PROVENANCE_REFERENCE_FAILURE";
+
+export type BlockerSeverity = "BLOCKER" | "WARNING" | "INFO";
+
+export type BlockerResolutionState = "UNRESOLVED" | "ACKNOWLEDGED" | "RESOLVED" | "WAIVED";
+
+export type ForensicClosureReadinessState =
+  | "NOT_READY"
+  | "REVIEW_REQUIRED"
+  | "READY_FOR_REVIEW"
+  | "READY_FOR_CLOSURE"
+  | "CLOSED"
+  | "REOPENED";
+
+export interface ReviewBlocker {
+  blocker_id: string;
+  gate_type: ReviewGateType;
+  category: ReviewBlockerCategory;
+  description: string;
+  severity: BlockerSeverity;
+  source_reference?: string | null;
+  resolution_state: BlockerResolutionState;
+  resolution_notes?: string | null;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
+}
+
+export interface ReviewGateResult {
+  gate_type: ReviewGateType;
+  title: string;
+  status: GateEvaluationStatus;
+  summary: string;
+  blockers: ReviewBlocker[];
+  details: Record<string, any>;
+  recommendations: string[];
+}
+
+export interface EvidenceCoverageMetrics {
+  total_references: number;
+  available_references: number;
+  missing_references: number;
+  unresolved_references: number;
+  observed_evidence_count: number;
+  inferred_evidence_count: number;
+  telemetry_gaps_count: number;
+  critical_gaps_count: number;
+}
+
+export interface ReviewProvenanceManifest {
+  manifest_id: string;
+  case_id: number;
+  closure_readiness: ForensicClosureReadinessState;
+  gates_digest: string;
+  blockers_digest: string;
+  root_digest: string;
+  generated_at: string;
+}
+
+export interface CaseReviewSnapshot {
+  review_id: string;
+  case_id: number;
+  case_status: string;
+  case_version: number;
+  closure_readiness: ForensicClosureReadinessState;
+  gates: ReviewGateResult[];
+  blockers: ReviewBlocker[];
+  coverage: EvidenceCoverageMetrics;
+  provenance: ReviewProvenanceManifest;
+  reviewed_by: string;
+  reviewed_at: string;
+  analyst_notes?: string | null;
+}
+
+export interface AcknowledgeBlockerRequest {
+  resolution_state: BlockerResolutionState;
+  notes: string;
+}
+
+export interface CloseCaseRequest {
+  closure_notes: string;
+  override_warnings?: boolean;
+}
+
+export interface ReopenCaseRequest {
+  reopen_reason: string;
+}
+
+export interface AIReviewSummaryResponse {
+  summary: string;
+  key_blockers: string[];
+  recommendations: string[];
+  is_authoritative: boolean;
+  advisory_only: boolean;
+}
+
+export interface ReviewExportResponse {
+  case_id: number;
+  format: string;
+  filename: string;
+  content: string;
+  root_digest: string;
+}
+
+
 

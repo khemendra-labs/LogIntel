@@ -149,6 +149,13 @@ import type {
   EvidencePackage,
   CaseHandoffPacket,
   ReportExportResponse,
+  CaseReviewSnapshot,
+  ReviewBlocker,
+  AcknowledgeBlockerRequest,
+  CloseCaseRequest,
+  ReopenCaseRequest,
+  AIReviewSummaryResponse,
+  ReviewExportResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -3758,6 +3765,199 @@ export async function exportCaseComparison(
   }
   return res.text();
 }
+
+// ----------------------------------------------------------------------------
+// M7.8 Investigation Quality, Closure & Forensic Review API Client
+// ----------------------------------------------------------------------------
+
+export async function fetchCaseReview(
+  caseId: number,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseReviewSnapshot> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/review?actor=${encodeURIComponent(actor)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch case review failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function runCaseReview(
+  caseId: number,
+  notes?: string,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseReviewSnapshot> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/review/run?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ notes }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Run case review failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseReviewBlockers(
+  caseId: number,
+  severity?: string,
+  unresolvedOnly?: boolean,
+  actor: string = "SecAnalyst-1"
+): Promise<{ case_id: number; total_blockers: number; blockers: ReviewBlocker[] }> {
+  const token = await getEngineToken();
+  const params = new URLSearchParams();
+  if (severity) params.set("severity", severity);
+  if (unresolvedOnly) params.set("unresolved_only", "true");
+  params.set("actor", actor);
+
+  const res = await fetch(`${API_BASE}/cases/${caseId}/review/blockers?${params.toString()}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch review blockers failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function acknowledgeCaseReviewBlocker(
+  caseId: number,
+  blockerId: string,
+  req: AcknowledgeBlockerRequest,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseReviewSnapshot> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/review/blockers/${encodeURIComponent(blockerId)}/acknowledge?actor=${encodeURIComponent(actor)}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(req),
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Acknowledge review blocker failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchCaseReviewHistory(
+  caseId: number,
+  actor: string = "SecAnalyst-1"
+): Promise<{ case_id: number; total_records: number; records: any[] }> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/review/history?actor=${encodeURIComponent(actor)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Fetch review history failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function closeCaseWithReview(
+  caseId: number,
+  req: CloseCaseRequest,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseReviewSnapshot> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/review/close?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Close case failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function reopenCaseWithReview(
+  caseId: number,
+  req: ReopenCaseRequest,
+  actor: string = "SecAnalyst-1"
+): Promise<CaseReviewSnapshot> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/review/reopen?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Reopen case failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function generateCaseReviewAISummary(
+  caseId: number,
+  req: { instructions?: string } = {},
+  actor: string = "SecAnalyst-1"
+): Promise<AIReviewSummaryResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/review/ai-summary?actor=${encodeURIComponent(actor)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Generate review AI summary failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportCaseReview(
+  caseId: number,
+  format: "json" | "csv" | "markdown" = "json",
+  actor: string = "SecAnalyst-1"
+): Promise<string> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/review/export?format=${encodeURIComponent(format)}&actor=${encodeURIComponent(actor)}`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Export case review failed: ${res.statusText}`);
+  }
+  return res.text();
+}
+
 
 
 
