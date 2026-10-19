@@ -50,6 +50,7 @@ import { InvestigationThreatHuntWorkbench } from "./InvestigationThreatHuntWorkb
 import { InvestigationReportWorkbench } from "./InvestigationReportWorkbench";
 import { InvestigationCaseComparisonWorkbench } from "./InvestigationCaseComparisonWorkbench";
 import InvestigationQualityReviewWorkbench from "./InvestigationQualityReviewWorkbench";
+import { InvestigationMultiHostWorkbench } from "./InvestigationMultiHostWorkbench";
 
 interface IncidentWorkspaceModalProps {
   incidentId: number;
@@ -74,7 +75,7 @@ export function IncidentWorkspaceModal({
 
   // Tabs
   const [activeTab, setActiveTab] = useState<
-    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "report" | "comparison" | "review" | "ai"
+    "graph" | "path" | "timeline" | "alerts" | "entities" | "mitre" | "notes" | "evidence" | "findings" | "hunting" | "report" | "comparison" | "review" | "multihost" | "ai"
   >("graph");
 
   // Attack Path state
@@ -627,6 +628,19 @@ export function IncidentWorkspaceModal({
                   onClick={() => setActiveTab("review")}
                 >
                   Forensic Review (M7.8)
+                </button>
+
+                <button
+                  className={`btn btn-secondary ${activeTab === "multihost" ? "active" : ""}`}
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: "11px",
+                    borderBottom: activeTab === "multihost" ? "2px solid var(--border-dark)" : "none",
+                    fontWeight: activeTab === "multihost" ? 600 : 400,
+                  }}
+                  onClick={() => setActiveTab("multihost")}
+                >
+                  Multi-Host (M7.12)
                 </button>
 
                 <button
@@ -1382,6 +1396,16 @@ export function IncidentWorkspaceModal({
                 {activeTab === "review" && (
                   <InvestigationQualityReviewWorkbench
                     caseId={incidentId}
+                  />
+                )}
+
+                {/* 15. Multi-Host Investigation Tab (M7.12) */}
+                {activeTab === "multihost" && (
+                  <InvestigationMultiHostWorkbench
+                    caseId={incidentId}
+                    onSelectEventId={onSelectEventId}
+                    onSelectAlertId={onSelectAlertId}
+                    onSelectEntityKey={onSelectEntityKey}
                   />
                 )}
               </div>

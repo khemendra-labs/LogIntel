@@ -4378,6 +4378,106 @@ def export_case_review_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# =========================================================================
+# Milestone 7.12 Multi-Host Domain and API Foundation Endpoints
+# =========================================================================
+
+@protected_router.get("/cases/{case_id}/hosts")
+def get_case_hosts_endpoint(case_id: int) -> Dict[str, Any]:
+    """Retrieve case-scoped multi-host dossier, inventory, and visibility gaps (M7.12.1)."""
+    from logintel.multihost.service import multihost_service
+    try:
+        dossier = multihost_service.get_case_dossier(case_id)
+        return dossier.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hosts/lateral-traces")
+def get_case_lateral_traces_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve reconstructed cross-host lateral movement traces for a case (M7.12.1)."""
+    from logintel.multihost.service import multihost_service
+    try:
+        traces = multihost_service.get_lateral_traces(case_id)
+        return [t.model_dump(mode="json") for t in traces]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hosts/{host_id}/timeline")
+def get_case_host_timeline_endpoint(
+    case_id: int,
+    host_id: str,
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> Dict[str, Any]:
+    """Retrieve host-scoped unified timeline projection within case boundaries (M7.12.1)."""
+    from logintel.multihost.service import multihost_service
+    try:
+        tl_res = multihost_service.get_host_timeline(
+            case_id=case_id,
+            host_id=host_id,
+            limit=limit,
+            offset=offset,
+            time_start=time_start,
+            time_end=time_end,
+        )
+        return tl_res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hosts/continuity")
+def get_case_hosts_continuity_endpoint(case_id: int) -> List[Dict[str, Any]]:
+    """Retrieve cross-host entity continuity records for a case (M7.12.3)."""
+    from logintel.multihost.service import multihost_service
+    try:
+        continuities = multihost_service.get_continuity(case_id)
+        return [c.model_dump(mode="json") for c in continuities]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hosts/timeline/comparative")
+def get_case_comparative_timeline_endpoint(
+    case_id: int,
+    hosts: Optional[str] = Query(default=None, description="Comma-separated host identifiers to compare"),
+    time_start: Optional[str] = None,
+    time_end: Optional[str] = None,
+    limit_per_lane: int = Query(default=50, ge=1, le=200),
+) -> Dict[str, Any]:
+    """Retrieve synchronized comparative multi-host timeline lanes (M7.12.4)."""
+    from logintel.multihost.service import multihost_service
+    host_list = [h.strip() for h in hosts.split(",") if h.strip()] if hosts else []
+    try:
+        res = multihost_service.get_comparative_timeline(
+            case_id=case_id,
+            host_ids=host_list,
+            time_start=time_start,
+            time_end=time_end,
+            limit_per_lane=limit_per_lane,
+        )
+        return res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/hosts/export")
+def export_case_multihost_dossier_endpoint(
+    case_id: int,
+    format: str = Query(default="json", pattern="^(json|markdown)$", description="Export format: 'json' or 'markdown'"),
+) -> Dict[str, Any]:
+    """Export case multi-host investigation dossier as JSON or Markdown (M7.12.5)."""
+    from logintel.multihost.service import multihost_service
+    try:
+        export_res = multihost_service.export_dossier(case_id=case_id, format=format)
+        return export_res.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 router.include_router(protected_router)
 
 

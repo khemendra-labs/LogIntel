@@ -156,6 +156,13 @@ import type {
   ReopenCaseRequest,
   AIReviewSummaryResponse,
   ReviewExportResponse,
+  CaseMultiHostDossier,
+  CaseHostSummary,
+  HostTimelineResponse,
+  HostTimelineQueryParams,
+  ComparativeTimelineResponse,
+  ComparativeTimelineQueryParams,
+  MultiHostExportResponse,
 } from "../types/investigation";
 
 const API_BASE = "http://127.0.0.1:41721/api/v1";
@@ -3958,10 +3965,130 @@ export async function exportCaseReview(
   return res.text();
 }
 
+// ----------------------------------------------------------------------------
+// M7.12 Multi-Host Investigation Desktop API
+// ----------------------------------------------------------------------------
 
+export async function fetchCaseMultiHostDossier(
+  caseId: number
+): Promise<CaseMultiHostDossier> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hosts`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to fetch multi-host dossier: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function fetchCaseLateralTraces(
+  caseId: number
+): Promise<MultiHostTrace[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hosts/lateral-traces`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to fetch lateral traces: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function fetchCaseHostTimeline(
+  caseId: number,
+  hostId: string,
+  params?: HostTimelineQueryParams
+): Promise<HostTimelineResponse> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  if (params?.time_start) query.set("time_start", params.time_start);
+  if (params?.time_end) query.set("time_end", params.time_end);
+  const qs = query.toString() ? `?${query.toString()}` : "";
 
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/hosts/${encodeURIComponent(hostId)}/timeline${qs}`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to fetch host timeline: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function fetchCaseHostContinuity(
+  caseId: number
+): Promise<EntityContinuity[]> {
+  const token = await getEngineToken();
+  const res = await fetch(`${API_BASE}/cases/${caseId}/hosts/continuity`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to fetch host entity continuity: ${res.statusText}`);
+  }
+  return res.json();
+}
 
+export async function fetchCaseComparativeTimeline(
+  caseId: number,
+  params?: ComparativeTimelineQueryParams
+): Promise<ComparativeTimelineResponse> {
+  const token = await getEngineToken();
+  const query = new URLSearchParams();
+  if (params?.hosts) query.set("hosts", params.hosts);
+  if (params?.time_start) query.set("time_start", params.time_start);
+  if (params?.time_end) query.set("time_end", params.time_end);
+  if (params?.limit_per_lane !== undefined) query.set("limit_per_lane", String(params.limit_per_lane));
+  const qs = query.toString() ? `?${query.toString()}` : "";
+
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/hosts/timeline/comparative${qs}`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to fetch comparative timeline: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function exportCaseMultiHostDossier(
+  caseId: number,
+  format: "json" | "markdown" = "json"
+): Promise<MultiHostExportResponse> {
+  const token = await getEngineToken();
+  const res = await fetch(
+    `${API_BASE}/cases/${caseId}/hosts/export?format=${encodeURIComponent(format)}`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to export multi-host dossier: ${res.statusText}`);
+  }
+  return res.json();
+}
 

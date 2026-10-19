@@ -332,6 +332,7 @@ export interface InvestigationScope {
   selected_alert_ids: number[];
   selected_detection_ids: number[];
   selected_event_ids: string[];
+  target_hosts?: string[];
 }
 
 export type HypothesisStatus = "OPEN" | "SUPPORTED" | "WEAKENED" | "UNRESOLVED" | "REJECTED";
@@ -2621,5 +2622,115 @@ export interface ReviewExportResponse {
   root_digest: string;
 }
 
+// ----------------------------------------------------------------------------
+// M7.12 Multi-Host Investigation Desktop Types
+// ----------------------------------------------------------------------------
 
+export type HostEpistemicStatus = "OBSERVED" | "INFERRED" | "UNKNOWN";
+
+export interface HostVisibilityGap {
+  gap_type: string;
+  host_identifier: string;
+  description: string;
+  remedy_suggestion?: string | null;
+}
+
+export interface HostDiscrepancy {
+  field: string;
+  catalog_value?: string | null;
+  telemetry_value?: string | null;
+  sources: string[];
+  description: string;
+}
+
+export interface CaseHostSummary {
+  host_id: string;
+  hostname: string;
+  os_name?: string | null;
+  os_version?: string | null;
+  is_in_target_scope: boolean;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  event_count: number;
+  alert_count: number;
+  inbound_lateral_hops: number;
+  outbound_lateral_hops: number;
+  evidence_references: string[];
+  telemetry_gaps: HostVisibilityGap[];
+  discrepancies: HostDiscrepancy[];
+  host_graph_available: boolean;
+  epistemic_status: HostEpistemicStatus;
+}
+
+export interface CaseMultiHostDossier {
+  case_id: number;
+  incident_id?: number | null;
+  scope_target_hosts: string[];
+  is_scope_unspecified: boolean;
+  participating_hosts: CaseHostSummary[];
+  lateral_traces: MultiHostTrace[];
+  entity_continuity: EntityContinuity[];
+  total_hosts_count: number;
+  scoped_hosts_count: number;
+  cross_host_hops_count: number;
+  overall_visibility_gaps: HostVisibilityGap[];
+  completeness_limitations: string[];
+  generated_at: string;
+  provenance_hash: string;
+}
+
+export interface HostTimelineQueryParams {
+  limit?: number;
+  offset?: number;
+  time_start?: string | null;
+  time_end?: string | null;
+}
+
+export interface HostTimelineResponse {
+  case_id: number;
+  host_id: string;
+  hostname: string;
+  items: InvestigationTimelineItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  epistemic_breakdown: Record<string, number>;
+  layer_breakdown: Record<string, number>;
+}
+
+export interface HostTimelineLane {
+  host_id: string;
+  hostname: string;
+  items: InvestigationTimelineItem[];
+  total: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
+}
+
+export interface ComparativeTimelineResponse {
+  case_id: number;
+  time_start?: string | null;
+  time_end?: string | null;
+  lanes: HostTimelineLane[];
+  total_events: number;
+  aligned_min_time?: string | null;
+  aligned_max_time?: string | null;
+}
+
+export interface ComparativeTimelineQueryParams {
+  hosts?: string;
+  time_start?: string | null;
+  time_end?: string | null;
+  limit_per_lane?: number;
+}
+
+export interface MultiHostExportResponse {
+  case_id: number;
+  format: string;
+  filename: string;
+  content: string;
+  root_digest: string;
+}
 

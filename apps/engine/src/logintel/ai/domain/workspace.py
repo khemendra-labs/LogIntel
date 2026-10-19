@@ -6,9 +6,10 @@ explainable claim traces, structured summaries, and citation-grounded report dra
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from logintel.ai.domain.bundle import EvidenceItem
 
@@ -45,6 +46,28 @@ class InvestigationScope(BaseModel):
     selected_alert_ids: List[int] = Field(default_factory=list)
     selected_detection_ids: List[int] = Field(default_factory=list)
     selected_event_ids: List[str] = Field(default_factory=list)
+    target_hosts: List[str] = Field(default_factory=list)
+
+    @field_validator("target_hosts", mode="before")
+    @classmethod
+    def sanitize_target_hosts(cls, v: Any) -> List[str]:
+        """Validate, deduplicate, and normalize client-provided target host identifiers."""
+        if not v:
+            return []
+        if isinstance(v, str):
+            v = [v]
+        cleaned: List[str] = []
+        seen = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            norm = item.strip()
+            # Strip ASCII control characters
+            norm = re.sub(r"[\x00-\x1f\x7f]", "", norm)
+            if norm and norm.lower() not in seen:
+                seen.add(norm.lower())
+                cleaned.append(norm)
+        return cleaned
 
 
 class HypothesisStatus(str, Enum):

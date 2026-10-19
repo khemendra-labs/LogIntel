@@ -609,17 +609,35 @@ class TemporalReconstructionEngine:
         if not host_transitions:
             return []
 
+        # Map evidence items by source identifier for actor resolution
+        ev_map: Dict[str, Dict[str, Any]] = {}
+        for it in evidence_items:
+            sid = str(it.get("_source_id") or it.get("id") or "")
+            if sid:
+                ev_map[sid] = it
+
         traces: List[MultiHostTrace] = []
         for idx, ht in enumerate(host_transitions):
             src = ht.from_entity.replace("host:", "")
             dst = ht.to_entity.replace("host:", "")
+
+            # Derive actor solely from supporting transition evidence records
+            actor = "UNKNOWN"
+            for ref in ht.evidence_references:
+                it = ev_map.get(str(ref.source_id))
+                if it:
+                    cand = it.get("username") or it.get("actor") or it.get("user")
+                    if cand and str(cand).strip():
+                        actor = str(cand).strip()
+                        break
+
             traces.append(
                 MultiHostTrace(
                     trace_id=f"mhost-{case.case_id}-{idx}",
                     case_id=case.case_id,
                     source_host=src,
                     target_host=dst,
-                    actor=case.owner or "SecAnalyst-1",
+                    actor=actor,
                     hop_count=1,
                     transitions=[ht],
                     evidence_references=ht.evidence_references,
