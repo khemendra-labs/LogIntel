@@ -202,10 +202,25 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  let res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers,
+    });
+  } catch (_err) {
+    // If backend engine was momentarily binding socket, await briefly and retry
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    token = await getEngineToken();
+    const retryHeaders = new Headers(init?.headers || {});
+    if (token) {
+      retryHeaders.set("Authorization", `Bearer ${token}`);
+    }
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: retryHeaders,
+    });
+  }
   if (res.status === 401 && cachedToken) {
     // Engine may have restarted and rotated its token; invalidate cache and retry once
     cachedToken = null;

@@ -33,8 +33,50 @@ export function ActivityPage({
   const [search, setSearch] = useState<string>("");
   const [sortOrder, setSortOrder] = useState<"DESC" | "ASC">("DESC");
 
+  const retryCountRef = React.useRef(0);
+  const isFetchingRef = React.useRef(false);
+  const retryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isTransientNetworkError = (err: any): boolean => {
+    const msg = (err?.message || "").toLowerCase();
+    // Do not retry authorization or client validation failures
+    if (
+      msg.includes("unauthorized") ||
+      msg.includes("forbidden") ||
+      msg.includes("401") ||
+      msg.includes("403") ||
+      msg.includes("422")
+    ) {
+      return false;
+    }
+    return (
+      msg.includes("load failed") ||
+      msg.includes("failed to fetch") ||
+      msg.includes("networkerror") ||
+      msg.includes("connection refused") ||
+      msg.includes("econnrefused")
+    );
+  };
+
+  // Clean up retry timer on unmount
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Load events
   const loadEvents = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -54,10 +96,18 @@ export function ActivityPage({
       const data = await fetchEvents(params);
       setEvents(data.items);
       setTotal(data.total);
+      retryCountRef.current = 0;
     } catch (err: any) {
       setError(err.message || "Failed to query telemetry events");
+      if (isTransientNetworkError(err) && retryCountRef.current < 2) {
+        retryCountRef.current += 1;
+        retryTimerRef.current = setTimeout(() => {
+          loadEvents();
+        }, 1500 * retryCountRef.current);
+      }
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   };
 
@@ -210,9 +260,18 @@ export function ActivityPage({
 
       {/* Error state */}
       {error && (
-        <div className="panel" style={{ borderColor: "var(--badge-alert-border)", background: "var(--badge-alert-bg)" }}>
-          <div className="panel-body" style={{ color: "var(--badge-alert-text)" }}>
-            <strong>Query Error:</strong> {error}
+        <div className="panel" style={{ borderColor: "var(--badge-alert-border)", background: "var(--badge-alert-bg)", marginBottom: "14px" }}>
+          <div className="panel-body" style={{ color: "var(--badge-alert-text)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <strong>Query Error:</strong> {error}
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => loadEvents()}
+              style={{ fontSize: "11px", padding: "3px 10px" }}
+            >
+              Retry Query
+            </button>
           </div>
         </div>
       )}

@@ -11,7 +11,7 @@ VERSION="0.1.0"
 PACKAGE_NAME="logintel"
 DEB_DIR="${ROOT_DIR}/build/deb"
 OUTPUT_DIR="${ROOT_DIR}/packaging/deb"
-DEB_FILE="${OUTPUT_DIR}/${PACKAGE_NAME}_${VERSION}_amd64.deb"
+DEB_FILE="${DEB_FILE:-${OUTPUT_DIR}/${PACKAGE_NAME}_${VERSION}_amd64.deb}"
 
 echo "=== [1/6] Building Desktop Frontend (Vite + TypeScript) ==="
 cd "${ROOT_DIR}/apps/desktop"
@@ -19,7 +19,7 @@ npm run build
 
 echo "=== [2/6] Compiling Tauri Desktop Binary (Cargo Release) ==="
 cd "${ROOT_DIR}/apps/desktop/src-tauri"
-RUSTFLAGS="--remap-path-prefix=${ROOT_DIR}=/build --remap-path-prefix=${HOME}=/home_prefix" cargo build --release
+PATH="${ROOT_DIR}/build/bin:${PATH}" RUSTFLAGS="-L ${ROOT_DIR}/build/lib_compat --remap-path-prefix=${ROOT_DIR}=/build --remap-path-prefix=${HOME}=/home_prefix" cargo build --release
 
 echo "=== [3/6] Staging Debian Package Structure ==="
 rm -rf "${DEB_DIR}"
@@ -69,10 +69,48 @@ if [ -d "${DEB_DIR}/usr/lib/logintel/engine/.venv/lib64" ] && [ ! -L "${DEB_DIR}
     ln -sf lib "${DEB_DIR}/usr/lib/logintel/engine/.venv/lib64"
 fi
 
-# Ensure the venv python binaries point to standard system python3
-rm -f "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python" "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python3"
-ln -sf /usr/bin/python3 "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python"
-ln -sf /usr/bin/python3 "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python3"
+# Remove any existing python symlinks/binaries to prevent circular link loops
+rm -f "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python"*
+
+# Install robust runtime Python dispatcher script into .venv/bin/python
+cat << 'EOF' > "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python"
+#!/usr/bin/env bash
+# LogIntel Python Runtime Dispatcher
+# Resolves Python 3.12 or compatible interpreter and exports bundled site-packages
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENGINE_SRC="$(cd "${VENV_ROOT}/.." && pwd)"
+VENV_SITE="${VENV_ROOT}/lib/python3.12/site-packages"
+
+# Fallback to standard system installation paths if needed
+if [ ! -d "${ENGINE_SRC}/logintel" ] && [ -d "/usr/lib/logintel/engine/logintel" ]; then
+    ENGINE_SRC="/usr/lib/logintel/engine"
+fi
+if [ ! -d "${VENV_SITE}" ] && [ -d "/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages" ]; then
+    VENV_SITE="/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages"
+fi
+
+export PYTHONPATH="${ENGINE_SRC}:${VENV_SITE}:${PYTHONPATH:-}"
+
+# Candidate interpreter search order (strictly requires Python 3.12 ABI):
+# 1. /usr/bin/python3.12 (standard Ubuntu 24.04 LTS binary)
+# 2. /snap/core24/current/usr/bin/python3.12 (Ubuntu 24.04 runtime on snap-enabled systems)
+# 3. /usr/bin/python3 (if and only if version is 3.12)
+for py in "/usr/bin/python3.12" "/snap/core24/current/usr/bin/python3.12" "/usr/bin/python3"; do
+    if [ -x "$py" ]; then
+        PY_VER="$("$py" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)"
+        if [ "$PY_VER" = "3.12" ]; then
+            exec "$py" "$@"
+        fi
+    fi
+done
+
+echo "ERROR: LogIntel requires Python 3.12 runtime matching bundled wheel ABI, but no compatible Python 3.12 interpreter was found." >&2
+exit 1
+EOF
+chmod 755 "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python"
+ln -sf python "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python3"
+ln -sf python "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin/python3.12"
 
 # Sanitize pyvenv.cfg
 cat << 'EOF' > "${DEB_DIR}/usr/lib/logintel/engine/.venv/pyvenv.cfg"
@@ -116,7 +154,7 @@ find "${DEB_DIR}/usr/lib/logintel/engine/.venv/bin" -type f -exec chmod 755 {} +
 cat << 'EOF' > "${DEB_DIR}/usr/bin/logintel"
 #!/usr/bin/env bash
 set -e
-export PYTHONPATH="/usr/lib/logintel/engine:${PYTHONPATH:-}"
+export PYTHONPATH="/usr/lib/logintel/engine:/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages:${PYTHONPATH:-}"
 export LOGINTEL_RULES_DIR="/usr/share/logintel/rules"
 exec /usr/bin/logintel-bin "$@"
 EOF
@@ -126,7 +164,7 @@ chmod 755 "${DEB_DIR}/usr/bin/logintel"
 cat << 'EOF' > "${DEB_DIR}/usr/bin/logintel-engine"
 #!/usr/bin/env bash
 set -e
-export PYTHONPATH="/usr/lib/logintel/engine:${PYTHONPATH:-}"
+export PYTHONPATH="/usr/lib/logintel/engine:/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages:${PYTHONPATH:-}"
 export LOGINTEL_RULES_DIR="/usr/share/logintel/rules"
 exec /usr/lib/logintel/engine/.venv/bin/python -m logintel.main "$@"
 EOF
@@ -136,7 +174,7 @@ chmod 755 "${DEB_DIR}/usr/bin/logintel-engine"
 cat << 'EOF' > "${DEB_DIR}/usr/bin/logintel-replay"
 #!/usr/bin/env bash
 set -e
-export PYTHONPATH="/usr/lib/logintel/engine:${PYTHONPATH:-}"
+export PYTHONPATH="/usr/lib/logintel/engine:/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages:${PYTHONPATH:-}"
 export LOGINTEL_RULES_DIR="/usr/share/logintel/rules"
 exec /usr/lib/logintel/engine/.venv/bin/python -m logintel.detection.replay_cli "$@"
 EOF
@@ -180,7 +218,7 @@ Priority: optional
 Architecture: amd64
 Installed-Size: ${INSTALLED_SIZE}
 Maintainer: LogIntel Team <dev@logintel.local>
-Depends: libwebkit2gtk-4.1-0, libgtk-3-0t64 | libgtk-3-0, python3 (>= 3.10)
+Depends: libwebkit2gtk-4.1-0, libgtk-3-0t64 | libgtk-3-0, python3.12 | python3 (>= 3.12)
 Description: Linux Security Telemetry & Investigation Platform
  LogIntel transforms raw Linux telemetry from journald, auth.log, syslog,
  and kern.log into structured, searchable, evidence-backed security investigations.

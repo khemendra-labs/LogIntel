@@ -133,15 +133,15 @@ export function AttackGraphVisualizer({
   const getNodeColor = (type: string) => {
     switch (type.toUpperCase()) {
       case "HOST":
-        return { stroke: "#0284c7", fill: "#f0f9ff", text: "#0369a1" };
+        return { stroke: "var(--chart-line)", fill: "var(--bg-surface-subtle)", text: "var(--chart-line)" };
       case "USER":
-        return { stroke: "#d97706", fill: "#fffbeb", text: "#b45309" };
+        return { stroke: "var(--badge-warn-border)", fill: "var(--bg-surface-subtle)", text: "var(--badge-warn-text)" };
       case "IP":
-        return { stroke: "#dc2626", fill: "#fef2f2", text: "#b91c1c" };
+        return { stroke: "var(--badge-critical-border)", fill: "var(--bg-surface-subtle)", text: "var(--badge-critical-text)" };
       case "PROCESS":
-        return { stroke: "#7c3aed", fill: "#f5f3ff", text: "#6d28d9" };
+        return { stroke: "var(--chart-line-secondary)", fill: "var(--bg-surface-subtle)", text: "var(--chart-line-secondary)" };
       default:
-        return { stroke: "#475569", fill: "#f8fafc", text: "#334155" };
+        return { stroke: "var(--border-strong)", fill: "var(--bg-surface-subtle)", text: "var(--text-secondary)" };
     }
   };
 
@@ -230,7 +230,7 @@ export function AttackGraphVisualizer({
               markerHeight="6"
               orient="auto-start-reverse"
             >
-              <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b" />
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--border-strong)" />
             </marker>
             <marker
               id="graph-arrow-active"
@@ -241,7 +241,7 @@ export function AttackGraphVisualizer({
               markerHeight="6"
               orient="auto-start-reverse"
             >
-              <path d="M 0 1 L 10 5 L 0 9 z" fill="#0284c7" />
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--chart-line)" />
             </marker>
           </defs>
 
@@ -271,7 +271,7 @@ export function AttackGraphVisualizer({
                   y1={src.y}
                   x2={tgt.x}
                   y2={tgt.y}
-                  stroke={isSelected ? "#0284c7" : "#94a3b8"}
+                  stroke={isSelected ? "var(--chart-line)" : isCorrelated ? "var(--border-strong)" : "var(--border-dark)"}
                   strokeWidth={isSelected ? 2.5 : 1.5}
                   strokeDasharray={isCorrelated ? "4,3" : undefined}
                   markerEnd={isSelected ? "url(#graph-arrow-active)" : "url(#graph-arrow)"}
@@ -285,7 +285,7 @@ export function AttackGraphVisualizer({
                   height="18"
                   rx="3"
                   fill="var(--bg-surface)"
-                  stroke={isSelected ? "#0284c7" : "#cbd5e1"}
+                  stroke={isSelected ? "var(--chart-line)" : "var(--border-subtle)"}
                   strokeWidth="1"
                 />
                 <text
@@ -294,7 +294,7 @@ export function AttackGraphVisualizer({
                   textAnchor="middle"
                   fontSize="8.5"
                   fontWeight="600"
-                  fill={isSelected ? "#0284c7" : "#475569"}
+                  fill={isSelected ? "var(--chart-line)" : "var(--text-secondary)"}
                   fontFamily="var(--font-mono)"
                 >
                   {edge.relationship_type.replace(/_/g, " ")}

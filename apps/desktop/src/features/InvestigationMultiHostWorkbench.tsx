@@ -770,7 +770,7 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
 
                       {/* Identity discrepancies */}
                       {host.discrepancies.length > 0 && (
-                        <div style={{ marginTop: "6px", padding: "6px 10px", background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: "2px", fontSize: "10px", color: "var(--badge-alert-text)" }}>
+                        <div style={{ marginTop: "6px", padding: "6px 10px", background: "var(--badge-alert-bg)", border: "1px solid var(--badge-alert-border)", borderRadius: "2px", fontSize: "10px", color: "var(--badge-alert-text)" }}>
                           {host.discrepancies.map((d: HostDiscrepancy, idx: number) => (
                             <div key={idx}>
                               <strong>Conflict on {d.field}:</strong> {d.description}

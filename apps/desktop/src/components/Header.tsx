@@ -1,5 +1,6 @@
 import React from "react";
 import { BrandLogo, RefreshIcon } from "./Icons";
+import { useTheme } from "../lib/theme";
 import { SystemStatus, TelemetryHealthReport } from "../types/events";
 
 interface HeaderProps {
@@ -17,6 +18,7 @@ export function Header({
   onOpenHealth,
   refreshing,
 }: HeaderProps) {
+  const { preference, setPreference } = useTheme();
   const overall = health?.overall_status?.toLowerCase() || "offline";
 
   return (
@@ -33,6 +35,34 @@ export function Header({
       </div>
 
       <div className="header-right">
+        {/* Theme Segmented Switcher */}
+        <div className="theme-segmented" role="radiogroup" aria-label="Theme selection">
+          <button
+            type="button"
+            className={`theme-segmented-btn ${preference === "system" ? "active" : ""}`}
+            onClick={() => setPreference("system")}
+            title="Follow system/desktop appearance"
+          >
+            System
+          </button>
+          <button
+            type="button"
+            className={`theme-segmented-btn ${preference === "light" ? "active" : ""}`}
+            onClick={() => setPreference("light")}
+            title="Force light appearance"
+          >
+            Light
+          </button>
+          <button
+            type="button"
+            className={`theme-segmented-btn ${preference === "dark" ? "active" : ""}`}
+            onClick={() => setPreference("dark")}
+            title="Force dark appearance"
+          >
+            Dark
+          </button>
+        </div>
+
         {health && (
           <div
             className={`health-pill ${overall}`}

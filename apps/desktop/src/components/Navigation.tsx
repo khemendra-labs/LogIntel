@@ -1,8 +1,29 @@
 import React from "react";
-import { ActivityIcon, AlertIcon, DatabaseIcon, HuntIcon, IncidentIcon, OverviewIcon, RulesIcon, ServerIcon } from "./Icons";
+import {
+  ActivityIcon,
+  AlertIcon,
+  CaseIcon,
+  DatabaseIcon,
+  HuntIcon,
+  IncidentIcon,
+  MitreIcon,
+  MultiHostIcon,
+  OverviewIcon,
+  RulesIcon,
+  ServerIcon,
+} from "./Icons";
 import { SystemStatus } from "../types/events";
 
-export type NavTab = "overview" | "activity" | "incidents" | "alerts" | "hunting" | "rules";
+export type NavTab =
+  | "overview"
+  | "activity"
+  | "incidents"
+  | "alerts"
+  | "hunting"
+  | "rules"
+  | "cases"
+  | "multihost"
+  | "diagnostics";
 
 interface NavigationProps {
   currentTab: NavTab;
@@ -10,6 +31,7 @@ interface NavigationProps {
   status: SystemStatus | null;
   openAlertsCount?: number;
   openIncidentsCount?: number;
+  casesCount?: number;
 }
 
 export function Navigation({
@@ -18,11 +40,12 @@ export function Navigation({
   status,
   openAlertsCount = 0,
   openIncidentsCount = 0,
+  casesCount = 0,
 }: NavigationProps) {
   return (
     <aside className="sidebar-nav">
       <div>
-        <div className="nav-group-title">Telemetry & Ops</div>
+        <div className="nav-group-title">Telemetry & Operations</div>
         <button
           className={`nav-item ${currentTab === "overview" ? "active" : ""}`}
           onClick={() => onTabChange("overview")}
@@ -37,8 +60,17 @@ export function Navigation({
           <ActivityIcon />
           <span>Activity</span>
         </button>
+        <button
+          className={`nav-item ${currentTab === "diagnostics" ? "active" : ""}`}
+          onClick={() => onTabChange("diagnostics")}
+        >
+          <ServerIcon />
+          <span>System Diagnostics</span>
+        </button>
 
-        <div className="nav-group-title" style={{ marginTop: "16px" }}>Investigation & Hunting</div>
+        <div className="nav-group-title" style={{ marginTop: "16px" }}>
+          Detection & Triage
+        </div>
         <button
           className={`nav-item ${currentTab === "incidents" ? "active" : ""}`}
           onClick={() => onTabChange("incidents")}
@@ -52,13 +84,6 @@ export function Navigation({
               </span>
             )}
           </span>
-        </button>
-        <button
-          className={`nav-item ${currentTab === "hunting" ? "active" : ""}`}
-          onClick={() => onTabChange("hunting")}
-        >
-          <HuntIcon />
-          <span>Threat Hunting</span>
         </button>
         <button
           className={`nav-item ${currentTab === "alerts" ? "active" : ""}`}
@@ -81,12 +106,44 @@ export function Navigation({
           <RulesIcon />
           <span>Rules Catalog</span>
         </button>
+        <button
+          className={`nav-item ${currentTab === "hunting" ? "active" : ""}`}
+          onClick={() => onTabChange("hunting")}
+        >
+          <HuntIcon />
+          <span>Threat Hunting</span>
+        </button>
+
+        <div className="nav-group-title" style={{ marginTop: "16px" }}>
+          Investigation & Forensics
+        </div>
+        <button
+          className={`nav-item ${currentTab === "cases" ? "active" : ""}`}
+          onClick={() => onTabChange("cases")}
+        >
+          <CaseIcon />
+          <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+            <span>Investigations</span>
+            {casesCount > 0 && (
+              <span className="badge badge-neutral" style={{ fontSize: "10px", padding: "1px 5px", marginLeft: "6px" }}>
+                {casesCount}
+              </span>
+            )}
+          </span>
+        </button>
+        <button
+          className={`nav-item ${currentTab === "multihost" ? "active" : ""}`}
+          onClick={() => onTabChange("multihost")}
+        >
+          <MultiHostIcon />
+          <span>Multi-Host Analysis</span>
+        </button>
       </div>
 
       <div className="sidebar-footer">
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <DatabaseIcon />
-          <span>Events in DB: <strong>{status?.total_events.toLocaleString() || 0}</strong></span>
+          <span>Events in DB: <strong>{status?.total_events ? status.total_events.toLocaleString() : 0}</strong></span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <ServerIcon />

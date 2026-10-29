@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Header } from "./components/Header";
 import { Navigation, NavTab } from "./components/Navigation";
 import { AlertDetailModal } from "./features/AlertDetailModal";
@@ -9,6 +9,7 @@ import { IncidentWorkspaceModal } from "./features/IncidentWorkspaceModal";
 import { TelemetryHealthModal } from "./features/TelemetryHealthModal";
 import {
   fetchAlerts,
+  fetchCases,
   fetchEventDetail,
   fetchEventStatistics,
   fetchIncidents,
@@ -18,7 +19,10 @@ import {
 } from "./lib/api";
 import { ActivityPage } from "./pages/ActivityPage";
 import { AlertsPage } from "./pages/AlertsPage";
+import { CasesPage } from "./pages/CasesPage";
+import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
+import { MultiHostPage } from "./pages/MultiHostPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RulesPage } from "./pages/RulesPage";
 import { ThreatHuntingPage } from "./pages/ThreatHuntingPage";
@@ -34,10 +38,28 @@ export function App() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [health, setHealth] = useState<TelemetryHealthReport | null>(null);
   const [stats, setStats] = useState<EventStatistics | null>(null);
+  const [overviewHours, setOverviewHours] = useState<number>(24);
+  const [isLoadingStats, setIsLoadingStats] = useState<boolean>(false);
+
+  // Granular counts for KPI dashboard
   const [openAlertsCount, setOpenAlertsCount] = useState<number>(0);
+  const [ackAlertsCount, setAckAlertsCount] = useState<number>(0);
+  const [resolvedAlertsCount, setResolvedAlertsCount] = useState<number>(0);
+  const [falsePositiveAlertsCount, setFalsePositiveAlertsCount] = useState<number>(0);
   const [openIncidentsCount, setOpenIncidentsCount] = useState<number>(0);
+  const [activeIncidentsCount, setActiveIncidentsCount] = useState<number>(0);
+  const [casesCount, setCasesCount] = useState<number>(0);
+
+  // Connection & Context state
+  const [backendConnected, setBackendConnected] = useState<boolean>(true);
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
+
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
+
+  // In-flight request lock to prevent overlapping polling intervals
+  const isFetchingRef = useRef<boolean>(false);
 
   // Modals
   const [selectedEvent, setSelectedEvent] = useState<CanonicalEvent | null>(null);
@@ -47,43 +69,101 @@ export function App() {
   const [selectedEntityKey, setSelectedEntityKey] = useState<string | null>(null);
   const [forensicEventId, setForensicEventId] = useState<string | null>(null);
 
-  // Activity filter passed from Overview
+  // Filters passed across navigation
   const [activityFilter, setActivityFilter] = useState<{ severity?: string; source?: string } | null>(null);
 
-  const loadData = async () => {
+  const loadData = async (hours = overviewHours) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
     try {
-      const [sysStatus, telHealth, evtStats, alertsData, incidentsData] = await Promise.all([
-        fetchSystemStatus(),
-        fetchTelemetryHealth(),
-        fetchEventStatistics(24),
+      const [
+        sysStatus,
+        telHealth,
+        evtStats,
+        openAlerts,
+        ackAlerts,
+        resAlerts,
+        fpAlerts,
+        openIncidents,
+        invIncidents,
+        caseList,
+      ] = await Promise.all([
+        fetchSystemStatus().catch(() => null),
+        fetchTelemetryHealth().catch(() => null),
+        fetchEventStatistics(hours).catch(() => null),
         fetchAlerts({ status: "OPEN", limit: 1 }).catch(() => ({ total: 0 })),
+        fetchAlerts({ status: "ACKNOWLEDGED", limit: 1 }).catch(() => ({ total: 0 })),
+        fetchAlerts({ status: "RESOLVED", limit: 1 }).catch(() => ({ total: 0 })),
+        fetchAlerts({ status: "FALSE_POSITIVE", limit: 1 }).catch(() => ({ total: 0 })),
         fetchIncidents({ status: "OPEN", limit: 1 }).catch(() => ({ total: 0 })),
+        fetchIncidents({ status: "INVESTIGATING", limit: 1 }).catch(() => ({ total: 0 })),
+        fetchCases(undefined, 100).catch(() => []),
       ]);
-      setStatus(sysStatus);
-      setHealth(telHealth);
-      setStats(evtStats);
-      if (alertsData && typeof alertsData.total === "number") {
-        setOpenAlertsCount(alertsData.total);
+
+      if (sysStatus) {
+        setStatus(sysStatus);
+        setBackendConnected(true);
+        setBackendError(null);
+      } else {
+        setBackendConnected(false);
+        setBackendError("LogIntel engine is unreachable at 127.0.0.1:41721. Verify that the backend service is running.");
       }
-      if (incidentsData && typeof incidentsData.total === "number") {
-        setOpenIncidentsCount(incidentsData.total);
+
+      if (telHealth) setHealth(telHealth);
+      if (evtStats) setStats(evtStats);
+
+      if (openAlerts && typeof openAlerts.total === "number") setOpenAlertsCount(openAlerts.total);
+      if (ackAlerts && typeof ackAlerts.total === "number") setAckAlertsCount(ackAlerts.total);
+      if (resAlerts && typeof resAlerts.total === "number") setResolvedAlertsCount(resAlerts.total);
+      if (fpAlerts && typeof fpAlerts.total === "number") setFalsePositiveAlertsCount(fpAlerts.total);
+
+      const openInc = openIncidents?.total || 0;
+      const invInc = invIncidents?.total || 0;
+      setOpenIncidentsCount(openInc);
+      setActiveIncidentsCount(openInc + invInc);
+
+      if (Array.isArray(caseList)) {
+        setCasesCount(caseList.length);
+        if (caseList.length > 0 && selectedCaseId === null) {
+          setSelectedCaseId(caseList[0].case_id);
+        }
       }
     } catch (err) {
       console.error("Error polling backend engine:", err);
+      setBackendConnected(false);
+      setBackendError(err instanceof Error ? err.message : "Error connecting to backend");
+    } finally {
+      isFetchingRef.current = false;
     }
   };
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 5000);
+    loadData(overviewHours);
+    const interval = setInterval(() => {
+      loadData(overviewHours);
+    }, 8000);
     return () => clearInterval(interval);
-  }, []);
+  }, [overviewHours]);
+
+  const handleTimeWindowChange = async (hours: number) => {
+    setOverviewHours(hours);
+    setIsLoadingStats(true);
+    try {
+      const newStats = await fetchEventStatistics(hours);
+      setStats(newStats);
+    } catch (err) {
+      console.error(`Failed to load event statistics for ${hours}h:`, err);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
 
   const handleSync = async () => {
     setRefreshing(true);
     try {
       await triggerIngestionCycle();
-      await loadData();
+      await loadData(overviewHours);
       setRefreshTrigger((c) => c + 1);
     } catch (err) {
       console.error("Sync error:", err);
@@ -97,8 +177,12 @@ export function App() {
     setCurrentTab("activity");
   };
 
-  const handleNavigateToAlerts = () => {
+  const handleNavigateToAlerts = (filter?: { status?: string }) => {
     setCurrentTab("alerts");
+  };
+
+  const handleNavigateToIncidents = (filter?: { status?: string }) => {
+    setCurrentTab("incidents");
   };
 
   return (
@@ -120,7 +204,8 @@ export function App() {
           }}
           status={status}
           openAlertsCount={openAlertsCount}
-          openIncidentsCount={openIncidentsCount}
+          openIncidentsCount={activeIncidentsCount}
+          casesCount={casesCount}
         />
 
         <main className="content-pane">
@@ -130,9 +215,25 @@ export function App() {
               health={health}
               status={status}
               openAlertsCount={openAlertsCount}
+              ackAlertsCount={ackAlertsCount}
+              resolvedAlertsCount={resolvedAlertsCount}
+              falsePositiveAlertsCount={falsePositiveAlertsCount}
+              activeIncidentsCount={activeIncidentsCount}
               onSelectEvent={(evt) => setSelectedEvent(evt)}
+              onSelectAlert={(alertId) => setSelectedAlertId(alertId)}
+              onSelectIncident={(incId) => setSelectedIncidentId(incId)}
+              onOpenHealth={() => setHealthModalOpen(true)}
               onNavigateToActivity={handleNavigateToActivity}
               onNavigateToAlerts={handleNavigateToAlerts}
+              onNavigateToIncidents={handleNavigateToIncidents}
+              onNavigateToCases={() => setCurrentTab("cases")}
+              onNavigateToDiagnostics={() => setCurrentTab("diagnostics")}
+              onTimeWindowChange={handleTimeWindowChange}
+              currentHours={overviewHours}
+              isLoadingStats={isLoadingStats}
+              backendConnected={backendConnected}
+              backendError={backendError}
+              onRetryConnection={() => loadData(overviewHours)}
             />
           )}
 
@@ -165,8 +266,34 @@ export function App() {
             />
           )}
 
-          {currentTab === "rules" && (
-            <RulesPage />
+          {currentTab === "rules" && <RulesPage />}
+
+          {currentTab === "cases" && (
+            <CasesPage
+              onSelectCase={(caseId, incidentId) => {
+                setSelectedCaseId(caseId);
+                setSelectedIncidentId(incidentId);
+              }}
+              refreshTrigger={refreshTrigger}
+            />
+          )}
+
+          {currentTab === "multihost" && (
+            <MultiHostPage
+              initialCaseId={selectedCaseId}
+              refreshTrigger={refreshTrigger}
+            />
+          )}
+
+          {currentTab === "diagnostics" && (
+            <DiagnosticsPage
+              status={status}
+              health={health}
+              onRefresh={async () => {
+                await loadData(overviewHours);
+              }}
+              backendConnected={backendConnected}
+            />
           )}
         </main>
       </div>
@@ -183,7 +310,7 @@ export function App() {
           alertId={selectedAlertId}
           onClose={() => setSelectedAlertId(null)}
           onStatusUpdated={() => {
-            loadData();
+            loadData(overviewHours);
             setRefreshTrigger((c) => c + 1);
           }}
           onSelectEventId={async (eventId) => {
@@ -202,7 +329,7 @@ export function App() {
           incidentId={selectedIncidentId}
           onClose={() => setSelectedIncidentId(null)}
           onStatusUpdated={() => {
-            loadData();
+            loadData(overviewHours);
             setRefreshTrigger((c) => c + 1);
           }}
           onSelectAlertId={(alertId) => setSelectedAlertId(alertId)}
@@ -220,24 +347,20 @@ export function App() {
         />
       )}
 
-      {forensicEventId !== null && (
-        <EventForensicsModal
-          eventId={forensicEventId}
-          onClose={() => setForensicEventId(null)}
-          onSelectEntityKey={(key) => setSelectedEntityKey(key)}
-          onSelectAlertId={(alId) => setSelectedAlertId(alId)}
-          onSelectIncidentId={(incId) => setSelectedIncidentId(incId)}
-        />
-      )}
-
-      {healthModalOpen && (
+      {healthModalOpen && health && (
         <TelemetryHealthModal
           health={health}
           onClose={() => setHealthModalOpen(false)}
-          onRefresh={loadData}
+          onRefresh={handleSync}
+        />
+      )}
+
+      {forensicEventId && (
+        <EventForensicsModal
+          eventId={forensicEventId}
+          onClose={() => setForensicEventId(null)}
         />
       )}
     </div>
   );
 }
-

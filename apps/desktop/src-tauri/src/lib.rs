@@ -44,49 +44,152 @@ fn verify_engine_handshake() -> Result<bool, String> {
     }
 }
 
+fn is_compatible_python(python_bin: &PathBuf) -> bool {
+    let bin_str = python_bin.to_string_lossy();
+    if bin_str.ends_with("python3.12") || bin_str.contains(".venv/bin/python") {
+        return true;
+    }
+    match Command::new(python_bin)
+        .args(["-c", "import sys; sys.exit(0 if sys.version_info[:2] == (3, 12) else 1)"])
+        .output()
+    {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
+}
+
 fn spawn_engine_process() -> Option<Child> {
-    let candidates = [
+    let mut candidate_bins = Vec::new();
+    let mut candidate_srcs = Vec::new();
+    let mut candidate_sites = Vec::new();
+    let mut candidate_rules = Vec::new();
+
+    // 1. Check current executable ancestors (covers both installed /usr/bin and target/release)
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut curr = exe_path.parent();
+        while let Some(parent) = curr {
+            let venv_py = parent.join("apps/engine/.venv/bin/python");
+            if venv_py.exists() {
+                candidate_bins.push(venv_py);
+            }
+            let src = parent.join("apps/engine/src");
+            if src.exists() {
+                candidate_srcs.push(src);
+            }
+            let site = parent.join("apps/engine/.venv/lib/python3.12/site-packages");
+            if site.exists() {
+                candidate_sites.push(site);
+            }
+            let rules = parent.join("rules");
+            if rules.exists() && rules.is_dir() {
+                candidate_rules.push(rules);
+            }
+
+            // Also check for /usr layout relative to /usr/bin
+            let usr_engine = parent.join("lib/logintel/engine");
+            if usr_engine.exists() {
+                candidate_srcs.push(usr_engine.clone());
+                candidate_bins.push(usr_engine.join(".venv/bin/python"));
+                candidate_sites.push(usr_engine.join(".venv/lib/python3.12/site-packages"));
+            }
+            let usr_rules = parent.join("share/logintel/rules");
+            if usr_rules.exists() {
+                candidate_rules.push(usr_rules);
+            }
+
+            curr = parent.parent();
+        }
+    }
+
+    // 2. Standard system and fixed candidate paths
+    for b in [
         PathBuf::from("/usr/lib/logintel/engine/.venv/bin/python"),
-        PathBuf::from("/usr/lib/logintel/engine/venv/bin/python"),
         PathBuf::from("./apps/engine/.venv/bin/python"),
-        PathBuf::from("../engine/.venv/bin/python"),
-        PathBuf::from("../../apps/engine/.venv/bin/python"),
+        PathBuf::from("/usr/bin/python3.12"),
+        PathBuf::from("/snap/core24/current/usr/bin/python3.12"),
         PathBuf::from("/usr/bin/python3"),
-    ];
+    ] {
+        if b.exists() && !candidate_bins.contains(&b) {
+            candidate_bins.push(b);
+        }
+    }
 
-    for python_bin in candidates.iter() {
-        if python_bin.exists() {
-            println!("Attempting to spawn LogIntel engine using {:?}", python_bin);
-            let mut cmd = Command::new(python_bin);
-            cmd.args(["-m", "logintel.main"]);
+    for s in [
+        PathBuf::from("./apps/engine/src"),
+        PathBuf::from("/usr/lib/logintel/engine"),
+        PathBuf::from("/usr/lib/logintel/engine/src"),
+    ] {
+        if s.exists() && !candidate_srcs.contains(&s) {
+            candidate_srcs.push(s);
+        }
+    }
 
-            // Set PYTHONPATH for local development if found
-            let mut found_src = None;
-            for candidate_src in [
-                PathBuf::from("./apps/engine/src"),
-                PathBuf::from("../engine/src"),
-                PathBuf::from("../../apps/engine/src"),
-                PathBuf::from("/usr/lib/logintel/engine/src"),
-                PathBuf::from("/usr/lib/logintel/engine"),
-            ] {
-                if candidate_src.exists() {
-                    found_src = Some(candidate_src);
-                    break;
-                }
+    for st in [
+        PathBuf::from("./apps/engine/.venv/lib/python3.12/site-packages"),
+        PathBuf::from("/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages"),
+    ] {
+        if st.exists() && !candidate_sites.contains(&st) {
+            candidate_sites.push(st);
+        }
+    }
+
+    for r in [
+        PathBuf::from("./rules"),
+        PathBuf::from("/usr/share/logintel/rules"),
+        PathBuf::from("/usr/lib/logintel/engine/rules"),
+    ] {
+        if r.exists() && r.is_dir() && !candidate_rules.contains(&r) {
+            candidate_rules.push(r);
+        }
+    }
+
+    // Combine all source and site-packages entries into PYTHONPATH
+    let mut all_pythonpaths = Vec::new();
+    for p in candidate_srcs.into_iter().chain(candidate_sites.into_iter()) {
+        if !all_pythonpaths.contains(&p) {
+            all_pythonpaths.push(p);
+        }
+    }
+
+    for python_bin in candidate_bins.iter() {
+        if !is_compatible_python(python_bin) {
+            println!(
+                "Skipping incompatible Python interpreter (requires 3.12 ABI): {:?}",
+                python_bin
+            );
+            continue;
+        }
+
+        println!("Attempting to spawn LogIntel engine using {:?}", python_bin);
+        let mut cmd = Command::new(python_bin);
+        cmd.args(["-m", "logintel.main"]);
+
+        // Set PYTHONPATH for resolution of engine module and bundled libraries
+        if !all_pythonpaths.is_empty() {
+            let joined = all_pythonpaths
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(":");
+            if let Ok(existing) = std::env::var("PYTHONPATH") {
+                cmd.env("PYTHONPATH", format!("{}:{}", joined, existing));
+            } else {
+                cmd.env("PYTHONPATH", joined);
             }
+        }
 
-            if let Some(src) = found_src {
-                cmd.env("PYTHONPATH", src);
+        // Set LOGINTEL_RULES_DIR if found
+        if let Some(rules_path) = candidate_rules.first() {
+            cmd.env("LOGINTEL_RULES_DIR", rules_path);
+        }
+
+        match cmd.spawn() {
+            Ok(child) => {
+                println!("Spawned LogIntel engine with PID {}", child.id());
+                return Some(child);
             }
-
-            match cmd.spawn() {
-                Ok(child) => {
-                    println!("Spawned LogIntel engine with PID {}", child.id());
-                    return Some(child);
-                }
-                Err(err) => {
-                    eprintln!("Failed to spawn engine with {:?}: {}", python_bin, err);
-                }
+            Err(err) => {
+                eprintln!("Failed to spawn engine with {:?}: {}", python_bin, err);
             }
         }
     }
@@ -107,7 +210,33 @@ fn ensure_engine_running() -> Option<Child> {
         }
         Ok(false) => {
             // Port is free; spawn engine
-            spawn_engine_process()
+            let mut child = spawn_engine_process()?;
+
+            // Synchronize on engine readiness via handshake (up to 6 seconds with 200ms intervals)
+            println!("Waiting for LogIntel engine to initialize and bind port 41721...");
+            let start = std::time::Instant::now();
+            let mut ready = false;
+            while start.elapsed() < Duration::from_secs(6) {
+                if let Ok(Some(status)) = child.try_wait() {
+                    eprintln!("Engine process exited prematurely during startup: {:?}", status);
+                    break;
+                }
+                thread::sleep(Duration::from_millis(200));
+                if let Ok(true) = verify_engine_handshake() {
+                    ready = true;
+                    println!(
+                        "LogIntel engine confirmed ready via handshake in {:?}",
+                        start.elapsed()
+                    );
+                    break;
+                }
+            }
+            if !ready {
+                eprintln!("Warning: LogIntel engine did not complete handshake within readiness timeout. Terminating unready process.");
+                let _ = child.kill();
+                return None;
+            }
+            Some(child)
         }
     }
 }

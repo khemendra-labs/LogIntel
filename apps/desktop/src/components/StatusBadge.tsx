@@ -2,9 +2,10 @@ import React from "react";
 import { Outcome, Severity } from "../types/events";
 
 export function SeverityBadge({ severity }: { severity: Severity }) {
-  const sev = severity.toUpperCase();
+  const sev = (severity || "INFORMATIONAL").toUpperCase();
   let className = "badge badge-neutral";
-  if (sev === "ALERT" || sev === "CRITICAL") className = "badge badge-alert";
+  if (sev === "CRITICAL") className = "badge badge-critical";
+  else if (sev === "ALERT") className = "badge badge-alert";
   else if (sev === "WARNING") className = "badge badge-warning";
   else if (sev === "NOTICE" || sev === "INFORMATIONAL") className = "badge badge-notice";
 
