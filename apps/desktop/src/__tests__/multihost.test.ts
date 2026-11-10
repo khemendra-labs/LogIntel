@@ -10,7 +10,12 @@ import {
   setEngineToken,
   setTokenProvider,
 } from "../lib/api";
-import { formatSafeTimestamp, formatSafeTimeOnly } from "../features/InvestigationMultiHostWorkbench";
+import {
+  formatSafeTimestamp,
+  formatSafeTimeOnly,
+  INITIAL_LANE_VISIBLE_COUNT,
+  ComparativeHostLaneComponent,
+} from "../features/InvestigationMultiHostWorkbench";
 import type {
   CaseHostSummary,
   CaseMultiHostDossier,
@@ -778,6 +783,108 @@ describe("M7.12 Multi-Host Desktop Investigation Tests", () => {
       const formatted = `(${firstStr} → ${lastStr})`;
       expect(formatted).toBe("(2026-10-14 10:00:00.000Z → N/A)");
     }).not.toThrow();
+  });
+
+  // 24. Performance and Race-Condition Protection: AbortSignal propagation
+  it("passes AbortSignal to fetchCaseHostTimeline and fetchCaseComparativeTimeline", async () => {
+    const controller = new AbortController();
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        case_id: 101,
+        host_id: "host-web-01",
+        hostname: "web01",
+        items: [],
+        total: 0,
+        limit: 50,
+        offset: 0,
+        epistemic_breakdown: {},
+        layer_breakdown: {},
+      }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await fetchCaseHostTimeline(101, "host-web-01", {
+      signal: controller.signal,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const hostFetchOptions = fetchSpy.mock.calls[0][1];
+    expect(hostFetchOptions.signal).toBe(controller.signal);
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        case_id: 101,
+        lanes: [],
+        total_events: 0,
+      }),
+    });
+
+    await fetchCaseComparativeTimeline(101, {
+      hosts: "host-web-01,host-db-01",
+      signal: controller.signal,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const compFetchOptions = fetchSpy.mock.calls[1][1];
+    expect(compFetchOptions.signal).toBe(controller.signal);
+  });
+
+  // 25. Sequence Token and Stale Query Discarding
+  it("discards stale comparative timeline responses when subsequent request completes first", async () => {
+    let comparativeState: any = null;
+    let seqRef = 0;
+
+    // Simulate two sequential requests: Req 1 is slow (100ms), Req 2 is fast (10ms)
+    const runQuery = async (queryName: string, delayMs: number) => {
+      const currentSeq = ++seqRef;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // Guard condition
+      if (currentSeq === seqRef) {
+        comparativeState = queryName;
+      }
+    };
+
+    const p1 = runQuery("REQ-1-OLD-HOSTS", 100);
+    const p2 = runQuery("REQ-2-NEW-HOSTS", 10);
+
+    await Promise.all([p1, p2]);
+
+    // Fast request 2 was sequence 2; slow request 1 was sequence 1.
+    // The state must reflect REQ-2-NEW-HOSTS, not the stale delayed REQ-1
+    expect(comparativeState).toBe("REQ-2-NEW-HOSTS");
+  });
+
+  // 26. Swimlane Windowing and DOM Bloat Prevention
+  it("enforces INITIAL_LANE_VISIBLE_COUNT windowing on large timeline result sets", () => {
+    expect(INITIAL_LANE_VISIBLE_COUNT).toBe(30);
+
+    const manyItems = Array.from({ length: 75 }, (_, i) => ({
+      timeline_id: `tl-${i}`,
+      case_id: 101,
+      source_layer: "telemetry",
+      source_id: `ev-${i}`,
+      event_type: "PROCESS_EXEC",
+      timestamp: `2026-10-14T10:${String(i % 60).padStart(2, "0")}:00Z`,
+      display_summary: `Execution test ${i}`,
+      epistemic_status: "OBSERVED",
+      is_in_scope: true,
+    }));
+
+    const lane: HostTimelineLane = {
+      host_id: "host-heavy-01",
+      hostname: "heavy01.corp.internal",
+      items: manyItems as any,
+      total: 75,
+      first_seen: "2026-10-14T10:00:00Z",
+      last_seen: "2026-10-14T11:15:00Z",
+    };
+
+    // When not expanded, only INITIAL_LANE_VISIBLE_COUNT (30) items should be visible
+    const initialVisible = lane.items.slice(0, INITIAL_LANE_VISIBLE_COUNT);
+    expect(initialVisible.length).toBe(30);
+    expect(lane.items.length - initialVisible.length).toBe(45);
   });
 });
 

@@ -609,12 +609,30 @@ class TemporalReconstructionEngine:
         if not host_transitions:
             return []
 
-        # Map evidence items by source identifier for actor resolution
+        # Map evidence items by source identifier for actor resolution, namespacing by source type
         ev_map: Dict[str, Dict[str, Any]] = {}
         for it in evidence_items:
             sid = str(it.get("_source_id") or it.get("id") or "")
-            if sid:
+            if not sid:
+                continue
+            stype = str(it.get("_source_type") or it.get("source_type") or "").strip().lower()
+            if stype:
+                ns_key = f"{stype}:{sid}"
+                if ns_key in ev_map:
+                    # Non-lossy merge: preserve existing values, fill missing
+                    merged = dict(ev_map[ns_key])
+                    merged.update({k: v for k, v in it.items() if v is not None and k not in merged})
+                    ev_map[ns_key] = merged
+                else:
+                    ev_map[ns_key] = it
+
+            # Fallback bare ID mapping without destructive overwrite
+            if sid not in ev_map:
                 ev_map[sid] = it
+            else:
+                merged_bare = dict(ev_map[sid])
+                merged_bare.update({k: v for k, v in it.items() if v is not None and k not in merged_bare})
+                ev_map[sid] = merged_bare
 
         traces: List[MultiHostTrace] = []
         for idx, ht in enumerate(host_transitions):
@@ -624,7 +642,9 @@ class TemporalReconstructionEngine:
             # Derive actor solely from supporting transition evidence records
             actor = "UNKNOWN"
             for ref in ht.evidence_references:
-                it = ev_map.get(str(ref.source_id))
+                stype = str(ref.source_type or "").strip().lower()
+                sid = str(ref.source_id)
+                it = (ev_map.get(f"{stype}:{sid}") if stype else None) or ev_map.get(sid)
                 if it:
                     cand = it.get("username") or it.get("actor") or it.get("user")
                     if cand and str(cand).strip():
@@ -798,10 +818,18 @@ class TemporalReconstructionEngine:
             for edge in graph.edges:
                 if edge.mitre_technique_id:
                     for ev_id in edge.evidence_event_ids:
-                        mitre_by_ev[str(ev_id)] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
+                        eid_str = str(ev_id)
+                        mitre_by_ev[f"event:{eid_str}"] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
+                        if eid_str not in mitre_by_ev:
+                            mitre_by_ev[eid_str] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
                     for ref in edge.evidence_references:
                         if ref.source_id:
-                            mitre_by_ev[str(ref.source_id)] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
+                            rsid = str(ref.source_id)
+                            rstype = str(ref.source_type or "").strip().lower()
+                            if rstype:
+                                mitre_by_ev[f"{rstype}:{rsid}"] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
+                            if rsid not in mitre_by_ev:
+                                mitre_by_ev[rsid] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
 
         for idx, it in enumerate(evidence_items[: self.MAX_SEQUENCE_STEPS]):
             action = str(it.get("action") or it.get("summary") or "Action")
@@ -821,7 +849,10 @@ class TemporalReconstructionEngine:
 
             if not m_id:
                 src_id = str(it.get("_source_id") or it.get("id") or "")
-                if src_id in mitre_by_ev:
+                stype = str(it.get("_source_type") or it.get("source_type") or "").strip().lower()
+                if stype and f"{stype}:{src_id}" in mitre_by_ev:
+                    m_id, m_name = mitre_by_ev[f"{stype}:{src_id}"]
+                elif src_id in mitre_by_ev:
                     m_id, m_name = mitre_by_ev[src_id]
 
             # Neutral stage naming derived from action

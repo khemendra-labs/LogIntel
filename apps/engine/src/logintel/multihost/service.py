@@ -184,12 +184,56 @@ class MultiHostInvestigationService:
                 return False
             return True
 
-        def update_timestamps(key: str, ts: Optional[str]) -> None:
+        def _alert_overlaps_scope(first_seen: Optional[str], last_seen: Optional[str]) -> bool:
+            if not scope_start_dt and not scope_end_dt and not scope_time_start and not scope_time_end:
+                return True
+            if not first_seen and not last_seen:
+                return True
+            fs_dt = _parse_ts_utc(first_seen)
+            ls_dt = _parse_ts_utc(last_seen)
+            if fs_dt is None and ls_dt is not None:
+                fs_dt = ls_dt
+            elif ls_dt is None and fs_dt is not None:
+                ls_dt = fs_dt
+
+            if fs_dt is not None and ls_dt is not None:
+                if fs_dt > ls_dt:
+                    fs_dt, ls_dt = ls_dt, fs_dt
+                if scope_start_dt and ls_dt < scope_start_dt:
+                    return False
+                if scope_end_dt and fs_dt > scope_end_dt:
+                    return False
+                return True
+
+            # Fallback for unparseable formats using string comparison
+            fs_clean = (first_seen.replace("Z", "+00:00") if first_seen else None) or (last_seen.replace("Z", "+00:00") if last_seen else None)
+            ls_clean = (last_seen.replace("Z", "+00:00") if last_seen else None) or (first_seen.replace("Z", "+00:00") if first_seen else None)
+            if fs_clean and ls_clean and fs_clean > ls_clean:
+                fs_clean, ls_clean = ls_clean, fs_clean
+            s_start = scope_time_start.replace("Z", "+00:00") if scope_time_start else None
+            s_end = scope_time_end.replace("Z", "+00:00") if scope_time_end else None
+            if s_start and ls_clean and ls_clean < s_start:
+                return False
+            if s_end and fs_clean and fs_clean > s_end:
+                return False
+            return True
+
+        def update_timestamps(key: str, ts: Optional[str], clamp: bool = False) -> None:
             if not ts:
                 return
             clean_ts = ts.replace("Z", "+00:00")
-            if not _is_in_scope_time(clean_ts):
-                return
+            if clamp:
+                if scope_time_start:
+                    clean_start = scope_time_start.replace("Z", "+00:00")
+                    if clean_ts < clean_start:
+                        clean_ts = clean_start
+                if scope_time_end:
+                    clean_end = scope_time_end.replace("Z", "+00:00")
+                    if clean_ts > clean_end:
+                        clean_ts = clean_end
+            else:
+                if not _is_in_scope_time(clean_ts):
+                    return
             cur_first = host_first_seen.get(key)
             if cur_first is None or clean_ts < cur_first:
                 host_first_seen[key] = clean_ts
@@ -222,25 +266,31 @@ class MultiHostInvestigationService:
             if ref_host:
                 key = register_host(ref_host)
                 host_evidence_tags.setdefault(key, set()).add(ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]")
-                ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at") or ref.created_at
                 
                 # Enforce temporal scope boundaries for evidence references
-                if not _is_in_scope_time(ts):
-                    continue
-
-                update_timestamps(key, ts)
                 if ref.source_type == "alert":
+                    a_first = rec.get("first_seen") or rec.get("timestamp") or rec.get("created_at") or ref.created_at
+                    a_last = rec.get("last_seen") or a_first
+                    if not _alert_overlaps_scope(a_first, a_last):
+                        continue
+                    update_timestamps(key, a_first, clamp=True)
+                    update_timestamps(key, a_last, clamp=True)
                     alert_id = str(rec.get("id") or ref.source_id)
                     counted_alerts = counted_alert_ids.setdefault(key, set())
                     if alert_id not in counted_alerts:
                         counted_alerts.add(alert_id)
                         host_alert_counts[key] = host_alert_counts.get(key, 0) + 1
-                elif ref.source_type == "event":
-                    ev_id = str(rec.get("id") or ref.source_id)
-                    counted_events = counted_event_ids.setdefault(key, set())
-                    if ev_id not in counted_events:
-                        counted_events.add(ev_id)
-                        host_event_counts[key] = host_event_counts.get(key, 0) + 1
+                else:
+                    ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at") or ref.created_at
+                    if not _is_in_scope_time(ts):
+                        continue
+                    update_timestamps(key, ts, clamp=False)
+                    if ref.source_type == "event":
+                        ev_id = str(rec.get("id") or ref.source_id)
+                        counted_events = counted_event_ids.setdefault(key, set())
+                        if ev_id not in counted_events:
+                            counted_events.add(ev_id)
+                            host_event_counts[key] = host_event_counts.get(key, 0) + 1
 
         # 3. Read incident alerts from logintel.db
         if self.forensic_db and case.incident_id:
@@ -262,15 +312,15 @@ class MultiHostInvestigationService:
                             key = register_host(a_host)
                             a_first = row["first_seen"]
                             a_last = row["last_seen"]
-                            if (scope_start_dt or scope_end_dt) and not (_is_in_scope_time(a_first) or _is_in_scope_time(a_last)):
+                            if not _alert_overlaps_scope(a_first, a_last):
                                 continue
                             alert_id = str(row["id"])
                             counted_alerts = counted_alert_ids.setdefault(key, set())
                             if alert_id not in counted_alerts:
                                 counted_alerts.add(alert_id)
                                 host_alert_counts[key] = host_alert_counts.get(key, 0) + 1
-                            update_timestamps(key, a_first)
-                            update_timestamps(key, a_last)
+                            update_timestamps(key, a_first, clamp=True)
+                            update_timestamps(key, a_last, clamp=True)
                             host_evidence_tags.setdefault(key, set()).add(f"[alert:{row['id']}]")
             except Exception as e:
                 logger.warning("Error reading incident alerts for case %d: %s", case_id, e)
@@ -511,6 +561,7 @@ class MultiHostInvestigationService:
         offset: int = 0,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
+        dossier: Optional[CaseMultiHostDossier] = None,
     ) -> HostTimelineResponse:
         """Retrieve host-scoped unified timeline projection within authorized case bounds."""
         case = self.case_repo.get_case(case_id, resolve_evidence=True)
@@ -522,7 +573,8 @@ class MultiHostInvestigationService:
             raise ValueError("Host identifier cannot be empty")
 
         # Authorize host against case scope and evidence
-        dossier = self.get_case_dossier(case_id)
+        if dossier is None:
+            dossier = self.get_case_dossier(case_id)
         matched_host: Optional[CaseHostSummary] = None
         for h in dossier.participating_hosts:
             if h.host_id.lower() == host_norm.lower() or h.hostname.lower() == host_norm.lower():
@@ -603,6 +655,9 @@ class MultiHostInvestigationService:
         all_timestamps: List[str] = []
         total_events = 0
 
+        # Pre-compute or reuse the shared dossier once for all lanes
+        shared_dossier = self.get_case_dossier(case_id)
+
         for hid in clean_hosts:
             try:
                 tl = self.get_host_timeline(
@@ -612,6 +667,7 @@ class MultiHostInvestigationService:
                     offset=0,
                     time_start=time_start,
                     time_end=time_end,
+                    dossier=shared_dossier,
                 )
                 lane = HostTimelineLane(
                     host_id=tl.host_id,

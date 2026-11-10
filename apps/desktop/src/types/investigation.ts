@@ -2684,6 +2684,7 @@ export interface HostTimelineQueryParams {
   offset?: number;
   time_start?: string | null;
   time_end?: string | null;
+  signal?: AbortSignal;
 }
 
 export interface HostTimelineResponse {
@@ -2724,6 +2725,7 @@ export interface ComparativeTimelineQueryParams {
   time_start?: string | null;
   time_end?: string | null;
   limit_per_lane?: number;
+  signal?: AbortSignal;
 }
 
 export interface MultiHostExportResponse {

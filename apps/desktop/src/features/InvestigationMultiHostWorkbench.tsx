@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type {
   CaseHostSummary,
   CaseMultiHostDossier,
@@ -7,6 +7,7 @@ import type {
   HostDiscrepancy,
   InvestigationScope,
   ComparativeTimelineResponse,
+  HostTimelineLane,
   InvestigationTimelineItem,
   MultiHostExportResponse,
 } from "../types/investigation";
@@ -40,6 +41,167 @@ export function formatSafeTimeOnly(ts?: string | null, fallback = "--:--:--"): s
     return fallback;
   }
 }
+
+export const INITIAL_LANE_VISIBLE_COUNT = 30;
+
+export interface SwimlaneItemCardProps {
+  item: InvestigationTimelineItem;
+  isSelected: boolean;
+  onSelect: (item: InvestigationTimelineItem) => void;
+}
+
+export const SwimlaneItemCard = React.memo<SwimlaneItemCardProps>(function SwimlaneItemCard({
+  item,
+  isSelected,
+  onSelect,
+}) {
+  const formattedTime = useMemo(() => formatSafeTimeOnly(item.timestamp), [item.timestamp]);
+
+  return (
+    <div
+      style={{
+        minWidth: "170px",
+        maxWidth: "200px",
+        padding: "8px",
+        background: isSelected ? "#312e81" : "var(--bg-surface-subtle)",
+        border: isSelected ? "1px solid #818cf8" : "1px solid var(--border-subtle)",
+        borderRadius: "3px",
+        cursor: "pointer",
+        fontSize: "10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "3px",
+        flexShrink: 0,
+      }}
+      onClick={() => onSelect(item)}
+      title="Click to view full event citations and details"
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", fontSize: "9px" }}>
+          {formattedTime}
+        </span>
+        <span className="badge badge-neutral" style={{ fontSize: "8px" }}>
+          {item.source_layer}
+        </span>
+      </div>
+      <div style={{ fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {item.event_type}
+      </div>
+      <div style={{ color: "var(--text-secondary)", fontSize: "9px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+        {item.display_summary}
+      </div>
+    </div>
+  );
+});
+
+export interface ComparativeHostLaneProps {
+  lane: HostTimelineLane;
+  selectedEventTimelineId?: string;
+  onSelectEvent: (item: InvestigationTimelineItem) => void;
+  onFocusSingleHost: (hostId: string) => void;
+}
+
+export const ComparativeHostLaneComponent = React.memo<ComparativeHostLaneProps>(function ComparativeHostLaneComponent({
+  lane,
+  selectedEventTimelineId,
+  onSelectEvent,
+  onFocusSingleHost,
+}) {
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const visibleItems = useMemo(() => {
+    if (isExpanded || lane.items.length <= INITIAL_LANE_VISIBLE_COUNT) {
+      return lane.items;
+    }
+    return lane.items.slice(0, INITIAL_LANE_VISIBLE_COUNT);
+  }, [lane.items, isExpanded]);
+
+  const hasMore = lane.items.length > INITIAL_LANE_VISIBLE_COUNT;
+
+  return (
+    <div
+      key={lane.host_id}
+      className="panel"
+      style={{
+        padding: "10px 14px",
+        background: "var(--bg-surface)",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "3px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+      }}
+    >
+      {/* Lane Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "12px", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+            {lane.hostname || lane.host_id}
+          </span>
+          <span className="badge badge-neutral" style={{ fontSize: "9px" }}>
+            {lane.total} Events in Window
+          </span>
+          {lane.first_seen && (
+            <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+              ({formatSafeTimestamp(lane.first_seen)} &rarr; {formatSafeTimestamp(lane.last_seen)})
+            </span>
+          )}
+        </div>
+
+        <button
+          className="btn btn-secondary"
+          style={{ padding: "2px 8px", fontSize: "9px" }}
+          onClick={() => onFocusSingleHost(lane.host_id)}
+        >
+          Focus Single Host Timeline &rarr;
+        </button>
+      </div>
+
+      {/* Horizontal Swimlane Track */}
+      {lane.items.length === 0 ? (
+        <div style={{ padding: "12px", textAlign: "center", fontSize: "10px", color: "var(--text-muted)", background: "var(--bg-surface-subtle)", borderRadius: "2px" }}>
+          Zero events observed on this host within the active time window.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            gap: "8px",
+            overflowX: "auto",
+            padding: "6px 2px",
+            alignItems: "stretch",
+          }}
+        >
+          {visibleItems.map((item) => (
+            <SwimlaneItemCard
+              key={item.timeline_id}
+              item={item}
+              isSelected={selectedEventTimelineId === item.timeline_id}
+              onSelect={onSelectEvent}
+            />
+          ))}
+
+          {hasMore && (
+            <button
+              className="btn btn-secondary"
+              style={{
+                alignSelf: "center",
+                padding: "8px 12px",
+                fontSize: "10px",
+                flexShrink: 0,
+                minHeight: "56px",
+              }}
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              {isExpanded
+                ? "Show fewer"
+                : `+${lane.items.length - INITIAL_LANE_VISIBLE_COUNT} more events`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
 
 interface InvestigationMultiHostWorkbenchProps {
   caseId: number;
@@ -102,14 +264,32 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
   const [exportData, setExportData] = useState<MultiHostExportResponse | null>(null);
   const [exportCopied, setExportCopied] = useState<boolean>(false);
 
-  // Ref to cancel stale async requests when caseId or selectedHostId changes
+  // Ref and sequence counters to cancel stale async requests
   const activeCaseRef = useRef<number>(caseId);
   const activeHostRef = useRef<string | null>(null);
+  const dossierSeqRef = useRef<number>(0);
+  const hostTimelineSeqRef = useRef<number>(0);
+  const comparativeSeqRef = useRef<number>(0);
+  const exportSeqRef = useRef<number>(0);
+
+  // In-flight request abort controllers
+  const hostTimelineAbortRef = useRef<AbortController | null>(null);
+  const comparativeAbortRef = useRef<AbortController | null>(null);
+
+  // Cleanup inflight requests on unmount
+  useEffect(() => {
+    return () => {
+      hostTimelineAbortRef.current?.abort();
+      comparativeAbortRef.current?.abort();
+    };
+  }, []);
 
   // Load dossier when caseId changes
   useEffect(() => {
     activeCaseRef.current = caseId;
     activeHostRef.current = null;
+    hostTimelineAbortRef.current?.abort();
+    comparativeAbortRef.current?.abort();
     setDossier(null);
     setSelectedHostId(null);
     setTimelineData(null);
@@ -139,6 +319,7 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
   }, [caseId]);
 
   const handleOpenExportModal = async (fmt: "markdown" | "json" = "markdown") => {
+    const seq = ++exportSeqRef.current;
     setExportFormat(fmt);
     setExportModalOpen(true);
     setExportLoading(true);
@@ -146,15 +327,15 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
     setExportCopied(false);
     try {
       const res = await exportCaseMultiHostDossier(caseId, fmt);
-      if (activeCaseRef.current === caseId) {
+      if (seq === exportSeqRef.current && activeCaseRef.current === caseId) {
         setExportData(res);
       }
     } catch (err: any) {
-      if (activeCaseRef.current === caseId) {
+      if (seq === exportSeqRef.current && activeCaseRef.current === caseId) {
         setExportError(err.message || "Failed to generate multi-host export report");
       }
     } finally {
-      if (activeCaseRef.current === caseId) {
+      if (seq === exportSeqRef.current && activeCaseRef.current === caseId) {
         setExportLoading(false);
       }
     }
@@ -162,21 +343,22 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
 
   const handleSwitchExportFormat = async (fmt: "markdown" | "json") => {
     if (fmt === exportFormat && exportData) return;
+    const seq = ++exportSeqRef.current;
     setExportFormat(fmt);
     setExportLoading(true);
     setExportError(null);
     setExportCopied(false);
     try {
       const res = await exportCaseMultiHostDossier(caseId, fmt);
-      if (activeCaseRef.current === caseId) {
+      if (seq === exportSeqRef.current && activeCaseRef.current === caseId) {
         setExportData(res);
       }
     } catch (err: any) {
-      if (activeCaseRef.current === caseId) {
+      if (seq === exportSeqRef.current && activeCaseRef.current === caseId) {
         setExportError(err.message || "Failed to generate multi-host export report");
       }
     } finally {
-      if (activeCaseRef.current === caseId) {
+      if (seq === exportSeqRef.current && activeCaseRef.current === caseId) {
         setExportLoading(false);
       }
     }
@@ -190,33 +372,36 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
   };
 
   const loadDossier = async () => {
+    const seq = ++dossierSeqRef.current;
     setLoading(true);
     setError(null);
     try {
       const res = await fetchCaseMultiHostDossier(caseId);
-      if (activeCaseRef.current === caseId) {
-        setDossier(res);
-        // Default selected comparative hosts to participating hosts
-        if (res.participating_hosts.length > 0) {
-          setSelectedComparativeHosts(res.participating_hosts.slice(0, 8).map((h) => h.host_id));
-        }
-        // If a host was selected, ensure it still exists in the new dossier
-        if (selectedHostId) {
-          const exists = res.participating_hosts.some(
-            (h) => h.host_id.toLowerCase() === selectedHostId.toLowerCase()
-          );
-          if (!exists) {
-            setSelectedHostId(null);
-            setTimelineData(null);
-          }
+      if (seq !== dossierSeqRef.current || activeCaseRef.current !== caseId) {
+        return;
+      }
+      setDossier(res);
+      // Default selected comparative hosts to participating hosts
+      if (res.participating_hosts.length > 0) {
+        setSelectedComparativeHosts(res.participating_hosts.slice(0, 8).map((h) => h.host_id));
+      }
+      // If a host was selected, ensure it still exists in the new dossier
+      if (selectedHostId) {
+        const exists = res.participating_hosts.some(
+          (h) => h.host_id.toLowerCase() === selectedHostId.toLowerCase()
+        );
+        if (!exists) {
+          setSelectedHostId(null);
+          setTimelineData(null);
         }
       }
     } catch (err: any) {
-      if (activeCaseRef.current === caseId) {
-        setError(err.message || "Failed to load multi-host investigation dossier");
+      if (seq !== dossierSeqRef.current || activeCaseRef.current !== caseId) {
+        return;
       }
+      setError(err.message || "Failed to load multi-host investigation dossier");
     } finally {
-      if (activeCaseRef.current === caseId) {
+      if (seq === dossierSeqRef.current && activeCaseRef.current === caseId) {
         setLoading(false);
       }
     }
@@ -227,9 +412,16 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
     if (!selectedHostId) return;
     activeHostRef.current = selectedHostId;
     loadHostTimeline(selectedHostId, timelineOffset);
-  }, [selectedHostId, timelineOffset]);
+  }, [selectedHostId, timelineOffset, timelineTimeStart, timelineTimeEnd, caseId]);
 
   const loadHostTimeline = async (hostId: string, offset: number) => {
+    const seq = ++hostTimelineSeqRef.current;
+    if (hostTimelineAbortRef.current) {
+      hostTimelineAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    hostTimelineAbortRef.current = controller;
+
     setTimelineLoading(true);
     setTimelineError(null);
     try {
@@ -238,16 +430,20 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
         offset: offset,
         time_start: timelineTimeStart || undefined,
         time_end: timelineTimeEnd || undefined,
+        signal: controller.signal,
       });
-      if (activeCaseRef.current === caseId && activeHostRef.current === hostId) {
-        setTimelineData(res);
+      if (seq !== hostTimelineSeqRef.current || activeCaseRef.current !== caseId || activeHostRef.current !== hostId) {
+        return;
       }
+      setTimelineData(res);
     } catch (err: any) {
-      if (activeCaseRef.current === caseId && activeHostRef.current === hostId) {
-        setTimelineError(err.message || `Failed to retrieve timeline for host ${hostId}`);
+      if (err?.name === "AbortError") return;
+      if (seq !== hostTimelineSeqRef.current || activeCaseRef.current !== caseId || activeHostRef.current !== hostId) {
+        return;
       }
+      setTimelineError(err.message || `Failed to retrieve timeline for host ${hostId}`);
     } finally {
-      if (activeCaseRef.current === caseId && activeHostRef.current === hostId) {
+      if (seq === hostTimelineSeqRef.current && activeCaseRef.current === caseId && activeHostRef.current === hostId) {
         setTimelineLoading(false);
       }
     }
@@ -258,13 +454,20 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
     if (activeSubTab === "timeline" && timelineMode === "comparative" && selectedComparativeHosts.length > 0) {
       loadComparativeTimeline(selectedComparativeHosts);
     }
-  }, [activeSubTab, timelineMode, selectedComparativeHosts, caseId]);
+  }, [activeSubTab, timelineMode, selectedComparativeHosts, caseId, timelineTimeStart, timelineTimeEnd, comparativeLimitPerLane]);
 
   const loadComparativeTimeline = async (hostsToQuery: string[]) => {
     if (hostsToQuery.length === 0) {
       setComparativeData(null);
       return;
     }
+    const seq = ++comparativeSeqRef.current;
+    if (comparativeAbortRef.current) {
+      comparativeAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    comparativeAbortRef.current = controller;
+
     setComparativeLoading(true);
     setComparativeError(null);
     try {
@@ -273,16 +476,20 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
         time_start: timelineTimeStart || undefined,
         time_end: timelineTimeEnd || undefined,
         limit_per_lane: comparativeLimitPerLane,
+        signal: controller.signal,
       });
-      if (activeCaseRef.current === caseId) {
-        setComparativeData(res);
+      if (seq !== comparativeSeqRef.current || activeCaseRef.current !== caseId) {
+        return;
       }
+      setComparativeData(res);
     } catch (err: any) {
-      if (activeCaseRef.current === caseId) {
-        setComparativeError(err.message || "Failed to retrieve comparative timeline swimlanes");
+      if (err?.name === "AbortError") return;
+      if (seq !== comparativeSeqRef.current || activeCaseRef.current !== caseId) {
+        return;
       }
+      setComparativeError(err.message || "Failed to retrieve comparative timeline swimlanes");
     } finally {
-      if (activeCaseRef.current === caseId) {
+      if (seq === comparativeSeqRef.current && activeCaseRef.current === caseId) {
         setComparativeLoading(false);
       }
     }
@@ -1640,103 +1847,16 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
                   {!comparativeLoading && comparativeData && (
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                       {comparativeData.lanes.map((lane) => (
-                        <div
+                        <ComparativeHostLaneComponent
                           key={lane.host_id}
-                          className="panel"
-                          style={{
-                            padding: "10px 14px",
-                            background: "var(--bg-surface)",
-                            border: "1px solid var(--border-subtle)",
-                            borderRadius: "3px",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "8px",
+                          lane={lane}
+                          selectedEventTimelineId={selectedEventDetail?.timeline_id}
+                          onSelectEvent={setSelectedEventDetail}
+                          onFocusSingleHost={(hostId) => {
+                            setSelectedHostId(hostId);
+                            setTimelineMode("single");
                           }}
-                        >
-                          {/* Lane Header */}
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <span style={{ fontSize: "12px", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
-                                {lane.hostname || lane.host_id}
-                              </span>
-                              <span className="badge badge-neutral" style={{ fontSize: "9px" }}>
-                                {lane.total} Events in Window
-                              </span>
-                              {lane.first_seen && (
-                                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
-                                  ({formatSafeTimestamp(lane.first_seen)} &rarr; {formatSafeTimestamp(lane.last_seen)})
-                                </span>
-                              )}
-                            </div>
-
-                            <button
-                              className="btn btn-secondary"
-                              style={{ padding: "2px 8px", fontSize: "9px" }}
-                              onClick={() => {
-                                setSelectedHostId(lane.host_id);
-                                setTimelineMode("single");
-                              }}
-                            >
-                              Focus Single Host Timeline &rarr;
-                            </button>
-                          </div>
-
-                          {/* Horizontal Swimlane Track */}
-                          {lane.items.length === 0 ? (
-                            <div style={{ padding: "12px", textAlign: "center", fontSize: "10px", color: "var(--text-muted)", background: "var(--bg-surface-subtle)", borderRadius: "2px" }}>
-                              Zero events observed on this host within the active time window.
-                            </div>
-                          ) : (
-                            <div
-                              style={{
-                                display: "flex",
-                                gap: "8px",
-                                overflowX: "auto",
-                                padding: "6px 2px",
-                              }}
-                            >
-                              {lane.items.map((item) => {
-                                const isSelected = selectedEventDetail?.timeline_id === item.timeline_id;
-                                return (
-                                  <div
-                                    key={item.timeline_id}
-                                    style={{
-                                      minWidth: "170px",
-                                      maxWidth: "200px",
-                                      padding: "8px",
-                                      background: isSelected ? "#312e81" : "var(--bg-surface-subtle)",
-                                      border: isSelected ? "1px solid #818cf8" : "1px solid var(--border-subtle)",
-                                      borderRadius: "3px",
-                                      cursor: "pointer",
-                                      fontSize: "10px",
-                                      display: "flex",
-                                      flexDirection: "column",
-                                      gap: "3px",
-                                      flexShrink: 0,
-                                    }}
-                                    onClick={() => setSelectedEventDetail(item)}
-                                    title="Click to view full event citations and details"
-                                  >
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                      <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", fontSize: "9px" }}>
-                                        {formatSafeTimeOnly(item.timestamp)}
-                                      </span>
-                                      <span className="badge badge-neutral" style={{ fontSize: "8px" }}>
-                                        {item.source_layer}
-                                      </span>
-                                    </div>
-                                    <div style={{ fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                      {item.event_type}
-                                    </div>
-                                    <div style={{ color: "var(--text-secondary)", fontSize: "9px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                                      {item.display_summary}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
+                        />
                       ))}
                     </div>
                   )}

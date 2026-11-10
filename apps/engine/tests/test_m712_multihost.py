@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import random
 import time
 import pytest
 from fastapi.testclient import TestClient
@@ -56,7 +57,7 @@ def unauth_client():
 @pytest.fixture
 def multihost_fixture():
     """Create realistic isolated cases: empty case, single-host case, and multi-host case."""
-    t_id = int(time.time() * 1000) % 900000
+    t_id = int(time.time() * 1000) % 900000 + random.randint(10000000, 90000000)
 
     # 1. Empty case
     inc_empty = 810000 + t_id
@@ -901,6 +902,215 @@ def test_remediation_m712_006_markdown_export_formatting_and_escaping(multihost_
     pipe_export = multihost_service.export_dossier(pipe_case.case_id, format="markdown")
     # Must have escaped pipe
     assert "host\\|with\\|pipes" in pipe_export.content
+
+
+def test_alert_temporal_scope_spanning_overlap(multihost_fixture):
+    """Verify alerts spanning across case window are included rather than dropped."""
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
+    host_name = f"srv-spanning-{t_id}"
+
+    case = case_repo.create_case(
+        incident_id=860000 + t_id,
+        title=f"Spanning Alert Case {t_id}",
+        description="Testing spanning alert temporal overlap semantics.",
+    )
+    case_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(
+            investigation_id=860000 + t_id,
+            subject_id=f"inc-{860000 + t_id}",
+            target_hosts=[host_name],
+            time_start="2026-10-15T10:00:00Z",
+            time_end="2026-10-15T12:00:00Z",
+        ),
+    )
+
+    # 1. Alert that spans entirely across the case window: 08:00 to 14:00
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="alert",
+        source_id=f"alt-span-{t_id}",
+        role="PRIMARY",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[alert:alt-span-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"alt-span-{t_id}",
+            "host": host_name,
+            "first_seen": "2026-10-15T08:00:00Z",
+            "last_seen": "2026-10-15T14:00:00Z",
+            "rule_id": "RULE_SPANNING",
+        }),
+    )
+
+    # 2. Alert that ends before scope start: 06:00 to 08:00 (must be excluded)
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="alert",
+        source_id=f"alt-pre-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[alert:alt-pre-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"alt-pre-{t_id}",
+            "host": host_name,
+            "first_seen": "2026-10-15T06:00:00Z",
+            "last_seen": "2026-10-15T08:00:00Z",
+            "rule_id": "RULE_PRE",
+        }),
+    )
+
+    # 3. Alert that starts after scope end: 13:00 to 15:00 (must be excluded)
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="alert",
+        source_id=f"alt-post-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[alert:alt-post-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"alt-post-{t_id}",
+            "host": host_name,
+            "first_seen": "2026-10-15T13:00:00Z",
+            "last_seen": "2026-10-15T15:00:00Z",
+            "rule_id": "RULE_POST",
+        }),
+    )
+
+    dossier = multihost_service.get_case_dossier(case.case_id)
+    target_h = next((h for h in dossier.participating_hosts if h.host_id == host_name), None)
+    assert target_h is not None
+
+    # The spanning alert must be included (alert_count == 1)
+    assert target_h.alert_count == 1
+    # Clamped to case scope boundaries
+    assert target_h.first_seen == "2026-10-15T10:00:00+00:00"
+    assert target_h.last_seen == "2026-10-15T12:00:00+00:00"
+
+
+def test_evidence_id_collision_prevention(multihost_fixture):
+    """Verify evidence mapping differentiates and preserves colliding source IDs across types."""
+    from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+    from logintel.ai.domain.investigation_temporal import TransitionType, TemporalTransition, EpistemicStatus
+    from logintel.ai.domain.investigation_graph import GraphEvidenceItem
+
+    engine = TemporalReconstructionEngine()
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
+    shared_id = f"collision-{t_id}"
+
+    case = case_repo.create_case(
+        incident_id=870000 + t_id,
+        title=f"Collision Case {t_id}",
+        description="Testing collision resolution between event and alert with identical ID.",
+    )
+
+    ev_event = {
+        "_source_type": "event",
+        "_source_id": shared_id,
+        "id": shared_id,
+        "username": "alice_from_event",
+        "host": "host-a",
+        "timestamp": "2026-10-15T10:00:00Z",
+    }
+    ev_alert = {
+        "_source_type": "alert",
+        "_source_id": shared_id,
+        "id": shared_id,
+        "username": "bob_from_alert",
+        "host": "host-b",
+        "timestamp": "2026-10-15T10:05:00Z",
+    }
+
+    # Transition referencing the event
+    trans_event = TemporalTransition(
+        transition_id=f"trans-ev-{t_id}",
+        case_id=case.case_id,
+        transition_type=TransitionType.HOST_TO_HOST,
+        from_entity="host:host-a",
+        to_entity="host:host-b",
+        timestamp="2026-10-15T10:00:00Z",
+        reason="Lateral jump via SSH event",
+        epistemic_status=EpistemicStatus.OBSERVED,
+        evidence_references=[
+            GraphEvidenceItem(
+                reference_id=f"ref-ev-{t_id}",
+                source_type="event",
+                source_id=shared_id,
+                source_hash="sha256:dummy1",
+                citation_tag=f"[event:{shared_id}]",
+                timestamp="2026-10-15T10:00:00Z",
+                summary="Event evidence",
+                epistemic_status=EpistemicStatus.OBSERVED,
+                is_authoritative=True,
+                role="supporting",
+            )
+        ],
+    )
+
+    # Transition referencing the alert
+    trans_alert = TemporalTransition(
+        transition_id=f"trans-alt-{t_id}",
+        case_id=case.case_id,
+        transition_type=TransitionType.HOST_TO_HOST,
+        from_entity="host:host-b",
+        to_entity="host:host-c",
+        timestamp="2026-10-15T10:05:00Z",
+        reason="Lateral jump via alert",
+        epistemic_status=EpistemicStatus.OBSERVED,
+        evidence_references=[
+            GraphEvidenceItem(
+                reference_id=f"ref-alt-{t_id}",
+                source_type="alert",
+                source_id=shared_id,
+                source_hash="sha256:dummy2",
+                citation_tag=f"[alert:{shared_id}]",
+                timestamp="2026-10-15T10:05:00Z",
+                summary="Alert evidence",
+                epistemic_status=EpistemicStatus.OBSERVED,
+                is_authoritative=True,
+                role="supporting",
+            )
+        ],
+    )
+
+    # Pass both evidence items to reconstruction
+    traces = engine.reconstruct_multi_host_traces(
+        case,
+        [trans_event, trans_alert],
+        [ev_event, ev_alert],
+    )
+
+    assert len(traces) == 2
+    # First trace supported by event -> actor should be alice
+    assert traces[0].actor == "alice_from_event"
+    # Second trace supported by alert -> actor should be bob
+    assert traces[1].actor == "bob_from_alert"
+
+
+def test_comparative_timeline_dossier_reuse(multihost_fixture):
+    """Verify get_comparative_timeline computes case dossier once instead of N times."""
+    from unittest.mock import patch
+
+    case_multi = multihost_fixture["case_multi"]
+    hosts = ["host-jumpbox", "host-dc01"]
+
+    orig_get_case_dossier = multihost_service.get_case_dossier
+    call_count = 0
+
+    def mock_get_case_dossier(cid, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return orig_get_case_dossier(cid, **kwargs)
+
+    with patch.object(multihost_service, "get_case_dossier", side_effect=mock_get_case_dossier):
+        res = multihost_service.get_comparative_timeline(
+            case_id=case_multi.case_id,
+            host_ids=hosts,
+        )
+
+    assert len(res.lanes) == 2
+    # Exactly 1 dossier computation call for the entire comparative query
+    assert call_count == 1
+
 
 
 

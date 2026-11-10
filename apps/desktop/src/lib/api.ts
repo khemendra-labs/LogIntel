@@ -4089,6 +4089,7 @@ export async function fetchCaseHostTimeline(
   const res = await fetch(
     `${API_BASE}/cases/${caseId}/hosts/${encodeURIComponent(hostId)}/timeline${qs}`,
     {
+      signal: params?.signal,
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
@@ -4132,6 +4133,7 @@ export async function fetchCaseComparativeTimeline(
   const res = await fetch(
     `${API_BASE}/cases/${caseId}/hosts/timeline/comparative${qs}`,
     {
+      signal: params?.signal,
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
