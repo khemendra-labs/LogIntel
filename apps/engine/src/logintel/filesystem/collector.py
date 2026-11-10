@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import os
 from typing import Dict, Generator, List, Optional
 
 from logintel.collectors.base import Collector
@@ -61,11 +62,17 @@ class FilesystemPersistenceCollector(Collector):
         self._is_initial_snapshot: bool = True
 
     def check_availability(self) -> tuple[bool, Optional[str]]:
-        """Verify that filesystem scanner can inspect at least one target path."""
+        """Verify target metadata access without performing a full hash scan.
+
+        This method is called by the ingestion loop before collection; using
+        ``scan_path`` here used to hash every readable target twice per cycle.
+        """
         for target in self.scanner.targets:
-            state = self.scanner.scan_path(target.path, target.category)
-            if state is not None:
+            try:
+                os.lstat(target.path)
                 return True, None
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
         return False, "None of the configured High-Value Target paths could be read"
 
     def get_tracked_states(self) -> Dict[str, FileState]:

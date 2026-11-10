@@ -117,6 +117,55 @@ logintel
 
 ---
 
+## Professional Operations Controls
+
+LogIntel remains local-first by default. The following optional controls are
+intended for managed Linux environments and are disabled until an operator
+configures them:
+
+- **Fleet intake:** `POST /api/v1/fleet/ingest` accepts bounded raw telemetry
+  batches from remote Linux collectors only when `remote_ingest.enabled` is set
+  and `LOGINTEL_AGENT_TOKEN` supplies a separate agent token. It is independent
+  of the desktop IPC token.
+- **Retention:** retention is dry-run by default and only deletes old events
+  that are not linked as detection evidence. Set `retention.enabled` before
+  calling `POST /api/v1/system/maintenance/retention` with `dry_run: false`.
+- **Notifications:** set `LOGINTEL_NOTIFICATIONS_ENABLED=true` for a bounded
+  local notification log sink. A webhook is opt-in via
+  `LOGINTEL_NOTIFICATION_SINK=webhook` and
+  `LOGINTEL_NOTIFICATION_WEBHOOK_URL`; HTTPS is required for non-local hosts.
+
+No remote listener, data deletion, or outbound notification is enabled by the
+default installation.
+
+### Remote Linux Agent
+
+The engine package includes a small `logintel-agent` CLI for environments where
+telemetry must cross hosts. Enrollment writes an owner-only configuration and
+supports a private CA plus an optional client certificate/key for mTLS:
+
+```bash
+logintel-agent --config /etc/logintel-agent/config.json enroll \
+  --endpoint https://logintel.example.internal \
+  --token "$LOGINTEL_AGENT_TOKEN" \
+  --ca-file /etc/logintel-agent/ca.pem \
+  --client-cert-file /etc/logintel-agent/agent.pem \
+  --client-key-file /etc/logintel-agent/agent-key.pem
+```
+
+Feed normalized raw-record JSONL into `logintel-agent queue`, then invoke
+`logintel-agent flush` from a systemd timer or a lightweight collector loop.
+The agent writes batches to a 0700 disk spool before upload, uses a 64 MiB
+default capacity, and preserves a batch for retry if the connection fails.
+
+For unattended collection, `logintel-agent run` tails appended auth, syslog,
+kernel, and audit log lines, tracks file inode/offsets across rotation, and
+collects a bounded journald batch each cycle. The Debian package includes a
+disabled-by-default `logintel-agent.service`; after secure enrollment, enable
+it with `sudo systemctl enable --now logintel-agent`.
+
+---
+
 ## Documentation
 
 - [Architecture Design](docs/architecture/ARCHITECTURE.md)

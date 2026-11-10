@@ -1,5 +1,6 @@
 from logintel.storage.alerts_repo import AlertsRepository, alerts_repo
 from logintel.storage.db import Database, db
+from logintel.storage.maintenance import RetentionService, retention_service
 from logintel.storage.events_repo import EventsRepository, events_repo
 from logintel.storage.incidents_repo import IncidentsRepository, incidents_repo
 from logintel.storage.investigation_repo import InvestigationRepository, investigation_repo

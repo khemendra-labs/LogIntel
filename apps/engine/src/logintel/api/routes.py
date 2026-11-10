@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
-from logintel.api.auth import verify_engine_token
+from logintel.api.auth import verify_agent_token, verify_engine_token
 from logintel.config import settings
 from logintel.health import TelemetryHealthReport, health_service
 from logintel.ingestion import ingestion_engine
@@ -54,6 +54,49 @@ class EventsQueryResponse(BaseModel):
     offset: int
 
 
+class RemoteRawRecordRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=128)
+    raw_content: str = Field(min_length=1)
+    timestamp: Optional[datetime] = None
+    source_file: Optional[str] = Field(default=None, max_length=1024)
+    source_offset: Optional[str] = Field(default=None, max_length=512)
+    raw_attributes: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RemoteIngestRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    records: List[RemoteRawRecordRequest] = Field(min_length=1)
+
+
+@router.post("/fleet/ingest")
+def ingest_remote_telemetry(
+    request: RemoteIngestRequest,
+    _: str = Depends(verify_agent_token),
+) -> Dict[str, Any]:
+    """Accept a bounded, authenticated raw-telemetry batch from one Linux host."""
+    remote_settings = settings.remote_ingest
+    if len(request.records) > remote_settings.max_batch_records:
+        raise HTTPException(status_code=413, detail="Remote batch exceeds configured record limit.")
+
+    from logintel.models import RawRecord
+    records: List[RawRecord] = []
+    for item in request.records:
+        if len(item.raw_content.encode("utf-8")) > remote_settings.max_record_bytes:
+            raise HTTPException(status_code=413, detail="Remote record exceeds configured byte limit.")
+        records.append(RawRecord(
+            source=f"remote:{item.source}",
+            raw_content=item.raw_content,
+            timestamp=item.timestamp,
+            host=request.host,
+            source_file=item.source_file,
+            source_offset=item.source_offset,
+            raw_attributes=item.raw_attributes,
+        ))
+    events_repo.upsert_host(request.host)
+    inserted = ingestion_engine.ingest_records(records)
+    return {"status": "accepted", "host": request.host, "received_records": len(records), "inserted_events": inserted}
+
+
 @protected_router.get("/system/status", response_model=SystemStatusResponse)
 def get_system_status() -> SystemStatusResponse:
     _, total = events_repo.query_events(limit=1, offset=0)
@@ -66,6 +109,48 @@ def get_system_status() -> SystemStatusResponse:
         database_path=str(settings.db_path),
         total_events=total,
     )
+
+
+@protected_router.get("/system/notifications")
+def get_notification_status() -> Dict[str, Any]:
+    """Expose delivery health without exposing webhook secrets or payloads."""
+    from logintel.notifications import notification_service
+    return notification_service.status()
+
+
+@protected_router.get("/fleet/hosts")
+def get_fleet_hosts() -> Dict[str, Any]:
+    """Return lightweight remote/local host inventory for the operator GUI."""
+    sql = """
+        SELECT h.id, h.hostname, h.os_name, h.os_version, h.first_seen, h.last_seen,
+               COUNT(e.id) AS event_count, MAX(e.ingested_at) AS last_ingested_at
+        FROM hosts h
+        LEFT JOIN events e ON e.host = h.hostname
+        GROUP BY h.id, h.hostname, h.os_name, h.os_version, h.first_seen, h.last_seen
+        ORDER BY h.last_seen DESC, h.hostname ASC
+    """
+    with events_repo.db.connection() as conn:
+        items = [dict(row) for row in conn.execute(sql).fetchall()]
+    return {"items": items, "total": len(items)}
+
+
+class RetentionRunRequest(BaseModel):
+    retention_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    dry_run: bool = True
+
+
+@protected_router.get("/system/maintenance/retention")
+def get_retention_plan(retention_days: Optional[int] = Query(default=None, ge=1, le=3650)) -> Dict[str, Any]:
+    from logintel.storage.maintenance import retention_service
+    return {"enabled": settings.retention.enabled, **retention_service.plan(retention_days)}
+
+
+@protected_router.post("/system/maintenance/retention")
+def run_retention(req: RetentionRunRequest) -> Dict[str, Any]:
+    if not settings.retention.enabled:
+        raise HTTPException(status_code=409, detail="Retention execution is disabled by configuration.")
+    from logintel.storage.maintenance import retention_service
+    return retention_service.run(req.retention_days, req.dry_run)
 
 
 @protected_router.get("/telemetry/health", response_model=TelemetryHealthReport)
@@ -232,6 +317,13 @@ def update_alert_status(alert_id: int, req: UpdateAlertStatusRequest) -> Dict[st
             alert_id=alert_id,
             new_status=new_status,
             resolution_note=req.resolution_note,
+        )
+        from logintel.notifications import notification_service
+        notification_service.publish(
+            event_type="alert.status_changed",
+            resource_type="alert",
+            resource_id=str(updated.id),
+            payload={"status": updated.status.value, "severity": updated.severity.value, "host": updated.host},
         )
         return updated.model_dump(mode="json")
     except InvalidStatusTransitionError as e:
@@ -712,7 +804,6 @@ def get_investigation_mitre_mappings(incident_id: int) -> Dict[str, Any]:
 
 
 @protected_router.get("/investigations/{incident_id}/notes")
-@protected_router.get("/investigations/{incident_id}/notes")
 def list_investigation_notes(
     incident_id: int, include_deleted: bool = Query(default=False)
 ) -> Dict[str, Any]:
@@ -752,10 +843,6 @@ def create_investigation_note(incident_id: int, req: CreateNoteApiRequest) -> Di
     from logintel.models.investigation import NoteTargetType
     from logintel.storage.investigation_repo import investigation_repo
     from logintel.storage.incidents_repo import incidents_repo
-    inc = incidents_repo.get_incident(incident_id)
-    if not inc:
-        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
-
     try:
         ttype = NoteTargetType(req.target_type.lower())
     except ValueError:
@@ -1116,10 +1203,6 @@ async def ask_investigation_question(
         AIError,
     )
 
-    inc = incidents_repo.get_incident(incident_id)
-    if not inc:
-        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
-
     try:
         response = await ai_service.ask_question(
             incident_id=incident_id,
@@ -1200,10 +1283,6 @@ def preview_investigation_query(
     from logintel.ai.service import ai_service
     from logintel.ai.domain.intelligence import QueryProposal
 
-    inc = incidents_repo.get_incident(incident_id)
-    if not inc:
-        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
-
     try:
         valid_keys = {
             "title", "description", "intent", "rationale", "target_entity",
@@ -1216,6 +1295,10 @@ def preview_investigation_query(
         query_proposal = QueryProposal.model_validate(proposal)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid query proposal structure: {str(e)}")
+
+    inc = incidents_repo.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
     return ai_service.preview_query_proposal(
         incident_id=incident_id,
@@ -1259,14 +1342,12 @@ class ExplainabilityTraceRequest(BaseModel):
 @protected_router.get("/ai/investigations/{incident_id}/workspace")
 def get_investigation_workspace(incident_id: int) -> Dict[str, Any]:
     """Retrieve full analyst investigation workspace state, scope, hypotheses, and evidence candidates."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
-    if not inc:
+    try:
+        ws = workspace_service.get_or_create_workspace(incident_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
-
-    ws = workspace_service.get_or_create_workspace(incident_id)
     return ws.model_dump(mode="json")
 
 
@@ -1276,11 +1357,10 @@ def update_investigation_state(
     req: UpdateInvestigationStateRequest,
 ) -> Dict[str, Any]:
     """Explicitly transition investigation state with deterministic validation and audit logging."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.domain.workspace import InvestigationState
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1307,11 +1387,10 @@ def update_investigation_scope(
     scope: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Update explicit reproducible scope bounds for an investigation."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.domain.workspace import InvestigationScope
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1327,10 +1406,9 @@ def update_investigation_scope(
 @protected_router.get("/ai/investigations/{incident_id}/hypotheses")
 def list_investigation_hypotheses(incident_id: int) -> Dict[str, Any]:
     """List all analyst-owned investigative hypotheses registered for an investigation."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1348,11 +1426,10 @@ def create_investigation_hypothesis(
     req: CreateHypothesisRequest,
 ) -> Dict[str, Any]:
     """Create a new analyst hypothesis with associated supporting/contradicting evidence and gaps."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.domain.workspace import HypothesisStatus
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1383,11 +1460,10 @@ def update_investigation_hypothesis(
     req: UpdateHypothesisRequest,
 ) -> Dict[str, Any]:
     """Update hypothesis status, assessment, or evidence linkages."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.domain.workspace import HypothesisStatus
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1419,11 +1495,10 @@ def execute_approved_investigation_query(
     proposal: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Execute analyst-approved threat hunting query deterministically and collect evidence candidates."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.domain.intelligence import QueryProposal
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1441,10 +1516,9 @@ def execute_approved_investigation_query(
 @protected_router.get("/ai/investigations/{incident_id}/summary")
 def get_investigation_summary(incident_id: int) -> Dict[str, Any]:
     """Retrieve complete deterministic structured investigation summary."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1458,10 +1532,9 @@ def get_investigation_summary(incident_id: int) -> Dict[str, Any]:
 @protected_router.post("/ai/investigations/{incident_id}/report/draft")
 def generate_investigation_report_draft(incident_id: int) -> Dict[str, Any]:
     """Generate an explainable AI report draft distinguishing facts, inferences, hypotheses, and unknowns."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -1478,10 +1551,9 @@ def trace_claim_explainability(
     req: ExplainabilityTraceRequest,
 ) -> Dict[str, Any]:
     """Trace cited evidence tags to their authoritative database origin."""
-    from logintel.storage.incidents_repo import incidents_repo
     from logintel.ai.workspace_service import workspace_service
 
-    inc = incidents_repo.get_incident(incident_id)
+    inc = workspace_service.incidents_repo.get_incident(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 

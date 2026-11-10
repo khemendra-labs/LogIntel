@@ -19,8 +19,16 @@ class EventsRepository:
 
     def insert_events(self, events: List[CanonicalEvent]) -> int:
         """Batch insert canonical events into the database. Returns number of inserted events."""
+        return len(self.insert_events_with_ids(events))
+
+    def insert_events_with_ids(self, events: List[CanonicalEvent]) -> List[str]:
+        """Insert a batch and return just the identifiers newly persisted.
+
+        This lets the live detector avoid re-evaluating events ignored by the
+        database's idempotency constraint after collector retries.
+        """
         if not events:
-            return 0
+            return []
 
         rows = [e.to_db_row() for e in events]
         sql = """
@@ -43,11 +51,14 @@ class EventsRepository:
         )
         """
         with self.db.connection() as conn:
-            before = conn.total_changes
             cursor = conn.cursor()
-            cursor.executemany(sql, rows)
+            inserted_ids: List[str] = []
+            for row in rows:
+                cursor.execute(sql, row)
+                if cursor.rowcount:
+                    inserted_ids.append(row["id"])
             conn.commit()
-            return conn.total_changes - before
+            return inserted_ids
 
     def get_event_by_id(self, event_id: str) -> Optional[CanonicalEvent]:
         """Fetch a single canonical event by its UUID."""

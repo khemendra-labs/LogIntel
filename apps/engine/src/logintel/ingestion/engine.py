@@ -31,16 +31,33 @@ class IngestionEngine:
         self,
         repo: Optional[EventsRepository] = None,
         registry: Optional[ParserRegistry] = None,
+        detection_engine=None,
+        alerts_repository=None,
     ):
         self.repo = repo or events_repo
         self.registry = registry or parser_registry
+        if detection_engine is None:
+            from logintel.detection.engine import DetectionEngine
+            from logintel.detection.registry import get_rule_registry
+            detection_engine = DetectionEngine(registry=get_rule_registry())
+        if alerts_repository is None:
+            from logintel.storage.alerts_repo import AlertsRepository
+            alerts_repository = AlertsRepository(self.repo.db)
+        self.detection_engine = detection_engine
+        self.alerts_repository = alerts_repository
         self.collectors: Dict[str, Collector] = {}
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        # Monotonic timestamps are deliberately in-memory: they only govern
+        # polling cadence, while collectors' durable cursor/offset state still
+        # guarantees correct resume behavior after a restart.
+        self._last_live_poll: Dict[str, float] = {}
         
         self.metrics = {
             "total_ingested": 0,
+            "total_detections": 0,
+            "total_alerts_recorded": 0,
             "total_errors": 0,
             "last_cycle_timestamp": None,
         }
@@ -133,15 +150,75 @@ class IngestionEngine:
                 self.metrics["total_errors"] += 1
                 logger.error("Error parsing record from %s: %s", record.source, exc)
 
-        inserted_count = self.repo.insert_events(events)
+        inserted_ids = set(self.repo.insert_events_with_ids(events))
+        inserted_events = [event for event in events if event.id in inserted_ids]
+        inserted_count = len(inserted_events)
+        if inserted_events:
+            try:
+                detections = self.detection_engine.evaluate_batch(inserted_events)
+                for detection in detections:
+                    rule = self.detection_engine.registry.get(detection.rule_id)
+                    if rule is None:
+                        logger.warning("Skipping detection for unavailable rule %s", detection.rule_id)
+                        continue
+                    alert = self.alerts_repository.record_detection(detection, rule)
+                    self.metrics["total_alerts_recorded"] += 1
+                    from logintel.notifications import notification_service
+                    notification_service.publish(
+                        event_type="alert.detected",
+                        resource_type="alert",
+                        resource_id=str(alert.id),
+                        payload={
+                            "rule_id": rule.id,
+                            "severity": alert.severity.value,
+                            "host": alert.host,
+                            "status": alert.status.value,
+                            "occurrence_count": alert.occurrence_count,
+                        },
+                    )
+                self.metrics["total_detections"] += len(detections)
+            except Exception as exc:
+                # Event durability takes precedence over a non-fatal matcher
+                # failure so a bad rule cannot stop telemetry ingestion.
+                self.metrics["total_errors"] += 1
+                logger.exception("Live detection failed for %d inserted events: %s", inserted_count, exc)
         self.metrics["total_ingested"] += inserted_count
         return inserted_count
 
-    def run_cycle(self, historical: bool = False, limit_per_source: int = 500) -> int:
+    def _poll_interval_for(self, collector_name: str) -> float:
+        """Return the live collection cadence for a source.
+
+        File tailers are cheap metadata reads and keep the one-second cadence.
+        Process-table and integrity scans are intentionally slower because they
+        can touch thousands of procfs entries or hash files.
+        """
+        if collector_name == "journald":
+            return settings.collectors.journald_poll_interval_seconds
+        if collector_name == "sockets":
+            return settings.collectors.socket_poll_interval_seconds
+        if collector_name == "filesystem_hvt":
+            return settings.collectors.filesystem_poll_interval_seconds
+        return settings.collectors.poll_interval_seconds
+
+    def run_cycle(
+        self,
+        historical: bool = False,
+        limit_per_source: int = 500,
+        respect_schedule: bool = False,
+    ) -> int:
         """Execute one ingestion pass across all active collectors."""
         total_cycle_ingested = 0
 
         for name, collector in self.collectors.items():
+            if respect_schedule and not historical:
+                now = time.monotonic()
+                previous_poll = self._last_live_poll.get(name)
+                if previous_poll is not None and now - previous_poll < self._poll_interval_for(name):
+                    continue
+                # Record the attempted poll too, so an unavailable source does
+                # not cause repeated costly availability checks every second.
+                self._last_live_poll[name] = now
+
             avail, reason = collector.check_availability()
             if not avail:
                 logger.debug("Skipping collector %s: %s", name, reason)
@@ -212,7 +289,7 @@ class IngestionEngine:
 
         while self._running:
             try:
-                self.run_cycle(historical=False)
+                self.run_cycle(historical=False, respect_schedule=True)
             except Exception as exc:
                 logger.error("Error in ingestion cycle: %s", exc)
 

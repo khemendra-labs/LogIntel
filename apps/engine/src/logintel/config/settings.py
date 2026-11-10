@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import socket
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -59,8 +60,38 @@ class CollectorSettings(BaseModel):
 
     filesystem_collector_enabled: bool = True
     
+    # The main loop remains responsive for append-only logs.  Expensive sources
+    # are scheduled independently below rather than being re-scanned each loop.
     poll_interval_seconds: float = 1.0
+    journald_poll_interval_seconds: float = 5.0
+    journald_max_records_per_cycle: int = 1000
+    socket_poll_interval_seconds: float = 5.0
+    filesystem_poll_interval_seconds: float = 60.0
     batch_size: int = 100
+
+
+class RemoteIngestSettings(BaseModel):
+    """Opt-in boundary for future remote Linux collectors.
+
+    The API remains loopback-only by default. Operators enabling a reverse
+    proxy or a private listener must set a high-entropy shared token outside
+    the repository; unauthenticated fleet intake is never permitted.
+    """
+    enabled: bool = False
+    agent_token: Optional[str] = Field(default_factory=lambda: os.environ.get("LOGINTEL_AGENT_TOKEN"))
+    max_batch_records: int = 500
+    max_record_bytes: int = 32 * 1024
+
+
+class RetentionSettings(BaseModel):
+    """Conservative local database retention policy.
+
+    Evidence referenced by detections is never removed automatically. The
+    policy is disabled by default and execution requires an explicit API call.
+    """
+    enabled: bool = False
+    event_retention_days: int = Field(default=90, ge=1, le=3650)
+    max_delete_batch: int = Field(default=5000, ge=1, le=50000)
 
 
 class Settings(BaseModel):
@@ -79,6 +110,8 @@ class Settings(BaseModel):
     
     log_level: str = "INFO"
     collectors: CollectorSettings = Field(default_factory=CollectorSettings)
+    remote_ingest: RemoteIngestSettings = Field(default_factory=RemoteIngestSettings)
+    retention: RetentionSettings = Field(default_factory=RetentionSettings)
 
     @property
     def db_path(self) -> Path:

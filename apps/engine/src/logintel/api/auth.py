@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import secrets
 from typing import Optional
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, Header, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from logintel.config import settings
 from logintel.logging import get_logger
@@ -78,3 +78,23 @@ def verify_engine_token(
         )
 
     return credentials.credentials
+
+
+def verify_agent_token(
+    agent_token: Optional[str] = Header(default=None, alias="X-LogIntel-Agent-Token"),
+) -> str:
+    """Authorize an explicitly enabled remote collector batch.
+
+    This deliberately uses a separate token from desktop IPC so an agent
+    compromise cannot impersonate the local operator API.
+    """
+    configured = settings.remote_ingest.agent_token
+    if not settings.remote_ingest.enabled or not configured:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remote ingestion is disabled.")
+    if not agent_token or not secrets.compare_digest(agent_token.strip(), configured):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized remote collector.",
+            headers={"WWW-Authenticate": "AgentToken"},
+        )
+    return agent_token

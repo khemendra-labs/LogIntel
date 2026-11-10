@@ -1,12 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Header } from "./components/Header";
 import { Navigation, NavTab } from "./components/Navigation";
-import { AlertDetailModal } from "./features/AlertDetailModal";
-import { EntityPivotModal } from "./features/EntityPivotModal";
-import { EventDetailModal } from "./features/EventDetailModal";
-import { EventForensicsModal } from "./features/EventForensicsModal";
-import { IncidentWorkspaceModal } from "./features/IncidentWorkspaceModal";
-import { TelemetryHealthModal } from "./features/TelemetryHealthModal";
 import {
   fetchAlerts,
   fetchCases,
@@ -18,20 +12,30 @@ import {
   triggerIngestionCycle,
 } from "./lib/api";
 import { ActivityPage } from "./pages/ActivityPage";
-import { AlertsPage } from "./pages/AlertsPage";
-import { CasesPage } from "./pages/CasesPage";
-import { DiagnosticsPage } from "./pages/DiagnosticsPage";
-import { IncidentsPage } from "./pages/IncidentsPage";
-import { MultiHostPage } from "./pages/MultiHostPage";
 import { OverviewPage } from "./pages/OverviewPage";
-import { RulesPage } from "./pages/RulesPage";
-import { ThreatHuntingPage } from "./pages/ThreatHuntingPage";
 import {
   CanonicalEvent,
   EventStatistics,
   SystemStatus,
   TelemetryHealthReport,
 } from "./types/events";
+
+// Investigation workbenches are large and are not needed for the initial
+// dashboard. Loading them only after the analyst navigates or opens a detail
+// panel keeps startup latency and renderer memory predictable on modest hosts.
+const AlertsPage = lazy(() => import("./pages/AlertsPage").then(({ AlertsPage }) => ({ default: AlertsPage })));
+const CasesPage = lazy(() => import("./pages/CasesPage").then(({ CasesPage }) => ({ default: CasesPage })));
+const DiagnosticsPage = lazy(() => import("./pages/DiagnosticsPage").then(({ DiagnosticsPage }) => ({ default: DiagnosticsPage })));
+const IncidentsPage = lazy(() => import("./pages/IncidentsPage").then(({ IncidentsPage }) => ({ default: IncidentsPage })));
+const MultiHostPage = lazy(() => import("./pages/MultiHostPage").then(({ MultiHostPage }) => ({ default: MultiHostPage })));
+const RulesPage = lazy(() => import("./pages/RulesPage").then(({ RulesPage }) => ({ default: RulesPage })));
+const ThreatHuntingPage = lazy(() => import("./pages/ThreatHuntingPage").then(({ ThreatHuntingPage }) => ({ default: ThreatHuntingPage })));
+const AlertDetailModal = lazy(() => import("./features/AlertDetailModal").then(({ AlertDetailModal }) => ({ default: AlertDetailModal })));
+const EntityPivotModal = lazy(() => import("./features/EntityPivotModal").then(({ EntityPivotModal }) => ({ default: EntityPivotModal })));
+const EventDetailModal = lazy(() => import("./features/EventDetailModal").then(({ EventDetailModal }) => ({ default: EventDetailModal })));
+const EventForensicsModal = lazy(() => import("./features/EventForensicsModal").then(({ EventForensicsModal }) => ({ default: EventForensicsModal })));
+const IncidentWorkspaceModal = lazy(() => import("./features/IncidentWorkspaceModal").then(({ IncidentWorkspaceModal }) => ({ default: IncidentWorkspaceModal })));
+const TelemetryHealthModal = lazy(() => import("./features/TelemetryHealthModal").then(({ TelemetryHealthModal }) => ({ default: TelemetryHealthModal })));
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>("overview");
@@ -187,6 +191,7 @@ export function App() {
 
   return (
     <div className="app-container">
+      <Suspense fallback={<div className="page-loading" role="status">Loading workspace…</div>}>
       <Header
         status={status}
         health={health}
@@ -361,6 +366,7 @@ export function App() {
           onClose={() => setForensicEventId(null)}
         />
       )}
+      </Suspense>
     </div>
   );
 }

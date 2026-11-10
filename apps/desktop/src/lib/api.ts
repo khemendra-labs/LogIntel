@@ -273,6 +273,63 @@ export async function fetchSystemStatus(): Promise<SystemStatus> {
   return res.json();
 }
 
+export interface FleetHost {
+  id: string;
+  hostname: string;
+  os_name?: string | null;
+  os_version?: string | null;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  last_ingested_at?: string | null;
+  event_count: number;
+}
+
+export interface RetentionPlan {
+  enabled: boolean;
+  cutoff: string;
+  retention_days: number;
+  eligible_events: number;
+  protected_evidence_events: number;
+  dry_run?: boolean;
+  deleted_events?: number;
+}
+
+export interface NotificationStatus {
+  enabled: boolean;
+  sink: string;
+  webhook_configured: boolean;
+  recent_deliveries: Array<{ delivery_id: number; event_type: string; timestamp: string; status: string; detail?: string | null }>;
+}
+
+export async function fetchFleetHosts(): Promise<{ items: FleetHost[]; total: number }> {
+  const res = await apiFetch("/fleet/hosts");
+  if (!res.ok) throw new Error(`Failed to fetch fleet inventory: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchRetentionPlan(): Promise<RetentionPlan> {
+  const res = await apiFetch("/system/maintenance/retention");
+  if (!res.ok) throw new Error(`Failed to fetch retention plan: ${res.statusText}`);
+  return res.json();
+}
+
+export async function runRetention(dryRun = true): Promise<RetentionPlan> {
+  const res = await apiFetch("/system/maintenance/retention", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dry_run: dryRun }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || `Retention operation failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchNotificationStatus(): Promise<NotificationStatus> {
+  const res = await apiFetch("/system/notifications");
+  if (!res.ok) throw new Error(`Failed to fetch notification status: ${res.statusText}`);
+  return res.json();
+}
+
 export async function fetchTelemetryHealth(): Promise<TelemetryHealthReport> {
   const res = await apiFetch("/telemetry/health");
   if (!res.ok) {

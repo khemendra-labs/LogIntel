@@ -180,6 +180,15 @@ exec /usr/lib/logintel/engine/.venv/bin/python -m logintel.detection.replay_cli 
 EOF
 chmod 755 "${DEB_DIR}/usr/bin/logintel-replay"
 
+# Remote collector agent wrapper
+cat << 'EOF' > "${DEB_DIR}/usr/bin/logintel-agent"
+#!/usr/bin/env bash
+set -e
+export PYTHONPATH="/usr/lib/logintel/engine:/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages:${PYTHONPATH:-}"
+exec /usr/lib/logintel/engine/.venv/bin/python -m logintel.agent.main "$@"
+EOF
+chmod 755 "${DEB_DIR}/usr/bin/logintel-agent"
+
 # 5. Install Desktop Entry & Icons
 cp "${ROOT_DIR}/packaging/deb/logintel.desktop" "${DEB_DIR}/usr/share/applications/logintel.desktop"
 chmod 644 "${DEB_DIR}/usr/share/applications/logintel.desktop"
@@ -194,6 +203,10 @@ fi
 if [ -f "${ROOT_DIR}/packaging/systemd/logintel-engine.service" ]; then
     cp "${ROOT_DIR}/packaging/systemd/logintel-engine.service" "${DEB_DIR}/usr/lib/systemd/system/logintel-engine.service"
     chmod 644 "${DEB_DIR}/usr/lib/systemd/system/logintel-engine.service"
+fi
+if [ -f "${ROOT_DIR}/packaging/systemd/logintel-agent.service" ]; then
+    cp "${ROOT_DIR}/packaging/systemd/logintel-agent.service" "${DEB_DIR}/usr/lib/systemd/system/logintel-agent.service"
+    chmod 644 "${DEB_DIR}/usr/lib/systemd/system/logintel-agent.service"
 fi
 
 # 7. Install Documentation and Copyright

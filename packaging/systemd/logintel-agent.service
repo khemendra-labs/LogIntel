@@ -1,0 +1,20 @@
+[Unit]
+Description=LogIntel Remote Linux Telemetry Agent
+After=network-online.target systemd-journald.service auditd.service
+Wants=network-online.target systemd-journald.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/logintel-agent --config /etc/logintel-agent/config.json run
+Restart=always
+RestartSec=5s
+StateDirectory=logintel-agent
+WorkingDirectory=/var/lib/logintel-agent
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/logintel-agent
+
+[Install]
+WantedBy=multi-user.target
