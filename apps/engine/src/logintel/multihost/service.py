@@ -733,18 +733,36 @@ class MultiHostInvestigationService:
                 "| Host ID | Hostname | OS | Status | Events | Alerts | Inbound Hops | Outbound Hops | Gaps |",
                 "|---|---|---|---|---|---|---|---|---|",
             ]
-            def _escape_md_cell(val: Any) -> str:
+            def _normalize_md_text(val: Any) -> str:
                 if val is None:
                     return ""
                 s = getattr(val, "value", str(val))
-                return str(s).replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").strip()
+                # Normalize CR/LF, standalone CR, and control characters to space
+                s = re.sub(r"[\r\n\x00-\x08\x0b\x0c\x0e-\x1f]", " ", str(s))
+                return re.sub(r"\s+", " ", s).strip()
+
+            def _escape_md_cell(val: Any, max_len: Optional[int] = None) -> str:
+                if val is None:
+                    return ""
+                s = _normalize_md_text(val)
+                if max_len and len(s) > max_len:
+                    s = s[:max_len] + "..."
+                return s.replace("|", "\\|")
+
+            def _escape_code_span(val: Any) -> str:
+                if val is None:
+                    return ""
+                s = _normalize_md_text(val)
+                # Replace backticks to prevent premature termination of code spans
+                clean = s.replace("`", "'")
+                return f"`{_escape_md_cell(clean)}`"
 
             for h in dossier.participating_hosts:
                 os_str = f"{h.os_name or ''} {h.os_version or ''}".strip() or "Unknown"
                 gaps_str = f"{len(h.telemetry_gaps)} gaps" if h.telemetry_gaps else "None"
                 status_str = getattr(h.epistemic_status, "value", str(h.epistemic_status))
                 lines.append(
-                    f"| `{_escape_md_cell(h.host_id)}` | {_escape_md_cell(h.hostname)} | {_escape_md_cell(os_str)} | **{_escape_md_cell(status_str)}** | {h.event_count} | {h.alert_count} | {h.inbound_lateral_hops} | {h.outbound_lateral_hops} | {_escape_md_cell(gaps_str)} |"
+                    f"| {_escape_code_span(h.host_id)} | {_escape_md_cell(h.hostname)} | {_escape_md_cell(os_str)} | **{_escape_md_cell(status_str)}** | {h.event_count} | {h.alert_count} | {h.inbound_lateral_hops} | {h.outbound_lateral_hops} | {_escape_md_cell(gaps_str)} |"
                 )
 
             lines.extend([
@@ -760,7 +778,7 @@ class MultiHostInvestigationService:
                 for t in dossier.lateral_traces:
                     status_str = getattr(t.epistemic_status, "value", str(t.epistemic_status))
                     lines.append(
-                        f"| `{_escape_md_cell(t.trace_id)}` | `{_escape_md_cell(t.source_host)}` | `{_escape_md_cell(t.target_host)}` | `{_escape_md_cell(t.actor)}` | {t.hop_count} | {_escape_md_cell(status_str)} | {_escape_md_cell(t.start_time)} → {_escape_md_cell(t.end_time)} |"
+                        f"| {_escape_code_span(t.trace_id)} | {_escape_code_span(t.source_host)} | {_escape_code_span(t.target_host)} | {_escape_code_span(t.actor)} | {t.hop_count} | {_escape_md_cell(status_str)} | {_escape_md_cell(t.start_time)} → {_escape_md_cell(t.end_time)} |"
                     )
 
             lines.extend([
@@ -774,10 +792,10 @@ class MultiHostInvestigationService:
                 lines.append("| Continuity ID | Type | Entity Key | Occurrences | Participating Hosts | Description |")
                 lines.append("|---|---|---|---|---|---|")
                 for c in dossier.entity_continuity:
-                    hosts_str = ", ".join(f"`{_escape_md_cell(h)}`" for h in c.participating_hosts)
+                    hosts_str = ", ".join(_escape_code_span(h) for h in c.participating_hosts)
                     c_type_str = getattr(c.continuity_type, "value", str(c.continuity_type))
                     lines.append(
-                        f"| `{_escape_md_cell(c.continuity_id)}` | {_escape_md_cell(c_type_str)} | `{_escape_md_cell(c.entity_key)}` | {c.occurrences_count} | {hosts_str} | {_escape_md_cell(c.description)} |"
+                        f"| {_escape_code_span(c.continuity_id)} | {_escape_md_cell(c_type_str)} | {_escape_code_span(c.entity_key)} | {c.occurrences_count} | {hosts_str} | {_escape_md_cell(c.description)} |"
                     )
 
             lines.extend([
@@ -786,7 +804,7 @@ class MultiHostInvestigationService:
                 "",
             ])
             for lim in dossier.completeness_limitations:
-                lines.append(f"- {lim}")
+                lines.append(f"- {_normalize_md_text(lim)}")
 
             if dossier.overall_visibility_gaps:
                 lines.extend([
@@ -795,8 +813,8 @@ class MultiHostInvestigationService:
                     "",
                 ])
                 for g in dossier.overall_visibility_gaps:
-                    remedy = f" (Remedy: {g.remedy_suggestion})" if g.remedy_suggestion else ""
-                    lines.append(f"- **[{g.gap_type}]** Host `{g.host_identifier}`: {g.description}{remedy}")
+                    remedy = f" (Remedy: {_normalize_md_text(g.remedy_suggestion)})" if g.remedy_suggestion else ""
+                    lines.append(f"- **[{_normalize_md_text(g.gap_type)}]** Host {_escape_code_span(g.host_identifier)}: {_normalize_md_text(g.description)}{remedy}")
 
             lines.extend([
                 "",

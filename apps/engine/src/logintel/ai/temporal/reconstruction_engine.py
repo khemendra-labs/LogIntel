@@ -429,8 +429,20 @@ class TemporalReconstructionEngine:
                     elif "CONNECTED" in edge.relationship_type:
                         t_type = TransitionType.PROCESS_TO_NETWORK_DESTINATION
 
-                    edge_ts = edge.first_seen or edge.last_seen or (raw_events[0].get("timestamp") if raw_events else "1970-01-01T00:00:00Z")
-                    ep_status = EpistemicStatus.OBSERVED if edge.epistemic_status.value == "OBSERVED" else EpistemicStatus.INFERRED
+                    edge_ts = (
+                        edge.first_seen
+                        or edge.last_seen
+                        or next((ref.timestamp for ref in edge.evidence_references if ref.timestamp), None)
+                        or (evidence_items[0].get("timestamp") if evidence_items and evidence_items[0].get("timestamp") else None)
+                        or getattr(case, "created_at", None)
+                        or "1970-01-01T00:00:00Z"
+                    )
+                    # If neither edge endpoint had a timestamp and fallback was needed, demote epistemic certainty to INFERRED
+                    if not edge.first_seen and not edge.last_seen:
+                        ep_status = EpistemicStatus.INFERRED
+                    else:
+                        ep_status = EpistemicStatus.OBSERVED if edge.epistemic_status.value == "OBSERVED" else EpistemicStatus.INFERRED
+
                     transitions.append(
                         TemporalTransition(
                             transition_id=f"trans-{case.case_id}-edge-{k}",
@@ -446,15 +458,37 @@ class TemporalReconstructionEngine:
                         )
                     )
 
-        # Ensure deduplicated and sorted deterministically
-        seen_keys: Set[str] = set()
-        deduped: List[TemporalTransition] = []
+        # Deduplicate genuinely equivalent transitions while deterministically merging supporting evidence
+        deduped_map: Dict[str, TemporalTransition] = {}
         for t in transitions:
             key = f"{t.transition_type.value}:{t.from_entity}->{t.to_entity}:{t.timestamp}"
-            if key not in seen_keys:
-                seen_keys.add(key)
-                deduped.append(t)
+            if key not in deduped_map:
+                deduped_map[key] = t
+            else:
+                existing = deduped_map[key]
+                # Merge supporting evidence references without dropping distinct citations
+                existing_ref_keys = {
+                    (ref.source_type, str(ref.source_id), ref.citation_tag)
+                    for ref in existing.evidence_references
+                }
+                for ref in t.evidence_references:
+                    ref_k = (ref.source_type, str(ref.source_id), ref.citation_tag)
+                    if ref_k not in existing_ref_keys:
+                        existing_ref_keys.add(ref_k)
+                        existing.evidence_references.append(ref)
+                existing.evidence_references = existing.evidence_references[: self.MAX_EVIDENCE_REFS]
 
+                # Combine distinct reason notes and correlation bases
+                if t.reason and t.reason not in existing.reason:
+                    existing.reason = f"{existing.reason}; {t.reason}"
+                if t.correlation_basis and t.correlation_basis not in existing.correlation_basis:
+                    existing.correlation_basis = f"{existing.correlation_basis} & {t.correlation_basis}"
+
+                # Preserve OBSERVED if either transition is directly observed
+                if t.epistemic_status == EpistemicStatus.OBSERVED:
+                    existing.epistemic_status = EpistemicStatus.OBSERVED
+
+        deduped = list(deduped_map.values())
         deduped.sort(key=lambda tr: (tr.timestamp, tr.transition_id))
         return deduped[: self.MAX_TRANSITIONS]
 
@@ -746,6 +780,13 @@ class TemporalReconstructionEngine:
         cur_hosts = {str(it.get("host")) for it in evidence_items if it.get("host")}
         cur_entities = cur_users.union(cur_ips).union(cur_hosts)
 
+        # Parse and filter valid timestamps from evidence items once
+        valid_cur_dts = [
+            dt for it in evidence_items
+            if (dt := self._parse_timestamp(it.get("timestamp"))) is not None
+        ]
+        cur_first = min(valid_cur_dts) if valid_cur_dts else None
+
         for inc in other_incidents:
             other_id = inc.get("id") or inc.get("incident_id")
             if not other_id or other_id == case.incident_id:
@@ -765,9 +806,8 @@ class TemporalReconstructionEngine:
                 shared_entities.append(f"host:{other_host}")
                 reason = CampaignRelationReason.SHARED_ENTITY
 
-            # Check temporal proximity (within 24h)
-            cur_first = min([self._parse_timestamp(it.get("timestamp")) for it in evidence_items if it.get("timestamp")] or [None])
-            other_first = self._parse_timestamp(inc.get("first_seen"))
+            # Check temporal proximity (within 24h) safely
+            other_first = self._parse_timestamp(inc.get("first_seen")) or self._parse_timestamp(inc.get("timestamp"))
 
             status = CampaignCorrelationStatus.UNRELATED
             if len(shared_entities) >= 2:
@@ -927,7 +967,7 @@ class TemporalReconstructionEngine:
             summary = it.get("summary") or it.get("title") or it.get("raw_message", "Evidence record")[:80]
             refs.append(
                 GraphEvidenceItem(
-                    reference_id=str(it.get("_ref_id", f"ref-{s_id}")),
+                    reference_id=str(it.get("_ref_id", f"ref-{s_type}-{s_id}")),
                     source_type=s_type,
                     source_id=s_id,
                     source_hash=it.get("_hash", self._compute_hash(it)),

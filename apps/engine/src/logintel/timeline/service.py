@@ -131,6 +131,7 @@ class UnifiedTimelineService:
         bookmarks = self._load_bookmarks(case_id)
         target_hosts = getattr(case.scope, "target_hosts", []) or []
         items: List[InvestigationTimelineItem] = []
+        items_by_id: Dict[str, InvestigationTimelineItem] = {}
         seen_ids: Set[str] = set()
 
         # 1. Authoritative Case Evidence References (events, alerts, detections)
@@ -139,6 +140,11 @@ class UnifiedTimelineService:
                 continue  # Skip bookmark references from raw evidence items
             
             rec = ref.resolved_record or {}
+            if not rec and ref.analyst_annotation:
+                try:
+                    rec = json.loads(ref.analyst_annotation) if isinstance(ref.analyst_annotation, str) else ref.analyst_annotation
+                except Exception:
+                    pass
             ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at") or ref.created_at
             host = rec.get("host") or (target_hosts[0] if target_hosts else "unknown-host")
             source = rec.get("source") or ref.source_type
@@ -146,10 +152,19 @@ class UnifiedTimelineService:
 
             if ref.source_type == "alert":
                 layer = TimelineSourceLayer.ALERT
+                pfx = "alt"
             elif ref.source_type == "detection":
                 layer = TimelineSourceLayer.DETECTION
+                pfx = "det"
+            elif ref.source_type == "event":
+                layer = self._classify_layer(source, ev_type)
+                pfx = "ev"
+            elif ref.source_type == "audit":
+                layer = TimelineSourceLayer.ANALYST_NOTE
+                pfx = "aud"
             else:
                 layer = self._classify_layer(source, ev_type)
+                pfx = ref.source_type.lower().replace("_", "-")[:8]
 
             entities = []
             if rec.get("username"):
@@ -163,9 +178,23 @@ class UnifiedTimelineService:
             if rec.get("path"):
                 entities.append(f"file:{rec['path']}")
 
-            t_id = f"tl-{ref.source_type[:3]}-{ref.source_id}"
-            if t_id in seen_ids:
-                continue
+            cand_id = f"tl-{pfx}-{ref.source_id}"
+            if cand_id in items_by_id:
+                existing = items_by_id[cand_id]
+                # If truly equivalent record (same host, timestamp, and source domain), merge evidence refs
+                if existing.host_id == str(host) and existing.timestamp == str(ts) and existing.source_id == str(ref.source_id):
+                    tag = ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]"
+                    if tag not in existing.evidence_refs:
+                        existing.evidence_refs.append(tag)
+                    continue
+                else:
+                    # Distinct record sharing a bare ID: disambiguate with host
+                    h_clean = str(host).lower().replace(".", "-").replace(":", "-")
+                    cand_id = f"tl-{pfx}-{h_clean}-{ref.source_id}"
+                    if cand_id in items_by_id:
+                        cand_id = f"tl-{pfx}-{h_clean}-{ref.source_id}-{ref.reference_id}"
+
+            t_id = cand_id
             seen_ids.add(t_id)
 
             summary = rec.get("summary") or rec.get("raw_message") or rec.get("description") or f"Forensic {ref.source_type}"
@@ -177,32 +206,32 @@ class UnifiedTimelineService:
                     epistemic = EpistemicStatus.OBSERVED
 
             is_bm = t_id in bookmarks
-            items.append(
-                InvestigationTimelineItem(
-                    timeline_id=t_id,
-                    case_id=case_id,
-                    timestamp=str(ts),
-                    timestamp_precision=self._detect_precision(str(ts)),
-                    host_id=str(host),
-                    layer=layer,
-                    event_type=str(ev_type),
-                    source_type=str(source),
-                    source_id=str(ref.source_id),
-                    title=self._sanitize(rec.get("title") or f"{layer.value}: {ev_type}", 120),
-                    display_summary=self._sanitize(summary, 300),
-                    entity_refs=sorted(list(set(entities))),
-                    relationship_refs=[],
-                    detection_refs=[str(ref.source_id)] if ref.source_type == "detection" else [],
-                    incident_refs=[case.incident_id] if case.incident_id else [],
-                    evidence_refs=[ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]"],
-                    epistemic_status=epistemic,
-                    collection_status=CollectionStatus.SOURCE_AVAILABLE,
-                    provenance=f"Authoritative forensic reference ({ref.source_type}:{ref.source_id})",
-                    is_bookmarked=is_bm,
-                    bookmark_notes=bookmarks.get(t_id),
-                    metadata=rec,
-                )
+            item = InvestigationTimelineItem(
+                timeline_id=t_id,
+                case_id=case_id,
+                timestamp=str(ts),
+                timestamp_precision=self._detect_precision(str(ts)),
+                host_id=str(host),
+                layer=layer,
+                event_type=str(ev_type),
+                source_type=str(source),
+                source_id=str(ref.source_id),
+                title=self._sanitize(rec.get("title") or f"{layer.value}: {ev_type}", 120),
+                display_summary=self._sanitize(summary, 300),
+                entity_refs=sorted(list(set(entities))),
+                relationship_refs=[],
+                detection_refs=[str(ref.source_id)] if ref.source_type == "detection" else [],
+                incident_refs=[case.incident_id] if case.incident_id else [],
+                evidence_refs=[ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]"],
+                epistemic_status=epistemic,
+                collection_status=CollectionStatus.SOURCE_AVAILABLE,
+                provenance=f"Authoritative forensic reference ({ref.source_type}:{ref.source_id})",
+                is_bookmarked=is_bm,
+                bookmark_notes=bookmarks.get(t_id),
+                metadata=rec,
             )
+            items_by_id[t_id] = item
+            items.append(item)
 
         # 2. Scope-Linked Canonical Telemetry Events from logintel.db
         if self.db and case.incident_id:
@@ -220,35 +249,48 @@ class UnifiedTimelineService:
                 )
                 alerts_rows = cur.fetchall()
                 for a in alerts_rows:
-                    t_id = f"tl-alt-{a['id']}"
-                    if t_id not in seen_ids:
-                        seen_ids.add(t_id)
-                        items.append(
-                            InvestigationTimelineItem(
-                                timeline_id=t_id,
-                                case_id=case_id,
-                                timestamp=str(a["first_seen"]),
-                                timestamp_precision=self._detect_precision(str(a["first_seen"])),
-                                host_id=str(a["host"] or "unknown-host"),
-                                layer=TimelineSourceLayer.ALERT,
-                                event_type="ALERT_TRIGGERED",
-                                source_type="rule_engine",
-                                source_id=str(a["id"]),
-                                title=self._sanitize(a["title"] or f"Alert {a['rule_id']}", 120),
-                                display_summary=self._sanitize(a["description"] or "Security alert", 300),
-                                entity_refs=[],
-                                relationship_refs=[],
-                                detection_refs=[str(a["rule_id"])],
-                                incident_refs=[case.incident_id],
-                                evidence_refs=[f"[alert:{a['id']}]"],
-                                epistemic_status=EpistemicStatus.OBSERVED,
-                                collection_status=CollectionStatus.SOURCE_AVAILABLE,
-                                provenance=f"Alert engine (rule: {a['rule_id']})",
-                                is_bookmarked=t_id in bookmarks,
-                                bookmark_notes=bookmarks.get(t_id),
-                                metadata={"severity": a["severity"], "status": a["status"]},
-                            )
-                        )
+                    a_host = str(a["host"] or "unknown-host")
+                    cand_id = f"tl-alt-{a['id']}"
+                    if cand_id in items_by_id:
+                        existing = items_by_id[cand_id]
+                        if existing.host_id == a_host and existing.source_id == str(a["id"]):
+                            # Equivalent record already present from case evidence references
+                            tag = f"[alert:{a['id']}]"
+                            if tag not in existing.evidence_refs:
+                                existing.evidence_refs.append(tag)
+                            continue
+                        else:
+                            h_clean = a_host.lower().replace(".", "-").replace(":", "-")
+                            cand_id = f"tl-alt-{h_clean}-{a['id']}"
+
+                    t_id = cand_id
+                    seen_ids.add(t_id)
+                    alt_item = InvestigationTimelineItem(
+                        timeline_id=t_id,
+                        case_id=case_id,
+                        timestamp=str(a["first_seen"]),
+                        timestamp_precision=self._detect_precision(str(a["first_seen"])),
+                        host_id=a_host,
+                        layer=TimelineSourceLayer.ALERT,
+                        event_type="ALERT_TRIGGERED",
+                        source_type="rule_engine",
+                        source_id=str(a["id"]),
+                        title=self._sanitize(a["title"] or f"Alert {a['rule_id']}", 120),
+                        display_summary=self._sanitize(a["description"] or "Security alert", 300),
+                        entity_refs=[],
+                        relationship_refs=[],
+                        detection_refs=[str(a["rule_id"])],
+                        incident_refs=[case.incident_id],
+                        evidence_refs=[f"[alert:{a['id']}]"],
+                        epistemic_status=EpistemicStatus.OBSERVED,
+                        collection_status=CollectionStatus.SOURCE_AVAILABLE,
+                        provenance=f"Alert engine (rule: {a['rule_id']})",
+                        is_bookmarked=t_id in bookmarks,
+                        bookmark_notes=bookmarks.get(t_id),
+                        metadata={"severity": a["severity"], "status": a["status"]},
+                    )
+                    items_by_id[t_id] = alt_item
+                    items.append(alt_item)
 
                 # Retrieve incident canonical events
                 cur.execute(
@@ -265,9 +307,20 @@ class UnifiedTimelineService:
                 )
                 ev_rows = cur.fetchall()
                 for ev in ev_rows:
-                    t_id = f"tl-ev-{ev['id']}"
-                    if t_id in seen_ids:
-                        continue
+                    ev_host = str(ev["host"] or "unknown-host")
+                    cand_id = f"tl-ev-{ev['id']}"
+                    if cand_id in items_by_id:
+                        existing = items_by_id[cand_id]
+                        if existing.host_id == ev_host and existing.source_id == str(ev["id"]):
+                            tag = f"[event:{ev['id']}]"
+                            if tag not in existing.evidence_refs:
+                                existing.evidence_refs.append(tag)
+                            continue
+                        else:
+                            h_clean = ev_host.lower().replace(".", "-").replace(":", "-")
+                            cand_id = f"tl-ev-{h_clean}-{ev['id']}"
+
+                    t_id = cand_id
                     seen_ids.add(t_id)
 
                     layer = self._classify_layer(ev["source"], ev["event_type"])
@@ -279,64 +332,68 @@ class UnifiedTimelineService:
                     if ev["dst_ip"]:
                         entities.append(f"ip:{ev['dst_ip']}")
 
-                    items.append(
-                        InvestigationTimelineItem(
-                            timeline_id=t_id,
-                            case_id=case_id,
-                            timestamp=str(ev["timestamp"]),
-                            timestamp_precision=self._detect_precision(str(ev["timestamp"])),
-                            host_id=str(ev["host"] or "unknown-host"),
-                            layer=layer,
-                            event_type=str(ev["event_type"] or "telemetry"),
-                            source_type=str(ev["source"]),
-                            source_id=str(ev["id"]),
-                            title=self._sanitize(f"{layer.value}: {ev['action'] or ev['event_type']}", 120),
-                            display_summary=self._sanitize(ev["raw_message"] or "Authoritative event", 300),
-                            entity_refs=sorted(list(set(entities))),
-                            relationship_refs=[],
-                            detection_refs=[],
-                            incident_refs=[case.incident_id],
-                            evidence_refs=[f"[event:{ev['id']}]"],
-                            epistemic_status=EpistemicStatus.OBSERVED,
-                            collection_status=CollectionStatus.SOURCE_AVAILABLE,
-                            provenance=f"Authoritative {ev['source']} log (id: {ev['id']})",
-                            is_bookmarked=t_id in bookmarks,
-                            bookmark_notes=bookmarks.get(t_id),
-                            metadata={"severity": ev["severity"]},
-                        )
+                    ev_item = InvestigationTimelineItem(
+                        timeline_id=t_id,
+                        case_id=case_id,
+                        timestamp=str(ev["timestamp"]),
+                        timestamp_precision=self._detect_precision(str(ev["timestamp"])),
+                        host_id=ev_host,
+                        layer=layer,
+                        event_type=str(ev["event_type"] or "telemetry"),
+                        source_type=str(ev["source"]),
+                        source_id=str(ev["id"]),
+                        title=self._sanitize(f"{layer.value}: {ev['action'] or ev['event_type']}", 120),
+                        display_summary=self._sanitize(ev["raw_message"] or "Authoritative event", 300),
+                        entity_refs=sorted(list(set(entities))),
+                        relationship_refs=[],
+                        detection_refs=[],
+                        incident_refs=[case.incident_id],
+                        evidence_refs=[f"[event:{ev['id']}]"],
+                        epistemic_status=EpistemicStatus.OBSERVED,
+                        collection_status=CollectionStatus.SOURCE_AVAILABLE,
+                        provenance=f"Authoritative {ev['source']} log (id: {ev['id']})",
+                        is_bookmarked=t_id in bookmarks,
+                        bookmark_notes=bookmarks.get(t_id),
+                        metadata={"severity": ev["severity"]},
                     )
+                    items_by_id[t_id] = ev_item
+                    items.append(ev_item)
 
         # 3. Case Audit Log Milestones
         for a in case.audit_history:
-            t_id = f"tl-aud-{a.audit_id or a.timestamp}"
-            if t_id not in seen_ids:
-                seen_ids.add(t_id)
-                items.append(
-                    InvestigationTimelineItem(
-                        timeline_id=t_id,
-                        case_id=case_id,
-                        timestamp=a.timestamp,
-                        timestamp_precision=self._detect_precision(a.timestamp),
-                        host_id=target_hosts[0] if target_hosts else "analyst-workstation",
-                        layer=TimelineSourceLayer.ANALYST_NOTE,
-                        event_type=f"AUDIT_{a.action}",
-                        source_type="audit_trail",
-                        source_id=str(a.audit_id or a.timestamp),
-                        title=self._sanitize(f"Analyst Action: {a.action}", 120),
-                        display_summary=self._sanitize(f"Analyst '{a.actor}' performed {a.action}. {a.reason or ''}", 300),
-                        entity_refs=[f"user:{a.actor}"],
-                        relationship_refs=[],
-                        detection_refs=[],
-                        incident_refs=[case.incident_id] if case.incident_id else [],
-                        evidence_refs=[],
-                        epistemic_status=EpistemicStatus.OBSERVED,
-                        collection_status=CollectionStatus.SOURCE_AVAILABLE,
-                        provenance=f"Immutable case audit trail (actor: {a.actor})",
-                        is_bookmarked=t_id in bookmarks,
-                        bookmark_notes=bookmarks.get(t_id),
-                        metadata={"actor": a.actor, "action": a.action},
-                    )
-                )
+            aud_host = target_hosts[0] if target_hosts else "analyst-workstation"
+            cand_id = f"tl-aud-{a.audit_id or a.timestamp}"
+            if cand_id in items_by_id:
+                cand_id = f"tl-aud-{a.audit_id}-{a.timestamp}"
+
+            t_id = cand_id
+            seen_ids.add(t_id)
+            aud_item = InvestigationTimelineItem(
+                timeline_id=t_id,
+                case_id=case_id,
+                timestamp=a.timestamp,
+                timestamp_precision=self._detect_precision(a.timestamp),
+                host_id=aud_host,
+                layer=TimelineSourceLayer.ANALYST_NOTE,
+                event_type=f"AUDIT_{a.action}",
+                source_type="audit_trail",
+                source_id=str(a.audit_id or a.timestamp),
+                title=self._sanitize(f"Analyst Action: {a.action}", 120),
+                display_summary=self._sanitize(f"Analyst '{a.actor}' performed {a.action}. {a.reason or ''}", 300),
+                entity_refs=[f"user:{a.actor}"],
+                relationship_refs=[],
+                detection_refs=[],
+                incident_refs=[case.incident_id] if case.incident_id else [],
+                evidence_refs=[],
+                epistemic_status=EpistemicStatus.OBSERVED,
+                collection_status=CollectionStatus.SOURCE_AVAILABLE,
+                provenance=f"Immutable case audit trail (actor: {a.actor})",
+                is_bookmarked=t_id in bookmarks,
+                bookmark_notes=bookmarks.get(t_id),
+                metadata={"actor": a.actor, "action": a.action},
+            )
+            items_by_id[t_id] = aud_item
+            items.append(aud_item)
 
         # Strict deterministic multi-key sorting
         items.sort(key=self._timeline_sort_key)

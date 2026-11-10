@@ -409,10 +409,13 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
 
   // Load host timeline when selectedHostId, pagination, or time bounds change
   useEffect(() => {
-    if (!selectedHostId) return;
+    if (!selectedHostId || timelineMode !== "single" || activeSubTab !== "timeline") {
+      hostTimelineAbortRef.current?.abort();
+      return;
+    }
     activeHostRef.current = selectedHostId;
     loadHostTimeline(selectedHostId, timelineOffset);
-  }, [selectedHostId, timelineOffset, timelineTimeStart, timelineTimeEnd, caseId]);
+  }, [selectedHostId, timelineOffset, timelineLimit, timelineTimeStart, timelineTimeEnd, caseId, timelineMode, activeSubTab]);
 
   const loadHostTimeline = async (hostId: string, offset: number) => {
     const seq = ++hostTimelineSeqRef.current;
@@ -453,6 +456,13 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
   useEffect(() => {
     if (activeSubTab === "timeline" && timelineMode === "comparative" && selectedComparativeHosts.length > 0) {
       loadComparativeTimeline(selectedComparativeHosts);
+    } else if (timelineMode !== "comparative" || selectedComparativeHosts.length === 0) {
+      comparativeAbortRef.current?.abort();
+      if (selectedComparativeHosts.length === 0) {
+        setComparativeData(null);
+        setComparativeLoading(false);
+        setComparativeError(null);
+      }
     }
   }, [activeSubTab, timelineMode, selectedComparativeHosts, caseId, timelineTimeStart, timelineTimeEnd, comparativeLimitPerLane]);
 
