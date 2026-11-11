@@ -275,6 +275,7 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
   // In-flight request abort controllers
   const hostTimelineAbortRef = useRef<AbortController | null>(null);
   const comparativeAbortRef = useRef<AbortController | null>(null);
+  const lastComparativeQueryRef = useRef<string>("");
 
   // Cleanup inflight requests on unmount
   useEffect(() => {
@@ -455,8 +456,14 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
   // Load comparative timeline when in comparative mode
   useEffect(() => {
     if (activeSubTab === "timeline" && timelineMode === "comparative" && selectedComparativeHosts.length > 0) {
-      loadComparativeTimeline(selectedComparativeHosts);
+      const sortedHosts = [...selectedComparativeHosts].sort().join(",");
+      const queryKey = `${caseId}:${sortedHosts}:${timelineTimeStart || ""}:${timelineTimeEnd || ""}:${comparativeLimitPerLane}`;
+      if (lastComparativeQueryRef.current !== queryKey) {
+        lastComparativeQueryRef.current = queryKey;
+        loadComparativeTimeline(selectedComparativeHosts);
+      }
     } else if (timelineMode !== "comparative" || selectedComparativeHosts.length === 0) {
+      lastComparativeQueryRef.current = "";
       comparativeAbortRef.current?.abort();
       if (selectedComparativeHosts.length === 0) {
         setComparativeData(null);
@@ -1704,7 +1711,10 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
                     <button
                       className="btn btn-secondary"
                       style={{ padding: "4px 8px", fontSize: "10px" }}
-                      onClick={() => loadComparativeTimeline(selectedComparativeHosts)}
+                      onClick={() => {
+                        lastComparativeQueryRef.current = "";
+                        loadComparativeTimeline(selectedComparativeHosts);
+                      }}
                     >
                       Refresh Swimlanes
                     </button>
@@ -1752,7 +1762,6 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
                           onClick={() => {
                             const allIds = dossier.participating_hosts.map((h) => h.host_id);
                             setSelectedComparativeHosts(allIds);
-                            loadComparativeTimeline(allIds);
                           }}
                         >
                           Select All ({dossier.participating_hosts.length})
@@ -1791,7 +1800,6 @@ export const InvestigationMultiHostWorkbench: React.FC<InvestigationMultiHostWor
                                 ? selectedComparativeHosts.filter((id) => id !== h.host_id)
                                 : [...selectedComparativeHosts, h.host_id];
                               setSelectedComparativeHosts(updated);
-                              loadComparativeTimeline(updated);
                             }}
                           >
                             {isSelected ? "✓ " : "+ "}

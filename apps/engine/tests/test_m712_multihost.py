@@ -39,6 +39,10 @@ from logintel.multihost.models import (
 from logintel.multihost.service import MultiHostInvestigationService, multihost_service
 from logintel.storage.case_repo import case_repo
 from logintel.storage.db import Database, db
+from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+from logintel.timeline.service import timeline_service, TimelineFilterParams
+from logintel.timeline.models import TimelineQueryResponse
+from logintel.ai.domain.investigation_temporal import EpistemicStatus, TransitionType
 
 
 @pytest.fixture
@@ -885,7 +889,7 @@ def test_remediation_m712_006_markdown_export_formatting_and_escaping(multihost_
     assert "**OBSERVED**" in res.content
 
     # Test pipe escaping in cell contents
-    t_id = int(time.time() * 1000) % 500000
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
     pipe_case = case_repo.create_case(
         incident_id=850000 + t_id,
         title=f"M7.12 Pipe Escaping Case {t_id}",
@@ -1413,6 +1417,366 @@ def test_markdown_export_correctness_with_pipes_crlf_and_backticks():
     assert "\r\n" not in content
     # 3. Backticks inside code spans must be sanitized to prevent premature span closure
     assert "with'backticks'" in content or "`host\\|pipe with'backticks'`" in content
+
+
+def test_temporal_adjacency_transitions_are_inferred_not_observed():
+    """Verify temporal adjacency alone does not create an OBSERVED transition without explicit corroboration."""
+    engine = TemporalReconstructionEngine()
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
+    case = case_repo.create_case(incident_id=930000 + t_id, title=f"Adjacency Case {t_id}")
+
+    # Two consecutive chronological items on different hosts without explicit connection telemetry
+    items = [
+        {
+            "id": 1,
+            "_source_type": "event",
+            "_source_id": "1",
+            "_citation_tag": "[event:1]",
+            "timestamp": "2026-10-15T10:00:00Z",
+            "host": "srv-app-01",
+            "username": "alice",
+            "action": "login",
+        },
+        {
+            "id": 2,
+            "_source_type": "event",
+            "_source_id": "2",
+            "_citation_tag": "[event:2]",
+            "timestamp": "2026-10-15T10:05:00Z",
+            "host": "srv-db-01",
+            "username": "bob",
+            "process_name": "psql",
+            "action": "query",
+        },
+    ]
+
+    transitions = engine.detect_transitions(case, items, [])
+    assert len(transitions) >= 1
+
+    # Lateral (HOST_TO_HOST) transition derived purely from consecutive order must be INFERRED
+    h2h = next((t for t in transitions if t.transition_type == TransitionType.HOST_TO_HOST), None)
+    assert h2h is not None
+    assert h2h.from_entity == "host:srv-app-01"
+    assert h2h.to_entity == "host:srv-db-01"
+    assert h2h.epistemic_status == EpistemicStatus.INFERRED
+    assert "temporal adjacency only" in h2h.reason
+    assert h2h.correlation_basis == "Temporal adjacency of consecutive forensic records"
+
+    # User-to-host (USER_TO_HOST) transition must also be INFERRED
+    u2h = next((t for t in transitions if t.transition_type == TransitionType.USER_TO_HOST), None)
+    assert u2h is not None
+    assert u2h.epistemic_status == EpistemicStatus.INFERRED
+    assert "temporal adjacency only" in u2h.reason
+
+
+def test_exact_host_matching_instead_of_substring():
+    """Verify timeline host query uses exact canonical matching rather than substring inclusion."""
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
+    case = case_repo.create_case(incident_id=940000 + t_id, title=f"Exact Host Case {t_id}")
+
+    # Add evidence on host-1
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-h1-{t_id}",
+        role="PRIMARY",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-h1-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"ev-h1-{t_id}",
+            "timestamp": "2026-10-15T10:00:00Z",
+            "host": "host-1",
+        }),
+    )
+
+    # Add evidence on host-10
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-h10-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-h10-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"ev-h10-{t_id}",
+            "timestamp": "2026-10-15T10:01:00Z",
+            "host": "host-10",
+        }),
+    )
+
+    # Query for exact host "host-1"
+    res = timeline_service.query_timeline(case.case_id, TimelineFilterParams(host="host-1"))
+    host_ids = [it.host_id for it in res.items]
+    assert "host-1" in host_ids
+    # host-10 must NOT match when querying for host-1!
+    assert "host-10" not in host_ids
+
+
+def test_case_bound_time_filtering_and_out_of_scope_host_exclusion():
+    """Verify case scope time bounds intersection and out-of-scope host exclusion."""
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
+    case = case_repo.create_case(incident_id=950000 + t_id, title=f"Scope Bounds Case {t_id}")
+    case_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(
+            investigation_id=950000 + t_id,
+            subject_id=f"inc-{950000 + t_id}",
+            time_start="2026-10-15T10:00:00Z",
+            time_end="2026-10-15T12:00:00Z",
+            target_hosts=["scoped-host-a"],
+        ),
+    )
+
+    # Event 1: in scope (11:00:00Z, scoped-host-a)
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-in-{t_id}",
+        role="PRIMARY",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-in-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"ev-in-{t_id}",
+            "timestamp": "2026-10-15T11:00:00Z",
+            "host": "scoped-host-a",
+        }),
+    )
+
+    # Event 2: prior to case time_start (08:00:00Z, scoped-host-a)
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-early-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-early-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"ev-early-{t_id}",
+            "timestamp": "2026-10-15T08:00:00Z",
+            "host": "scoped-host-a",
+        }),
+    )
+
+    # Event 3: out-of-scope host (11:30:00Z, rogue-host-z)
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-rogue-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-rogue-{t_id}]",
+        analyst_annotation=json.dumps({
+            "id": f"ev-rogue-{t_id}",
+            "timestamp": "2026-10-15T11:30:00Z",
+            "host": "rogue-host-z",
+        }),
+    )
+
+    # Query with broader query bounds (06:00 to 18:00): case bounds (10:00 to 12:00) must prevail!
+    res = timeline_service.query_timeline(
+        case.case_id,
+        TimelineFilterParams(time_start="2026-10-15T06:00:00Z", time_end="2026-10-15T18:00:00Z"),
+    )
+    # Out of scope host must NOT appear
+    assert not any(it.host_id == "rogue-host-z" for it in res.items)
+    # Early event prior to 10:00 must NOT appear
+    assert not any(it.timestamp < "2026-10-15T10:00:00Z" for it in res.items)
+    # In-scope event must appear
+    assert any(it.source_id == f"ev-in-{t_id}" for it in res.items)
+
+    # Out-of-scope host must not appear in case dossier
+    dossier = multihost_service.get_case_dossier(case.case_id)
+    dossier_hosts = [h.host_id for h in dossier.participating_hosts]
+    assert "scoped-host-a" in dossier_hosts
+    assert "rogue-host-z" not in dossier_hosts
+
+
+def test_invalid_annotation_payloads_do_not_crash():
+    """Verify non-dict, malformed, or null analyst annotations are handled defensively without exceptions."""
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
+    case = case_repo.create_case(incident_id=960000 + t_id, title=f"Malformed Annotations Case {t_id}")
+
+    # 1. JSON Array
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-list-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-list-{t_id}]",
+        analyst_annotation="[1, 2, 3, \"not a dict\"]",
+    )
+
+    # 2. JSON String
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-str-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-str-{t_id}]",
+        analyst_annotation="\"plain string value\"",
+    )
+
+    # 3. Malformed JSON syntax
+    case_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id=f"ev-malformed-{t_id}",
+        role="SUPPORTING",
+        epistemic_status="OBSERVED",
+        citation_tag=f"[event:ev-malformed-{t_id}]",
+        analyst_annotation="{bad json: missing quotes",
+    )
+
+    # None of these should crash dossier generation or timeline queries
+    dossier = multihost_service.get_case_dossier(case.case_id)
+    assert isinstance(dossier, CaseMultiHostDossier)
+
+    timeline_res = timeline_service.query_timeline(case.case_id, TimelineFilterParams(limit=10))
+    assert isinstance(timeline_res, TimelineQueryResponse)
+    assert timeline_res.is_truncated is False
+
+
+def test_mitre_mapping_epistemic_status_and_multiple_mappings():
+    """Verify inferred MITRE mappings are not marked authoritative and multiple mappings are preserved."""
+    engine = TemporalReconstructionEngine()
+    t_id = int(time.time() * 1000) % 500000 + random.randint(10000000, 90000000)
+    case = case_repo.create_case(incident_id=970000 + t_id, title=f"MITRE Epistemic Case {t_id}")
+
+    # Evidence with multiple MITRE mappings in details_json
+    evidence_items = [
+        {
+            "id": 101,
+            "_source_type": "event",
+            "_source_id": "101",
+            "_citation_tag": "[event:101]",
+            "timestamp": "2026-10-15T10:00:00Z",
+            "host": "srv-01",
+            "action": "powershell_download",
+            "epistemic_status": "INFERRED",
+            "is_authoritative": False,
+            "details_json": json.dumps({
+                "mitre_mappings": [
+                    {"technique_id": "T1059.001", "tactic": "Execution"},
+                    {"technique_id": "T1105", "tactic": "Command and Control"},
+                ]
+            }),
+        }
+    ]
+
+    seqs, mitre_list = engine.reconstruct_attack_sequences(case, evidence_items, [])
+    assert len(seqs) == 1
+    # Step epistemic status carries INFERRED from evidence
+    assert seqs[0].steps[0].epistemic_status == EpistemicStatus.INFERRED
+    assert seqs[0].epistemic_status == EpistemicStatus.INFERRED
+
+    # Both MITRE techniques are retained without overwriting
+    technique_ids = {m["technique_id"] for m in mitre_list}
+    assert "T1059.001" in technique_ids
+    assert "T1105" in technique_ids
+
+    # Inferred mappings must not be marked authoritative
+    for m in mitre_list:
+        assert m["is_authoritative"] is False
+        assert m["epistemic_status"] == "INFERRED"
+
+
+def test_bounded_event_counts_are_explicit_and_truncated(tmp_path):
+    """Verify host event counts are never silently capped at 500 and timeline truncation flags are accurate."""
+    from logintel.storage.case_repo import CaseRepository
+    from logintel.timeline.service import UnifiedTimelineService
+
+    test_forensic_db = Database(db_path=tmp_path / "forensic_test.db")
+    test_forensic_db.initialize()
+    test_case_repo = CaseRepository(db_path=tmp_path / "cases_test.db", forensic_db=test_forensic_db)
+    test_timeline_svc = UnifiedTimelineService(forensic_db=test_forensic_db, case_repository=test_case_repo)
+    test_mh_svc = MultiHostInvestigationService(
+        case_repository=test_case_repo,
+        forensic_database=test_forensic_db,
+        timeline_service=test_timeline_svc,
+    )
+
+    with test_forensic_db.connection() as conn:
+        with conn:
+            conn.execute(
+                "INSERT INTO hosts (id, hostname, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+                ("host-scale-01", "scale01.corp.internal", "2026-10-15T10:00:00Z", "2026-10-15T12:00:00Z"),
+            )
+            conn.execute(
+                """
+                INSERT INTO detection_rules (id, name, description, severity, category, rule_type, definition_yaml)
+                VALUES ('rule.test', 'Test Rule', 'Desc', 'HIGH', 'auth', 'deterministic', 'yaml: 1')
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO alerts (id, rule_id, dedup_key, title, description, severity, status, host, first_seen, last_seen)
+                VALUES (1, 'rule.test', 'dk-1', 'Alert 1', 'Alert desc', 'HIGH', 'OPEN', 'host-scale-01', '2026-10-15T10:00:00Z', '2026-10-15T12:00:00Z')
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO detections (id, alert_id, rule_id, timestamp, host, summary)
+                VALUES (1, 1, 'rule.test', '2026-10-15T10:00:00Z', 'host-scale-01', 'Det 1')
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO incidents (id, incident_key, title, summary, severity, status, primary_host, first_seen, last_seen)
+                VALUES (1, 'inc-1', 'Inc 1', 'Summary', 'WARNING', 'OPEN', 'host-scale-01', '2026-10-15T10:00:00Z', '2026-10-15T12:00:00Z')
+                """
+            )
+            conn.execute("INSERT INTO incident_alerts (incident_id, alert_id) VALUES (1, 1)")
+
+            # Insert 550 events (> old LIMIT 500 cap) in reverse timestamp order to also test deterministic ordering
+            for idx in range(550):
+                ev_id = f"ev-scale-{idx:04d}"
+                ts = f"2026-10-15T10:{(idx // 60) % 60:02d}:{idx % 60:02d}Z"
+                conn.execute(
+                    """
+                    INSERT INTO events (id, timestamp, ingested_at, host, source, event_type, severity, outcome, summary, raw_message, parser, event_fingerprint)
+                    VALUES (?, ?, ?, 'host-scale-01', 'auth', 'LOGIN', 'INFO', 'SUCCESS', 'msg', 'raw', 'syslog', ?)
+                    """,
+                    (ev_id, ts, ts, f"fp-{ev_id}"),
+                )
+                conn.execute(
+                    "INSERT INTO detection_evidence (detection_id, event_id, role) VALUES (1, ?, 'TRIGGER')",
+                    (ev_id,),
+                )
+
+    case = test_case_repo.create_case(incident_id=1, title="Scale & Truncation Test Case")
+    test_case_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(
+            investigation_id=1,
+            subject_id="inc-1",
+            target_hosts=["host-scale-01"],
+        ),
+    )
+
+    # 1. Verify MultiHostInvestigationService reports exact 550 event count (not silently capped at 500)
+    dossier = test_mh_svc.get_case_dossier(case.case_id)
+    assert len(dossier.participating_hosts) == 1
+    assert dossier.participating_hosts[0].event_count == 550
+
+    # 2. Verify UnifiedTimelineService exposes accurate truncation metadata when bounded
+    test_timeline_svc.MAX_INCIDENT_EVENTS = 10
+    tl_res = test_timeline_svc.query_timeline(case.case_id, TimelineFilterParams(limit=50))
+    assert tl_res.is_truncated is True
+    # Deterministic ORDER BY e.timestamp ASC, e.id ASC ensures earliest event IDs come first
+    ev_items = [it for it in tl_res.items if it.source_id.startswith("ev-scale-")]
+    assert len(ev_items) == 10
+    assert ev_items[0].source_id == "ev-scale-0000"
+    assert ev_items[-1].source_id == "ev-scale-0009"
+
+    # 3. Verify unbounded (> 550) case returns is_truncated=False
+    test_timeline_svc.MAX_INCIDENT_EVENTS = 1000
+    tl_full = test_timeline_svc.query_timeline(case.case_id, TimelineFilterParams(limit=50))
+    assert tl_full.is_truncated is False
+    assert tl_full.total >= 550
+
+
 
 
 

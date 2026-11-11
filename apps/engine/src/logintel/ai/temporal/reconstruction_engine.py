@@ -310,7 +310,7 @@ class TemporalReconstructionEngine:
         """Detect deterministic evidence-backed transitions between entities and episodes."""
         transitions: List[TemporalTransition] = []
 
-        # 1. Transitions derived directly from consecutive chronological evidence items
+        # 1. Transitions derived from consecutive chronological evidence items
         for i in range(len(evidence_items) - 1):
             cur = evidence_items[i]
             nxt = evidence_items[i + 1]
@@ -327,6 +327,19 @@ class TemporalReconstructionEngine:
 
             # A. USER_TO_HOST
             if cur_user and nxt_host and cur_user != nxt_host:
+                has_explicit_u2h = bool(
+                    (nxt.get("username") == cur_user and nxt.get("host") == nxt_host)
+                    or (cur.get("username") == cur_user and (cur.get("target_host") == nxt_host or cur.get("dst_host") == nxt_host))
+                )
+                if has_explicit_u2h:
+                    u2h_reason = f"User {cur_user} executed activity on host {nxt_host}"
+                    u2h_basis = "Authoritative credential session link"
+                    u2h_status = EpistemicStatus.OBSERVED
+                else:
+                    u2h_reason = f"Inferred transition from user {cur_user} to host {nxt_host} based on temporal adjacency only"
+                    u2h_basis = "Temporal adjacency of consecutive forensic records"
+                    u2h_status = EpistemicStatus.INFERRED
+
                 transitions.append(
                     TemporalTransition(
                         transition_id=f"trans-{case.case_id}-u2h-{i}",
@@ -335,15 +348,30 @@ class TemporalReconstructionEngine:
                         from_entity=f"user:{cur_user}",
                         to_entity=f"host:{nxt_host}",
                         timestamp=ts,
-                        reason=f"User {cur_user} executed activity on host {nxt_host}",
-                        correlation_basis="Authoritative credential session link",
+                        reason=u2h_reason,
+                        correlation_basis=u2h_basis,
                         evidence_references=refs,
-                        epistemic_status=EpistemicStatus.OBSERVED,
+                        epistemic_status=u2h_status,
                     )
                 )
 
             # B. HOST_TO_HOST (Lateral transition)
             if cur_host and nxt_host and cur_host != nxt_host:
+                has_explicit_h2h = bool(
+                    (cur.get("dst_host") and cur.get("dst_host") == nxt_host)
+                    or (cur.get("target_host") and cur.get("target_host") == nxt_host)
+                    or (nxt.get("src_host") and nxt.get("src_host") == cur_host)
+                    or (nxt.get("source_host") and nxt.get("source_host") == cur_host)
+                )
+                if has_explicit_h2h:
+                    h2h_reason = f"Activity transitioned from host {cur_host} to host {nxt_host}"
+                    h2h_basis = "Explicit cross-host connection telemetry"
+                    h2h_status = EpistemicStatus.OBSERVED
+                else:
+                    h2h_reason = f"Inferred lateral transition from host {cur_host} to host {nxt_host} based on temporal adjacency only"
+                    h2h_basis = "Temporal adjacency of consecutive forensic records"
+                    h2h_status = EpistemicStatus.INFERRED
+
                 transitions.append(
                     TemporalTransition(
                         transition_id=f"trans-{case.case_id}-h2h-{i}",
@@ -352,15 +380,28 @@ class TemporalReconstructionEngine:
                         from_entity=f"host:{cur_host}",
                         to_entity=f"host:{nxt_host}",
                         timestamp=ts,
-                        reason=f"Activity transitioned from host {cur_host} to host {nxt_host}",
-                        correlation_basis="Sequential cross-host forensic records",
+                        reason=h2h_reason,
+                        correlation_basis=h2h_basis,
                         evidence_references=refs,
-                        epistemic_status=EpistemicStatus.OBSERVED,
+                        epistemic_status=h2h_status,
                     )
                 )
 
             # C. USER_TO_PROCESS
             if cur_user and nxt_proc:
+                has_explicit_u2p = bool(
+                    (nxt.get("username") == cur_user and (nxt.get("process_name") == nxt_proc or nxt.get("action") == nxt_proc))
+                    or (cur.get("username") == cur_user and (cur.get("process_name") == nxt_proc or cur.get("action") == nxt_proc))
+                )
+                if has_explicit_u2p:
+                    u2p_reason = f"User {cur_user} invoked process {nxt_proc}"
+                    u2p_basis = "Authenticated user execution context"
+                    u2p_status = EpistemicStatus.OBSERVED
+                else:
+                    u2p_reason = f"Inferred transition from user {cur_user} to process {nxt_proc} based on temporal adjacency only"
+                    u2p_basis = "Temporal adjacency of consecutive forensic records"
+                    u2p_status = EpistemicStatus.INFERRED
+
                 transitions.append(
                     TemporalTransition(
                         transition_id=f"trans-{case.case_id}-u2p-{i}",
@@ -369,16 +410,29 @@ class TemporalReconstructionEngine:
                         from_entity=f"user:{cur_user}",
                         to_entity=f"process:{nxt_proc}",
                         timestamp=ts,
-                        reason=f"User {cur_user} invoked process {nxt_proc}",
-                        correlation_basis="Authenticated user execution context",
+                        reason=u2p_reason,
+                        correlation_basis=u2p_basis,
                         evidence_references=refs,
-                        epistemic_status=EpistemicStatus.OBSERVED,
+                        epistemic_status=u2p_status,
                     )
                 )
 
             # D. PROCESS_TO_NETWORK_DESTINATION
-            dst_ip = nxt.get("dst_ip")
+            dst_ip = nxt.get("dst_ip") or nxt.get("dest_ip")
             if cur_proc and dst_ip:
+                has_explicit_p2n = bool(
+                    (cur.get("dst_ip") == dst_ip or cur.get("dest_ip") == dst_ip)
+                    and (cur.get("process_name") == cur_proc or cur.get("action") == cur_proc)
+                )
+                if has_explicit_p2n:
+                    p2n_reason = f"Process {cur_proc} initiated connection to destination {dst_ip}"
+                    p2n_basis = "Process socket/network telemetry"
+                    p2n_status = EpistemicStatus.OBSERVED
+                else:
+                    p2n_reason = f"Inferred transition from process {cur_proc} to destination {dst_ip} based on temporal adjacency only"
+                    p2n_basis = "Temporal adjacency of consecutive forensic records"
+                    p2n_status = EpistemicStatus.INFERRED
+
                 transitions.append(
                     TemporalTransition(
                         transition_id=f"trans-{case.case_id}-p2n-{i}",
@@ -387,10 +441,10 @@ class TemporalReconstructionEngine:
                         from_entity=f"process:{cur_proc}",
                         to_entity=f"ip:{dst_ip}",
                         timestamp=ts,
-                        reason=f"Process {cur_proc} initiated connection to destination {dst_ip}",
-                        correlation_basis="Process socket socket/network telemetry",
+                        reason=p2n_reason,
+                        correlation_basis=p2n_basis,
                         evidence_references=refs,
-                        epistemic_status=EpistemicStatus.OBSERVED,
+                        epistemic_status=p2n_status,
                     )
                 )
 
@@ -408,10 +462,10 @@ class TemporalReconstructionEngine:
                     from_episode_id=ep_a.episode_id,
                     to_episode_id=ep_b.episode_id,
                     timestamp=ep_b.start_time,
-                    reason=f"Sequential progression from {ep_a.title} to {ep_b.title}",
+                    reason=f"Sequential progression from {ep_a.title} to {ep_b.title} based on temporal adjacency only",
                     correlation_basis="Chronological episode transition",
                     evidence_references=(ep_a.evidence_references[:2] + ep_b.evidence_references[:2]),
-                    epistemic_status=EpistemicStatus.OBSERVED,
+                    epistemic_status=EpistemicStatus.INFERRED,
                 )
             )
 
@@ -437,11 +491,18 @@ class TemporalReconstructionEngine:
                         or getattr(case, "created_at", None)
                         or "1970-01-01T00:00:00Z"
                     )
-                    # If neither edge endpoint had a timestamp and fallback was needed, demote epistemic certainty to INFERRED
-                    if not edge.first_seen and not edge.last_seen:
-                        ep_status = EpistemicStatus.INFERRED
-                    else:
-                        ep_status = EpistemicStatus.OBSERVED if edge.epistemic_status.value == "OBSERVED" else EpistemicStatus.INFERRED
+                    # Corroborated provenance check: only mark OBSERVED if explicit edge is observed, authoritative, and corroborated
+                    is_edge_observed = (
+                        getattr(edge.epistemic_status, "value", str(edge.epistemic_status)) == "OBSERVED"
+                        and getattr(edge, "is_authoritative", True)
+                        and getattr(edge, "corroboration_status", None) in [
+                            CorroborationStatus.DIRECT_EVIDENCE,
+                            CorroborationStatus.DIRECT_OBSERVATION,
+                            CorroborationStatus.CORROBORATED,
+                        ]
+                        and bool(edge.first_seen or edge.last_seen)
+                    )
+                    ep_status = EpistemicStatus.OBSERVED if is_edge_observed else EpistemicStatus.INFERRED
 
                     transitions.append(
                         TemporalTransition(
@@ -851,49 +912,96 @@ class TemporalReconstructionEngine:
         """Construct deterministic attack sequence reconstruction incorporating MITRE techniques."""
         steps: List[AttackSequenceStep] = []
         mitre_list: List[Dict[str, Any]] = []
-        seen_mitre: Set[str] = set()
+        seen_mitre: Set[Tuple[str, str]] = set()
 
-        mitre_by_ev: Dict[str, Tuple[str, str]] = {}
+        # Map evidence identifiers to lists of candidate MITRE mappings to avoid lossy overwrites
+        mitre_by_ev: Dict[str, List[Dict[str, Any]]] = {}
         if graph and graph.edges:
             for edge in graph.edges:
                 if edge.mitre_technique_id:
+                    is_edge_auth = (
+                        getattr(edge.epistemic_status, "value", str(edge.epistemic_status)) == "OBSERVED"
+                        and getattr(edge, "is_authoritative", True)
+                        and getattr(edge, "corroboration_status", None) in [
+                            CorroborationStatus.DIRECT_EVIDENCE,
+                            CorroborationStatus.DIRECT_OBSERVATION,
+                            CorroborationStatus.CORROBORATED,
+                        ]
+                    )
+                    edge_epistemic = EpistemicStatus.OBSERVED if is_edge_auth else EpistemicStatus.INFERRED
+                    mapping_entry = {
+                        "technique_id": edge.mitre_technique_id,
+                        "technique_name": edge.mitre_tactic or "Unknown Tactic",
+                        "epistemic_status": edge_epistemic,
+                        "is_authoritative": is_edge_auth,
+                    }
+
+                    def _add_mapping(k: str, entry: Dict[str, Any]):
+                        lst = mitre_by_ev.setdefault(k, [])
+                        if not any(m["technique_id"] == entry["technique_id"] for m in lst):
+                            lst.append(entry)
+
                     for ev_id in edge.evidence_event_ids:
                         eid_str = str(ev_id)
-                        mitre_by_ev[f"event:{eid_str}"] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
-                        if eid_str not in mitre_by_ev:
-                            mitre_by_ev[eid_str] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
+                        _add_mapping(f"event:{eid_str}", mapping_entry)
+                        _add_mapping(eid_str, mapping_entry)
                     for ref in edge.evidence_references:
                         if ref.source_id:
                             rsid = str(ref.source_id)
                             rstype = str(ref.source_type or "").strip().lower()
                             if rstype:
-                                mitre_by_ev[f"{rstype}:{rsid}"] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
-                            if rsid not in mitre_by_ev:
-                                mitre_by_ev[rsid] = (edge.mitre_technique_id, edge.mitre_tactic or "Unknown Tactic")
+                                _add_mapping(f"{rstype}:{rsid}", mapping_entry)
+                            _add_mapping(rsid, mapping_entry)
 
         for idx, it in enumerate(evidence_items[: self.MAX_SEQUENCE_STEPS]):
             action = str(it.get("action") or it.get("summary") or "Action")
             entity_val = str(it.get("host") or it.get("username") or "entity")
 
-            # Extract MITRE technique if present in resolved record or graph
-            m_id = None
-            m_name = None
+            # Extract all candidate MITRE techniques from resolved details or graph
+            item_mappings: List[Dict[str, Any]] = []
             details_raw = it.get("details_json")
             if details_raw:
                 try:
                     details = json.loads(details_raw) if isinstance(details_raw, str) else details_raw
-                    m_id = details.get("mitre_technique_id")
-                    m_name = details.get("mitre_tactic")
+                    if isinstance(details, dict):
+                        is_it_auth = bool(it.get("is_authoritative", True)) and (str(it.get("epistemic_status", "")).upper() != "INFERRED")
+                        it_ep = EpistemicStatus.OBSERVED if is_it_auth else EpistemicStatus.INFERRED
+                        if "mitre_mappings" in details and isinstance(details["mitre_mappings"], list):
+                            for m in details["mitre_mappings"]:
+                                if isinstance(m, dict) and m.get("technique_id"):
+                                    item_mappings.append({
+                                        "technique_id": m.get("technique_id"),
+                                        "technique_name": m.get("tactic") or m.get("technique_name") or "Unknown Tactic",
+                                        "epistemic_status": it_ep,
+                                        "is_authoritative": is_it_auth,
+                                    })
+                        elif details.get("mitre_technique_id"):
+                            item_mappings.append({
+                                "technique_id": details.get("mitre_technique_id"),
+                                "technique_name": details.get("mitre_tactic") or "Unknown Tactic",
+                                "epistemic_status": it_ep,
+                                "is_authoritative": is_it_auth,
+                            })
                 except Exception:
                     pass
 
-            if not m_id:
-                src_id = str(it.get("_source_id") or it.get("id") or "")
-                stype = str(it.get("_source_type") or it.get("source_type") or "").strip().lower()
-                if stype and f"{stype}:{src_id}" in mitre_by_ev:
-                    m_id, m_name = mitre_by_ev[f"{stype}:{src_id}"]
-                elif src_id in mitre_by_ev:
-                    m_id, m_name = mitre_by_ev[src_id]
+            src_id = str(it.get("_source_id") or it.get("id") or "")
+            stype = str(it.get("_source_type") or it.get("source_type") or "").strip().lower()
+            graph_maps = (mitre_by_ev.get(f"{stype}:{src_id}") if stype else None) or mitre_by_ev.get(src_id) or []
+            for gm in graph_maps:
+                if not any(im["technique_id"] == gm["technique_id"] for im in item_mappings):
+                    item_mappings.append(gm)
+
+            # Determine primary mapping for this step
+            m_id = item_mappings[0]["technique_id"] if item_mappings else None
+            m_name = item_mappings[0]["technique_name"] if item_mappings else None
+
+            # Carry epistemic status from evidence or MITRE mapping
+            step_epistemic = EpistemicStatus.OBSERVED
+            if str(it.get("epistemic_status", "")).upper() == "INFERRED":
+                step_epistemic = EpistemicStatus.INFERRED
+            elif item_mappings and item_mappings[0]["epistemic_status"] == EpistemicStatus.INFERRED:
+                step_epistemic = EpistemicStatus.INFERRED
 
             # Neutral stage naming derived from action
             stage = "EXECUTION"
@@ -912,25 +1020,32 @@ class TemporalReconstructionEngine:
                     entity=entity_val,
                     evidence_citation=it.get("_citation_tag", f"[{it.get('_source_type')}:{it.get('_source_id')}]"),
                     reason=f"Recorded forensic action: {action[:50]}",
-                    epistemic_status=EpistemicStatus.OBSERVED,
+                    epistemic_status=step_epistemic,
                     mitre_technique_id=m_id,
                     mitre_technique_name=m_name,
                     rule_id=it.get("rule_id"),
                 )
             )
 
-            if m_id and m_id not in seen_mitre:
-                seen_mitre.add(m_id)
-                mitre_list.append(
-                    {
-                        "technique_id": m_id,
-                        "technique_name": m_name or "Unknown Tactic",
-                        "rule_id": it.get("rule_id"),
-                        "source": it.get("_source_type"),
-                        "epistemic_status": EpistemicStatus.OBSERVED.value,
-                        "is_authoritative": True,
-                    }
-                )
+            # Retain all distinct candidate MITRE techniques without dropping or overwriting
+            for m in item_mappings:
+                m_key = (m["technique_id"], m["technique_name"])
+                if m_key not in seen_mitre:
+                    seen_mitre.add(m_key)
+                    mitre_list.append(
+                        {
+                            "technique_id": m["technique_id"],
+                            "technique_name": m["technique_name"],
+                            "rule_id": it.get("rule_id"),
+                            "source": it.get("_source_type"),
+                            "epistemic_status": (
+                                m["epistemic_status"].value
+                                if hasattr(m["epistemic_status"], "value")
+                                else str(m["epistemic_status"])
+                            ),
+                            "is_authoritative": bool(m["is_authoritative"]),
+                        }
+                    )
 
         if not steps:
             return [], []
@@ -940,6 +1055,9 @@ class TemporalReconstructionEngine:
         start_ts = min(valid_ts).isoformat() if valid_ts else steps[0].timestamp
         end_ts = max(valid_ts).isoformat() if valid_ts else steps[-1].timestamp
         span = (max(valid_ts) - min(valid_ts)).total_seconds() if valid_ts else 0.0
+
+        all_steps_observed = all(s.epistemic_status == EpistemicStatus.OBSERVED for s in steps)
+        seq_epistemic = EpistemicStatus.OBSERVED if all_steps_observed else EpistemicStatus.INFERRED
 
         sequence = AttackSequenceReconstruction(
             sequence_id=f"atkseq-{case.case_id}-primary",
@@ -951,7 +1069,7 @@ class TemporalReconstructionEngine:
             start_time=start_ts,
             end_time=end_ts,
             duration_seconds=span,
-            epistemic_status=EpistemicStatus.OBSERVED,
+            epistemic_status=seq_epistemic,
         )
 
         return [sequence], mitre_list
@@ -965,6 +1083,15 @@ class TemporalReconstructionEngine:
             tag = it.get("_citation_tag", f"[{s_type}:{s_id}]")
             ts = it.get("timestamp") or it.get("created_at")
             summary = it.get("summary") or it.get("title") or it.get("raw_message", "Evidence record")[:80]
+            raw_ep = it.get("epistemic_status")
+            if isinstance(raw_ep, EpistemicStatus):
+                ep_stat = raw_ep
+            elif str(raw_ep).upper() == "INFERRED":
+                ep_stat = EpistemicStatus.INFERRED
+            else:
+                ep_stat = EpistemicStatus.OBSERVED
+            is_auth = bool(it.get("is_authoritative", True)) and (ep_stat == EpistemicStatus.OBSERVED)
+
             refs.append(
                 GraphEvidenceItem(
                     reference_id=str(it.get("_ref_id", f"ref-{s_type}-{s_id}")),
@@ -974,11 +1101,12 @@ class TemporalReconstructionEngine:
                     citation_tag=tag,
                     timestamp=str(ts) if ts else None,
                     summary=summary,
-                    epistemic_status=EpistemicStatus.OBSERVED,
-                    is_authoritative=True,
+                    epistemic_status=ep_stat,
+                    is_authoritative=is_auth,
                     role="supporting",
                 )
             )
+        return refs
         return refs
 
     # -------------------------------------------------------------

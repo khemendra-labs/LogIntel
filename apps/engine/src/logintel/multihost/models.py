@@ -104,6 +104,7 @@ class HostTimelineResponse(BaseModel):
     last_seen: Optional[str] = None
     epistemic_breakdown: Dict[str, int] = Field(default_factory=dict)
     layer_breakdown: Dict[str, int] = Field(default_factory=dict)
+    is_truncated: bool = Field(default=False, description="True if results were truncated by query caps")
 
 
 class HostTimelineLane(BaseModel):

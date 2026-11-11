@@ -136,6 +136,7 @@ class TimelineReplaySession(BaseModel):
     evidence_index: Dict[str, str] = Field(default_factory=dict)
     epistemic_breakdown: Dict[str, int] = Field(default_factory=dict)
     layer_breakdown: Dict[str, int] = Field(default_factory=dict)
+    is_truncated: bool = Field(default=False, description="True if results were truncated by query caps")
     provenance_fingerprint: str
 
 
@@ -159,3 +160,4 @@ class TimelineQueryResponse(BaseModel):
     offset: int
     epistemic_breakdown: Dict[str, int] = Field(default_factory=dict)
     layer_breakdown: Dict[str, int] = Field(default_factory=dict)
+    is_truncated: bool = Field(default=False, description="True if results were truncated by query caps")

@@ -150,6 +150,32 @@ class MultiHostInvestigationService:
             host_raw_labels[norm] = norm
             return norm
 
+        target_hosts_norm: Set[str] = set()
+        if not is_scope_unspecified:
+            for th in target_hosts:
+                th_norm = self._normalize_host_str(th)
+                if th_norm:
+                    th_low = th_norm.lower()
+                    target_hosts_norm.add(th_low)
+                    cat = catalog_by_id.get(th_low) or catalog_by_hostname.get(th_low)
+                    if cat:
+                        target_hosts_norm.add(cat["id"].lower())
+                        target_hosts_norm.add(cat["hostname"].lower())
+
+        def _is_host_in_scope(raw_host: Optional[str]) -> bool:
+            if is_scope_unspecified:
+                return True
+            norm = self._normalize_host_str(raw_host)
+            if not norm:
+                return False
+            low = norm.lower()
+            if low in target_hosts_norm:
+                return True
+            cat = catalog_by_id.get(low) or catalog_by_hostname.get(low)
+            if cat and (cat["id"].lower() in target_hosts_norm or cat["hostname"].lower() in target_hosts_norm):
+                return True
+            return False
+
         scope_time_start: Optional[str] = getattr(case.scope, "time_start", None)
         scope_time_end: Optional[str] = getattr(case.scope, "time_end", None)
 
@@ -257,13 +283,17 @@ class MultiHostInvestigationService:
         # 2. Extract hosts from case evidence references
         for ref in case.evidence_references:
             rec = ref.resolved_record or {}
+            if not isinstance(rec, dict):
+                rec = {}
             if not rec and ref.analyst_annotation:
                 try:
-                    rec = json.loads(ref.analyst_annotation)
+                    parsed = json.loads(ref.analyst_annotation) if isinstance(ref.analyst_annotation, str) else ref.analyst_annotation
+                    if isinstance(parsed, dict):
+                        rec = parsed
                 except Exception:
                     pass
             ref_host = rec.get("host") or rec.get("hostname")
-            if ref_host:
+            if ref_host and _is_host_in_scope(ref_host):
                 key = register_host(ref_host)
                 host_evidence_tags.setdefault(key, set()).add(ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]")
                 
@@ -308,7 +338,7 @@ class MultiHostInvestigationService:
                     )
                     for row in cur.fetchall():
                         a_host = row["host"]
-                        if a_host:
+                        if a_host and _is_host_in_scope(a_host):
                             key = register_host(a_host)
                             a_first = row["first_seen"]
                             a_last = row["last_seen"]
@@ -326,37 +356,45 @@ class MultiHostInvestigationService:
                 logger.warning("Error reading incident alerts for case %d: %s", case_id, e)
 
         # 4. Read canonical telemetry events linked to incident or participating hosts from logintel.db
-        all_canonical_keys = list(set(host_ident_map.values()))
+        all_canonical_keys = sorted(list(set(host_ident_map.values())), key=lambda k: k.lower())
         if self.forensic_db and all_canonical_keys:
             try:
                 with self.forensic_db.connection() as conn:
                     cur = conn.cursor()
                     for ckey in all_canonical_keys:
-                        # Find matching query terms for this host
                         display_name = host_raw_labels.get(ckey, ckey)
-                        query = """
-                            SELECT id, timestamp, host, event_type, source
+                        if not _is_host_in_scope(ckey) and not _is_host_in_scope(display_name):
+                            continue
+
+                        # Authoritative, complete event count without non-deterministic limits
+                        counted_events = counted_event_ids.setdefault(ckey, set())
+                        count_query = """
+                            SELECT COUNT(*) as cnt, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
                             FROM events
                             WHERE (host = ? OR host = ?)
                         """
-                        params: List[Any] = [ckey, display_name]
+                        count_params: List[Any] = [ckey, display_name]
                         if scope_time_start:
-                            query += " AND timestamp >= ?"
-                            params.append(scope_time_start)
+                            count_query += " AND timestamp >= ?"
+                            count_params.append(scope_time_start)
                         if scope_time_end:
-                            query += " AND timestamp <= ?"
-                            params.append(scope_time_end)
-                        query += " LIMIT 500"
+                            count_query += " AND timestamp <= ?"
+                            count_params.append(scope_time_end)
+                        if counted_events and len(counted_events) <= 500:
+                            sorted_ev_ids = sorted(counted_events)
+                            placeholders = ",".join("?" for _ in sorted_ev_ids)
+                            count_query += f" AND id NOT IN ({placeholders})"
+                            count_params.extend(sorted_ev_ids)
 
-                        cur.execute(query, tuple(params))
-                        ev_rows = cur.fetchall()
-                        counted_events = counted_event_ids.setdefault(ckey, set())
-                        for ev in ev_rows:
-                            ev_id = str(ev["id"])
-                            if ev_id not in counted_events:
-                                counted_events.add(ev_id)
-                                host_event_counts[ckey] = host_event_counts.get(ckey, 0) + 1
-                                update_timestamps(ckey, ev["timestamp"])
+                        cur.execute(count_query, tuple(count_params))
+                        c_row = cur.fetchone()
+                        if c_row:
+                            db_cnt = int(c_row["cnt"] or 0)
+                            host_event_counts[ckey] = host_event_counts.get(ckey, 0) + db_cnt
+                            if c_row["min_ts"]:
+                                update_timestamps(ckey, c_row["min_ts"])
+                            if c_row["max_ts"]:
+                                update_timestamps(ckey, c_row["max_ts"])
             except Exception as e:
                 logger.warning("Error reading canonical events for case %d: %s", case_id, e)
 
@@ -365,9 +403,13 @@ class MultiHostInvestigationService:
         if not evidence_items:
             for ref in case.evidence_references:
                 rec = ref.resolved_record or {}
+                if not isinstance(rec, dict):
+                    rec = {}
                 if not rec and ref.analyst_annotation:
                     try:
-                        rec = json.loads(ref.analyst_annotation)
+                        parsed = json.loads(ref.analyst_annotation) if isinstance(ref.analyst_annotation, str) else ref.analyst_annotation
+                        if isinstance(parsed, dict):
+                            rec = parsed
                     except Exception:
                         pass
                 if rec and (rec.get("host") or rec.get("hostname")):
@@ -383,6 +425,14 @@ class MultiHostInvestigationService:
                         item["host"] = item["hostname"]
                     evidence_items.append(item)
             evidence_items.sort(key=lambda it: (it.get("timestamp") or "9999-99-99T99:99:99Z", str(it.get("_source_id", ""))))
+
+        # Enforce case temporal & target-host scope on harvested evidence items before trace/continuity synthesis
+        if not is_scope_unspecified or scope_time_start or scope_time_end:
+            evidence_items = [
+                it for it in evidence_items
+                if _is_in_scope_time(it.get("timestamp"))
+                and (not (it.get("host") or it.get("hostname")) or _is_host_in_scope(it.get("host") or it.get("hostname")))
+            ]
 
         episodes = self.engine.build_temporal_episodes(case, evidence_items)
         transitions = self.engine.detect_transitions(case, evidence_items, episodes)
@@ -403,10 +453,11 @@ class MultiHostInvestigationService:
         overall_gaps: List[HostVisibilityGap] = []
         distinct_keys = sorted(list(set(host_ident_map.values())), key=lambda k: k.lower())
 
-        target_hosts_norm = {h.lower() for h in target_hosts}
-
         for ckey in distinct_keys:
             display_name = host_raw_labels.get(ckey, ckey)
+            if not is_scope_unspecified:
+                if ckey.lower() not in target_hosts_norm and display_name.lower() not in target_hosts_norm:
+                    continue
             cat_entry = catalog_by_id.get(ckey.lower()) or catalog_by_hostname.get(display_name.lower())
 
             os_name: Optional[str] = None
@@ -581,18 +632,33 @@ class MultiHostInvestigationService:
                 matched_host = h
                 break
 
-        if not matched_host:
+        target_hosts = getattr(case.scope, "target_hosts", []) or []
+        if not matched_host or (target_hosts and not matched_host.is_in_target_scope):
             raise ValueError(
                 f"Host '{host_id}' not found or not associated with Case {case_id}"
             )
+
+        # Enforce intersection of case temporal bounds and query parameters
+        scope_time_start: Optional[str] = getattr(case.scope, "time_start", None)
+        scope_time_end: Optional[str] = getattr(case.scope, "time_end", None)
+
+        eff_time_start = time_start
+        if scope_time_start:
+            if eff_time_start is None or scope_time_start > eff_time_start:
+                eff_time_start = scope_time_start
+
+        eff_time_end = time_end
+        if scope_time_end:
+            if eff_time_end is None or scope_time_end < eff_time_end:
+                eff_time_end = scope_time_end
 
         # Query unified timeline service with host filter
         params = TimelineFilterParams(
             host=matched_host.host_id,
             limit=limit,
             offset=offset,
-            time_start=time_start,
-            time_end=time_end,
+            time_start=eff_time_start,
+            time_end=eff_time_end,
         )
         t_res = self.timeline_svc.query_timeline(case_id, params)
 
@@ -608,6 +674,7 @@ class MultiHostInvestigationService:
             last_seen=matched_host.last_seen,
             epistemic_breakdown=t_res.epistemic_breakdown,
             layer_breakdown=t_res.layer_breakdown,
+            is_truncated=getattr(t_res, "is_truncated", False),
         )
 
     def get_lateral_traces(self, case_id: int) -> List[MultiHostTrace]:

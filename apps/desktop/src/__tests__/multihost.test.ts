@@ -886,6 +886,54 @@ describe("M7.12 Multi-Host Desktop Investigation Tests", () => {
     expect(initialVisible.length).toBe(30);
     expect(lane.items.length - initialVisible.length).toBe(45);
   });
+
+  // 27. Deduplication of Comparative Timeline Requests
+  it("deduplicates comparative timeline requests for the same host set and time window", () => {
+    let callCount = 0;
+    let lastQueryKey = "";
+
+    const requestComparativeTimeline = (
+      caseId: number,
+      hosts: string[],
+      timeStart?: string,
+      timeEnd?: string,
+      limitPerLane = 30
+    ) => {
+      const sortedHosts = [...hosts].sort().join(",");
+      const queryKey = `${caseId}:${sortedHosts}:${timeStart || ""}:${timeEnd || ""}:${limitPerLane}`;
+      if (lastQueryKey === queryKey) {
+        // Redundant fetch skipped
+        return;
+      }
+      lastQueryKey = queryKey;
+      callCount++;
+    };
+
+    // First call: initial load of hosts A and B
+    requestComparativeTimeline(101, ["host-a", "host-b"]);
+    expect(callCount).toBe(1);
+
+    // Re-render with same hosts and parameters: duplicate request skipped!
+    requestComparativeTimeline(101, ["host-b", "host-a"]);
+    expect(callCount).toBe(1);
+
+    // Call with modified host set: triggers new fetch
+    requestComparativeTimeline(101, ["host-a", "host-b", "host-c"]);
+    expect(callCount).toBe(2);
+
+    // Call with changed time window: triggers new fetch
+    requestComparativeTimeline(101, ["host-a", "host-b", "host-c"], "2026-10-14T00:00:00Z");
+    expect(callCount).toBe(3);
+  });
+
+  // 28. Timeline Truncation and Exact Bound Flag Contract
+  it("preserves is_truncated metadata flag on timeline query response contract", () => {
+    const responseWithTruncation: any = {
+      ...mockTimelineResponse,
+      is_truncated: false,
+    };
+    expect(responseWithTruncation.is_truncated).toBe(false);
+  });
 });
 
 

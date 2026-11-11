@@ -122,11 +122,20 @@ class UnifiedTimelineService:
                 bookmarks[ref.source_id] = ref.analyst_annotation or ""
         return bookmarks
 
+    MAX_INCIDENT_EVENTS = 1000
+
     def build_raw_timeline_items(self, case_id: int) -> List[InvestigationTimelineItem]:
         """Aggregate, project, and deterministically sort all timeline items for a case."""
+        items, _ = self._build_raw_timeline_items_with_meta(case_id)
+        return items
+
+    def _build_raw_timeline_items_with_meta(self, case_id: int) -> Tuple[List[InvestigationTimelineItem], bool]:
+        """Aggregate, project, and sort timeline items, returning (items, is_truncated)."""
         case = self.case_repo.get_case(case_id)
         if not case:
             raise ValueError(f"Investigation case {case_id} not found")
+
+        db_truncated = False
 
         bookmarks = self._load_bookmarks(case_id)
         target_hosts = getattr(case.scope, "target_hosts", []) or []
@@ -140,9 +149,13 @@ class UnifiedTimelineService:
                 continue  # Skip bookmark references from raw evidence items
             
             rec = ref.resolved_record or {}
+            if not isinstance(rec, dict):
+                rec = {}
             if not rec and ref.analyst_annotation:
                 try:
-                    rec = json.loads(ref.analyst_annotation) if isinstance(ref.analyst_annotation, str) else ref.analyst_annotation
+                    parsed = json.loads(ref.analyst_annotation) if isinstance(ref.analyst_annotation, str) else ref.analyst_annotation
+                    if isinstance(parsed, dict):
+                        rec = parsed
                 except Exception:
                     pass
             ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at") or ref.created_at
@@ -292,20 +305,25 @@ class UnifiedTimelineService:
                     items_by_id[t_id] = alt_item
                     items.append(alt_item)
 
-                # Retrieve incident canonical events
+                # Retrieve incident canonical events deterministically; fetch +1 to detect cap truncation accurately
+                max_ev = self.MAX_INCIDENT_EVENTS
                 cur.execute(
-                    """
+                    f"""
                     SELECT DISTINCT e.id, e.timestamp, e.source, e.event_type, e.severity, e.host, e.username, e.src_ip, e.dst_ip, e.action, e.raw_message
                     FROM detections d
                     JOIN detection_evidence de ON de.detection_id = d.id
                     JOIN incident_alerts ia ON d.alert_id = ia.alert_id
                     JOIN events e ON de.event_id = e.id
                     WHERE ia.incident_id = ?
-                    LIMIT 200
+                    ORDER BY e.timestamp ASC, e.id ASC
+                    LIMIT ?
                     """,
-                    (case.incident_id,),
+                    (case.incident_id, max_ev + 1),
                 )
                 ev_rows = cur.fetchall()
+                if len(ev_rows) > max_ev:
+                    db_truncated = True
+                    ev_rows = ev_rows[:max_ev]
                 for ev in ev_rows:
                     ev_host = str(ev["host"] or "unknown-host")
                     cand_id = f"tl-ev-{ev['id']}"
@@ -397,7 +415,7 @@ class UnifiedTimelineService:
 
         # Strict deterministic multi-key sorting
         items.sort(key=self._timeline_sort_key)
-        return items
+        return items, db_truncated
 
     def query_timeline(
         self,
@@ -405,17 +423,45 @@ class UnifiedTimelineService:
         params: TimelineFilterParams,
     ) -> TimelineQueryResponse:
         """Filter, paginate, and return timeline items under case scope."""
-        all_items = self.build_raw_timeline_items(case_id)
+        all_items, db_truncated = self._build_raw_timeline_items_with_meta(case_id)
 
-        # Filter pass
-        filtered = all_items
-        if params.time_start:
-            filtered = [i for i in filtered if i.timestamp >= params.time_start]
-        if params.time_end:
-            filtered = [i for i in filtered if i.timestamp <= params.time_end]
+        case = self.case_repo.get_case(case_id, resolve_evidence=False)
+        scope_time_start: Optional[str] = getattr(case.scope, "time_start", None) if case and case.scope else None
+        scope_time_end: Optional[str] = getattr(case.scope, "time_end", None) if case and case.scope else None
+        target_hosts: List[str] = getattr(case.scope, "target_hosts", []) or [] if case and case.scope else []
+
+        # Enforce case-scope bounds first so out-of-scope items never leak into results or breakdowns
+        scoped_items = all_items
+        if scope_time_start:
+            scoped_items = [i for i in scoped_items if i.timestamp >= scope_time_start]
+        if scope_time_end:
+            scoped_items = [i for i in scoped_items if i.timestamp <= scope_time_end]
+        if target_hosts:
+            target_norm = {h.strip().lower() for h in target_hosts if h.strip()}
+            scoped_items = [i for i in scoped_items if i.host_id.strip().lower() in target_norm]
+
+        # Enforce intersection of case temporal bounds and query parameters
+        eff_start = params.time_start
+        if scope_time_start:
+            if eff_start is None or scope_time_start > eff_start:
+                eff_start = scope_time_start
+
+        eff_end = params.time_end
+        if scope_time_end:
+            if eff_end is None or scope_time_end < eff_end:
+                eff_end = scope_time_end
+
+        # Query filter pass
+        filtered = scoped_items
+        if eff_start:
+            filtered = [i for i in filtered if i.timestamp >= eff_start]
+        if eff_end:
+            filtered = [i for i in filtered if i.timestamp <= eff_end]
+
+        # Exact canonical host filtering (no substring matching)
         if params.host:
             host_q = params.host.strip().lower()
-            filtered = [i for i in filtered if host_q in i.host_id.lower()]
+            filtered = [i for i in filtered if i.host_id.strip().lower() == host_q]
         if params.layer:
             layer_q = params.layer.strip().upper()
             filtered = [i for i in filtered if i.layer.value == layer_q]
@@ -449,10 +495,10 @@ class UnifiedTimelineService:
         offset = max(params.offset, 0)
         page = filtered[offset : offset + limit]
 
-        # Metric breakdowns
+        # Metric breakdowns over case-scoped items
         epistemic_counts: Dict[str, int] = {}
         layer_counts: Dict[str, int] = {}
-        for item in all_items:
+        for item in scoped_items:
             epistemic_counts[item.epistemic_status.value] = epistemic_counts.get(item.epistemic_status.value, 0) + 1
             layer_counts[item.layer.value] = layer_counts.get(item.layer.value, 0) + 1
 
@@ -463,6 +509,7 @@ class UnifiedTimelineService:
             offset=offset,
             epistemic_breakdown=epistemic_counts,
             layer_breakdown=layer_counts,
+            is_truncated=db_truncated,
         )
 
     def get_replay_session(
@@ -547,6 +594,7 @@ class UnifiedTimelineService:
             evidence_index=evidence_index,
             epistemic_breakdown=query_res.epistemic_breakdown,
             layer_breakdown=query_res.layer_breakdown,
+            is_truncated=bool(query_res.is_truncated or (query_res.total > len(items))),
             provenance_fingerprint=provenance_fingerprint,
         )
 
