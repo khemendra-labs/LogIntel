@@ -30,6 +30,15 @@ from logintel.multihost.models import (
 )
 from logintel.storage.case_repo import CaseRepository, case_repo as default_case_repo
 from logintel.storage.db import Database, db as default_forensic_db
+from logintel.storage.scope_utils import (
+    HostCatalogIndex,
+    intersect_time_bounds,
+    is_interval_overlapping_bounds,
+    is_timestamp_in_bounds,
+    normalize_host_identifier,
+    normalize_iso_utc,
+    parse_iso_datetime,
+)
 from logintel.timeline.models import TimelineFilterParams
 from logintel.timeline.service import UnifiedTimelineService
 
@@ -162,110 +171,64 @@ class MultiHostInvestigationService:
                         target_hosts_norm.add(cat["id"].lower())
                         target_hosts_norm.add(cat["hostname"].lower())
 
+        host_catalog = HostCatalogIndex.from_db(self.forensic_db)
+        target_hosts_expanded = host_catalog.expand_scope_targets(target_hosts)
+
         def _is_host_in_scope(raw_host: Optional[str]) -> bool:
+            if not raw_host:
+                return False
             if is_scope_unspecified:
                 return True
-            norm = self._normalize_host_str(raw_host)
-            if not norm:
-                return False
-            low = norm.lower()
-            if low in target_hosts_norm:
-                return True
-            cat = catalog_by_id.get(low) or catalog_by_hostname.get(low)
-            if cat and (cat["id"].lower() in target_hosts_norm or cat["hostname"].lower() in target_hosts_norm):
-                return True
-            return False
+            return host_catalog.matches_scope(
+                raw_host,
+                target_hosts,
+                expanded_targets=target_hosts_expanded,
+            )
 
         scope_time_start: Optional[str] = getattr(case.scope, "time_start", None)
         scope_time_end: Optional[str] = getattr(case.scope, "time_end", None)
-
-        def _parse_ts_utc(ts: Optional[str]) -> Optional[datetime]:
-            if not ts:
-                return None
-            try:
-                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return dt
-            except Exception:
-                return None
-
-        scope_start_dt = _parse_ts_utc(scope_time_start)
-        scope_end_dt = _parse_ts_utc(scope_time_end)
+        scope_start_dt, scope_end_dt, scope_is_empty = intersect_time_bounds(
+            scope_time_start,
+            scope_time_end,
+            None,
+            None,
+        )
 
         def _is_in_scope_time(ts: Optional[str]) -> bool:
-            if not ts:
-                return True
-            dt = _parse_ts_utc(ts)
-            if dt is None:
-                clean_ts = ts.replace("Z", "+00:00")
-                if scope_time_start and clean_ts < scope_time_start.replace("Z", "+00:00"):
-                    return False
-                if scope_time_end and clean_ts > scope_time_end.replace("Z", "+00:00"):
-                    return False
-                return True
-            if scope_start_dt and dt < scope_start_dt:
+            if scope_is_empty:
                 return False
-            if scope_end_dt and dt > scope_end_dt:
-                return False
-            return True
+            return is_timestamp_in_bounds(ts, scope_start_dt, scope_end_dt)
 
         def _alert_overlaps_scope(first_seen: Optional[str], last_seen: Optional[str]) -> bool:
-            if not scope_start_dt and not scope_end_dt and not scope_time_start and not scope_time_end:
-                return True
-            if not first_seen and not last_seen:
-                return True
-            fs_dt = _parse_ts_utc(first_seen)
-            ls_dt = _parse_ts_utc(last_seen)
-            if fs_dt is None and ls_dt is not None:
-                fs_dt = ls_dt
-            elif ls_dt is None and fs_dt is not None:
-                ls_dt = fs_dt
-
-            if fs_dt is not None and ls_dt is not None:
-                if fs_dt > ls_dt:
-                    fs_dt, ls_dt = ls_dt, fs_dt
-                if scope_start_dt and ls_dt < scope_start_dt:
-                    return False
-                if scope_end_dt and fs_dt > scope_end_dt:
-                    return False
-                return True
-
-            # Fallback for unparseable formats using string comparison
-            fs_clean = (first_seen.replace("Z", "+00:00") if first_seen else None) or (last_seen.replace("Z", "+00:00") if last_seen else None)
-            ls_clean = (last_seen.replace("Z", "+00:00") if last_seen else None) or (first_seen.replace("Z", "+00:00") if first_seen else None)
-            if fs_clean and ls_clean and fs_clean > ls_clean:
-                fs_clean, ls_clean = ls_clean, fs_clean
-            s_start = scope_time_start.replace("Z", "+00:00") if scope_time_start else None
-            s_end = scope_time_end.replace("Z", "+00:00") if scope_time_end else None
-            if s_start and ls_clean and ls_clean < s_start:
+            if scope_is_empty:
                 return False
-            if s_end and fs_clean and fs_clean > s_end:
-                return False
-            return True
+            return is_interval_overlapping_bounds(
+                first_seen,
+                last_seen,
+                scope_start_dt,
+                scope_end_dt,
+            )
 
         def update_timestamps(key: str, ts: Optional[str], clamp: bool = False) -> None:
-            if not ts:
+            dt = parse_iso_datetime(ts)
+            if dt is None or scope_is_empty:
                 return
-            clean_ts = ts.replace("Z", "+00:00")
             if clamp:
-                if scope_time_start:
-                    clean_start = scope_time_start.replace("Z", "+00:00")
-                    if clean_ts < clean_start:
-                        clean_ts = clean_start
-                if scope_time_end:
-                    clean_end = scope_time_end.replace("Z", "+00:00")
-                    if clean_ts > clean_end:
-                        clean_ts = clean_end
+                if scope_start_dt is not None and dt < scope_start_dt:
+                    dt = scope_start_dt
+                if scope_end_dt is not None and dt > scope_end_dt:
+                    dt = scope_end_dt
             else:
-                if not _is_in_scope_time(clean_ts):
+                if not is_timestamp_in_bounds(ts, scope_start_dt, scope_end_dt):
                     return
-            cur_first = host_first_seen.get(key)
-            if cur_first is None or clean_ts < cur_first:
-                host_first_seen[key] = clean_ts
-            cur_last = host_last_seen.get(key)
-            if cur_last is None or clean_ts > cur_last:
-                host_last_seen[key] = clean_ts
+
+            canonical_iso = dt.isoformat()
+            cur_first_dt = parse_iso_datetime(host_first_seen.get(key))
+            if cur_first_dt is None or dt < cur_first_dt:
+                host_first_seen[key] = canonical_iso
+            cur_last_dt = parse_iso_datetime(host_last_seen.get(key))
+            if cur_last_dt is None or dt > cur_last_dt:
+                host_last_seen[key] = canonical_iso
 
         counted_event_ids: Dict[str, Set[str]] = {}
         counted_alert_ids: Dict[str, Set[str]] = {}
@@ -357,7 +320,7 @@ class MultiHostInvestigationService:
 
         # 4. Read canonical telemetry events linked to incident or participating hosts from logintel.db
         all_canonical_keys = sorted(list(set(host_ident_map.values())), key=lambda k: k.lower())
-        if self.forensic_db and all_canonical_keys:
+        if self.forensic_db and all_canonical_keys and not scope_is_empty:
             try:
                 with self.forensic_db.connection() as conn:
                     cur = conn.cursor()
@@ -366,35 +329,77 @@ class MultiHostInvestigationService:
                         if not _is_host_in_scope(ckey) and not _is_host_in_scope(display_name):
                             continue
 
-                        # Authoritative, complete event count without non-deterministic limits
-                        counted_events = counted_event_ids.setdefault(ckey, set())
-                        count_query = """
-                            SELECT COUNT(*) as cnt, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
-                            FROM events
-                            WHERE (host = ? OR host = ?)
-                        """
-                        count_params: List[Any] = [ckey, display_name]
-                        if scope_time_start:
-                            count_query += " AND timestamp >= ?"
-                            count_params.append(scope_time_start)
-                        if scope_time_end:
-                            count_query += " AND timestamp <= ?"
-                            count_params.append(scope_time_end)
-                        if counted_events and len(counted_events) <= 500:
-                            sorted_ev_ids = sorted(counted_events)
-                            placeholders = ",".join("?" for _ in sorted_ev_ids)
-                            count_query += f" AND id NOT IN ({placeholders})"
-                            count_params.extend(sorted_ev_ids)
+                        host_aliases = sorted(
+                            host_catalog.resolve_aliases(ckey)
+                            | host_catalog.resolve_aliases(display_name)
+                            | {k for k in (ckey.strip().lower(), display_name.strip().lower()) if k}
+                        )
+                        if not host_aliases:
+                            continue
 
-                        cur.execute(count_query, tuple(count_params))
+                        alias_ph = ",".join("?" for _ in host_aliases)
+                        where_clauses = [f"LOWER(host) IN ({alias_ph})"]
+                        where_params: List[Any] = list(host_aliases)
+                        if scope_start_dt is not None:
+                            where_clauses.append("unixepoch(timestamp, 'subsec') >= ?")
+                            where_params.append(scope_start_dt.timestamp())
+                        if scope_end_dt is not None:
+                            where_clauses.append("unixepoch(timestamp, 'subsec') <= ?")
+                            where_params.append(scope_end_dt.timestamp())
+                        where_sql = " AND ".join(where_clauses)
+
+                        # Authoritative, complete event count without non-deterministic or 500-ID limits
+                        counted_events = counted_event_ids.setdefault(ckey, set())
+                        cur.execute(
+                            f"SELECT COUNT(*) as cnt FROM events WHERE {where_sql}",
+                            tuple(where_params),
+                        )
                         c_row = cur.fetchone()
-                        if c_row:
-                            db_cnt = int(c_row["cnt"] or 0)
-                            host_event_counts[ckey] = host_event_counts.get(ckey, 0) + db_cnt
-                            if c_row["min_ts"]:
-                                update_timestamps(ckey, c_row["min_ts"])
-                            if c_row["max_ts"]:
-                                update_timestamps(ckey, c_row["max_ts"])
+                        total_matching = int(c_row["cnt"] or 0) if c_row else 0
+
+                        overlap_cnt = 0
+                        if counted_events and total_matching > 0:
+                            sorted_ev_ids = sorted(counted_events)
+                            for idx in range(0, len(sorted_ev_ids), 500):
+                                chunk = sorted_ev_ids[idx : idx + 500]
+                                id_ph = ",".join("?" for _ in chunk)
+                                cur.execute(
+                                    f"SELECT COUNT(*) as cnt FROM events WHERE {where_sql} AND id IN ({id_ph})",
+                                    tuple(where_params + chunk),
+                                )
+                                ov_row = cur.fetchone()
+                                if ov_row:
+                                    overlap_cnt += int(ov_row["cnt"] or 0)
+
+                        db_cnt = max(0, total_matching - overlap_cnt)
+                        host_event_counts[ckey] = host_event_counts.get(ckey, 0) + db_cnt
+
+                        if total_matching > 0:
+                            cur.execute(
+                                f"""
+                                SELECT timestamp FROM events
+                                WHERE {where_sql} AND unixepoch(timestamp, 'subsec') IS NOT NULL
+                                ORDER BY unixepoch(timestamp, 'subsec') ASC, id ASC
+                                LIMIT 1
+                                """,
+                                tuple(where_params),
+                            )
+                            min_row = cur.fetchone()
+                            if min_row and min_row["timestamp"]:
+                                update_timestamps(ckey, min_row["timestamp"])
+
+                            cur.execute(
+                                f"""
+                                SELECT timestamp FROM events
+                                WHERE {where_sql} AND unixepoch(timestamp, 'subsec') IS NOT NULL
+                                ORDER BY unixepoch(timestamp, 'subsec') DESC, id DESC
+                                LIMIT 1
+                                """,
+                                tuple(where_params),
+                            )
+                            max_row = cur.fetchone()
+                            if max_row and max_row["timestamp"]:
+                                update_timestamps(ckey, max_row["timestamp"])
             except Exception as e:
                 logger.warning("Error reading canonical events for case %d: %s", case_id, e)
 
@@ -419,15 +424,24 @@ class MultiHostInvestigationService:
                     item["_source_id"] = str(ref.source_id)
                     item["_ref_id"] = ref.reference_id
                     item["_hash"] = self._compute_hash(rec)
+                    ref_ep = self.engine._coerce_epistemic_status(getattr(ref, "epistemic_status", None))
+                    item["_epistemic_status"] = ref_ep.value
+                    item["epistemic_status"] = ref_ep.value
+                    item["_is_authoritative"] = (ref_ep.value == "OBSERVED") and (rec.get("is_authoritative") is not False)
                     ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at") or ref.created_at
                     item["timestamp"] = str(ts) if ts else None
                     if "host" not in item and "hostname" in item:
                         item["host"] = item["hostname"]
                     evidence_items.append(item)
-            evidence_items.sort(key=lambda it: (it.get("timestamp") or "9999-99-99T99:99:99Z", str(it.get("_source_id", ""))))
+            evidence_items.sort(
+                key=lambda it: (
+                    parse_iso_datetime(it.get("timestamp")) or datetime.max.replace(tzinfo=timezone.utc),
+                    str(it.get("_source_id", "")),
+                )
+            )
 
         # Enforce case temporal & target-host scope on harvested evidence items before trace/continuity synthesis
-        if not is_scope_unspecified or scope_time_start or scope_time_end:
+        if not is_scope_unspecified or scope_time_start or scope_time_end or scope_is_empty:
             evidence_items = [
                 it for it in evidence_items
                 if _is_in_scope_time(it.get("timestamp"))
@@ -456,7 +470,7 @@ class MultiHostInvestigationService:
         for ckey in distinct_keys:
             display_name = host_raw_labels.get(ckey, ckey)
             if not is_scope_unspecified:
-                if ckey.lower() not in target_hosts_norm and display_name.lower() not in target_hosts_norm:
+                if not (_is_host_in_scope(ckey) or _is_host_in_scope(display_name)):
                     continue
             cat_entry = catalog_by_id.get(ckey.lower()) or catalog_by_hostname.get(display_name.lower())
 
@@ -571,17 +585,67 @@ class MultiHostInvestigationService:
                 f"Case includes {absent_telemetry_count} scoped host(s) with zero observed telemetry events or alerts."
             )
 
+        if scope_is_empty and (scope_time_start or scope_time_end):
+            limitations.append(
+                "Case scope time bounds are malformed or inverted (time_start > time_end); failing closed with zero matching records."
+            )
+
         scoped_count = sum(1 for h in participating_hosts if h.is_in_target_scope)
         total_hops = sum(tr.hop_count for tr in lateral_traces)
 
-        # 9. Compute Provenance Fingerprint
+        # 9. Compute deterministic content provenance digest (excluding volatile generated_at)
         prov_payload = {
             "case_id": case_id,
             "incident_id": case.incident_id,
+            "is_scope_unspecified": is_scope_unspecified,
             "scope_target_hosts": sorted(target_hosts),
-            "participating_hosts": [h.host_id for h in participating_hosts],
-            "lateral_traces": [t.trace_id for t in lateral_traces],
-            "entity_continuities": [c.continuity_id for c in entity_continuity],
+            "scope_time_start": scope_time_start,
+            "scope_time_end": scope_time_end,
+            "participating_hosts": [
+                {
+                    "host_id": h.host_id,
+                    "hostname": h.hostname,
+                    "os_name": h.os_name,
+                    "os_version": h.os_version,
+                    "is_in_target_scope": h.is_in_target_scope,
+                    "first_seen": h.first_seen,
+                    "last_seen": h.last_seen,
+                    "event_count": h.event_count,
+                    "alert_count": h.alert_count,
+                    "inbound_lateral_hops": h.inbound_lateral_hops,
+                    "outbound_lateral_hops": h.outbound_lateral_hops,
+                    "evidence_references": h.evidence_references,
+                    "epistemic_status": h.epistemic_status.value,
+                    "gaps": [(g.gap_type, g.description) for g in h.telemetry_gaps],
+                    "discrepancies": [(d.field, d.catalog_value, d.telemetry_value) for d in h.discrepancies],
+                }
+                for h in participating_hosts
+            ],
+            "lateral_traces": [
+                {
+                    "trace_id": t.trace_id,
+                    "source_host": t.source_host,
+                    "target_host": t.target_host,
+                    "actor": t.actor,
+                    "hop_count": t.hop_count,
+                    "start_time": t.start_time,
+                    "end_time": t.end_time,
+                    "epistemic_status": t.epistemic_status.value,
+                }
+                for t in lateral_traces
+            ],
+            "entity_continuities": [
+                {
+                    "continuity_id": c.continuity_id,
+                    "type": c.continuity_type.value,
+                    "entity_key": c.entity_key,
+                    "occurrences": c.occurrences_count,
+                    "hosts": c.participating_hosts,
+                }
+                for c in entity_continuity
+            ],
+            "overall_visibility_gaps": [(g.gap_type, g.host_identifier, g.description) for g in overall_gaps],
+            "completeness_limitations": limitations,
             "total_hosts_count": len(participating_hosts),
             "cross_host_hops_count": total_hops,
         }
@@ -619,16 +683,20 @@ class MultiHostInvestigationService:
         if not case:
             raise ValueError(f"Investigation case {case_id} not found")
 
-        host_norm = self._normalize_host_str(host_id)
+        host_norm = normalize_host_identifier(host_id)
         if not host_norm:
             raise ValueError("Host identifier cannot be empty")
 
-        # Authorize host against case scope and evidence
+        # Authorize host against case scope, catalog aliases, and evidence
         if dossier is None:
             dossier = self.get_case_dossier(case_id)
+        host_catalog = HostCatalogIndex.from_db(self.forensic_db)
+        req_aliases = host_catalog.resolve_aliases(host_id)
+
         matched_host: Optional[CaseHostSummary] = None
         for h in dossier.participating_hosts:
-            if h.host_id.lower() == host_norm.lower() or h.hostname.lower() == host_norm.lower():
+            h_aliases = host_catalog.resolve_aliases(h.host_id) | host_catalog.resolve_aliases(h.hostname)
+            if req_aliases & h_aliases:
                 matched_host = h
                 break
 
@@ -638,19 +706,33 @@ class MultiHostInvestigationService:
                 f"Host '{host_id}' not found or not associated with Case {case_id}"
             )
 
-        # Enforce intersection of case temporal bounds and query parameters
+        # Enforce timezone-normalized intersection of case temporal bounds and query parameters
         scope_time_start: Optional[str] = getattr(case.scope, "time_start", None)
         scope_time_end: Optional[str] = getattr(case.scope, "time_end", None)
+        eff_start_dt, eff_end_dt, is_empty_window = intersect_time_bounds(
+            scope_time_start,
+            scope_time_end,
+            time_start,
+            time_end,
+        )
+        if is_empty_window:
+            return HostTimelineResponse(
+                case_id=case_id,
+                host_id=matched_host.host_id,
+                hostname=matched_host.hostname,
+                items=[],
+                total=0,
+                limit=limit,
+                offset=offset,
+                first_seen=matched_host.first_seen,
+                last_seen=matched_host.last_seen,
+                epistemic_breakdown={},
+                layer_breakdown={},
+                is_truncated=False,
+            )
 
-        eff_time_start = time_start
-        if scope_time_start:
-            if eff_time_start is None or scope_time_start > eff_time_start:
-                eff_time_start = scope_time_start
-
-        eff_time_end = time_end
-        if scope_time_end:
-            if eff_time_end is None or scope_time_end < eff_time_end:
-                eff_time_end = scope_time_end
+        eff_time_start = eff_start_dt.isoformat().replace("+00:00", "Z") if eff_start_dt else None
+        eff_time_end = eff_end_dt.isoformat().replace("+00:00", "Z") if eff_end_dt else None
 
         # Query unified timeline service with host filter
         params = TimelineFilterParams(

@@ -21,6 +21,13 @@ from logintel.ai.domain.case import ALLOWED_CASE_TRANSITIONS, CaseStatus, Invest
 from logintel.logging import get_logger
 from logintel.storage.case_repo import CaseRepository, case_repo as default_case_repo
 from logintel.storage.db import Database, db as default_forensic_db
+from logintel.storage.scope_utils import (
+    HostCatalogIndex,
+    intersect_time_bounds,
+    is_interval_overlapping_bounds,
+    is_timestamp_in_bounds,
+    parse_iso_datetime,
+)
 from logintel.timeline.models import (
     CollectionStatus,
     EpistemicStatus,
@@ -102,13 +109,29 @@ class UnifiedTimelineService:
             return TimelineSourceLayer.KERNEL
         return TimelineSourceLayer.AUTH
 
-    def _timeline_sort_key(self, item: InvestigationTimelineItem) -> Tuple[str, int, str, str]:
-        """Strict deterministic multi-key ordering: (timestamp, layer_priority, source_id, timeline_id)."""
+    def _timeline_sort_key(self, item: InvestigationTimelineItem) -> Tuple[datetime, str, int, str, str]:
+        """Strict deterministic multi-key ordering using UTC-normalized timestamp first."""
+        dt = parse_iso_datetime(item.timestamp) or datetime.max.replace(tzinfo=timezone.utc)
         ts = item.timestamp or ""
         prio = LAYER_PRIORITY.get(item.layer, 999)
         src_id = item.source_id or ""
         t_id = item.timeline_id or ""
-        return (ts, prio, src_id, t_id)
+        return (dt, ts, prio, src_id, t_id)
+
+    def _item_matches_time_bounds(
+        self,
+        item: InvestigationTimelineItem,
+        start_dt: Optional[datetime],
+        end_dt: Optional[datetime],
+    ) -> bool:
+        """Check whether a timeline item matches UTC time bounds (interval semantics for alerts)."""
+        if start_dt is None and end_dt is None:
+            return True
+        if item.layer == TimelineSourceLayer.ALERT and isinstance(item.metadata, dict):
+            last_seen = item.metadata.get("last_seen")
+            if last_seen:
+                return is_interval_overlapping_bounds(item.timestamp, str(last_seen), start_dt, end_dt)
+        return is_timestamp_in_bounds(item.timestamp, start_dt, end_dt)
 
     def _load_bookmarks(self, case_id: int) -> Dict[str, str]:
         """Load analyst bookmarks for a case from case_evidence_references without schema changes."""
@@ -129,16 +152,50 @@ class UnifiedTimelineService:
         items, _ = self._build_raw_timeline_items_with_meta(case_id)
         return items
 
-    def _build_raw_timeline_items_with_meta(self, case_id: int) -> Tuple[List[InvestigationTimelineItem], bool]:
+    def _build_raw_timeline_items_with_meta(
+        self,
+        case_id: int,
+        host_filter: Optional[str] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        host_catalog: Optional[HostCatalogIndex] = None,
+    ) -> Tuple[List[InvestigationTimelineItem], bool]:
         """Aggregate, project, and sort timeline items, returning (items, is_truncated)."""
         case = self.case_repo.get_case(case_id)
         if not case:
             raise ValueError(f"Investigation case {case_id} not found")
 
+        catalog = host_catalog or HostCatalogIndex.from_db(self.db)
+        target_hosts = getattr(case.scope, "target_hosts", []) or []
+        scope_time_start = getattr(case.scope, "time_start", None) if case.scope else None
+        scope_time_end = getattr(case.scope, "time_end", None) if case.scope else None
+
+        eff_start_dt, eff_end_dt, is_empty_window = intersect_time_bounds(
+            scope_time_start,
+            scope_time_end,
+            time_start,
+            time_end,
+        )
+        if is_empty_window:
+            return [], False
+
+        allowed_host_aliases: Optional[Set[str]] = None
+        if target_hosts:
+            allowed_host_aliases = catalog.expand_scope_targets(target_hosts)
+        if host_filter is not None and host_filter.strip():
+            filter_aliases = catalog.resolve_aliases(host_filter)
+            if not filter_aliases:
+                return [], False
+            if allowed_host_aliases is not None:
+                allowed_host_aliases = allowed_host_aliases & filter_aliases
+            else:
+                allowed_host_aliases = filter_aliases
+        if (target_hosts or (host_filter and host_filter.strip())) and not allowed_host_aliases:
+            return [], False
+
         db_truncated = False
 
         bookmarks = self._load_bookmarks(case_id)
-        target_hosts = getattr(case.scope, "target_hosts", []) or []
         items: List[InvestigationTimelineItem] = []
         items_by_id: Dict[str, InvestigationTimelineItem] = {}
         seen_ids: Set[str] = set()
@@ -253,7 +310,7 @@ class UnifiedTimelineService:
                 cur = conn.cursor()
                 cur.execute(
                     """
-                    SELECT a.id, a.rule_id, a.severity, a.status, a.first_seen, a.host, a.title, a.description
+                    SELECT a.id, a.rule_id, a.severity, a.status, a.first_seen, a.last_seen, a.host, a.title, a.description
                     FROM incident_alerts ia
                     JOIN alerts a ON ia.alert_id = a.id
                     WHERE ia.incident_id = ?
@@ -263,6 +320,16 @@ class UnifiedTimelineService:
                 alerts_rows = cur.fetchall()
                 for a in alerts_rows:
                     a_host = str(a["host"] or "unknown-host")
+                    if allowed_host_aliases is not None:
+                        if not (catalog.resolve_aliases(a_host) & allowed_host_aliases):
+                            continue
+                    if not is_interval_overlapping_bounds(
+                        a["first_seen"],
+                        a["last_seen"] or a["first_seen"],
+                        eff_start_dt,
+                        eff_end_dt,
+                    ):
+                        continue
                     cand_id = f"tl-alt-{a['id']}"
                     if cand_id in items_by_id:
                         existing = items_by_id[cand_id]
@@ -300,26 +367,42 @@ class UnifiedTimelineService:
                         provenance=f"Alert engine (rule: {a['rule_id']})",
                         is_bookmarked=t_id in bookmarks,
                         bookmark_notes=bookmarks.get(t_id),
-                        metadata={"severity": a["severity"], "status": a["status"]},
+                        metadata={
+                            "severity": a["severity"],
+                            "status": a["status"],
+                            "last_seen": a["last_seen"],
+                        },
                     )
                     items_by_id[t_id] = alt_item
                     items.append(alt_item)
 
-                # Retrieve incident canonical events deterministically; fetch +1 to detect cap truncation accurately
+                # Retrieve scoped incident canonical events before ORDER BY/LIMIT so out-of-scope rows never displace in-scope rows
                 max_ev = self.MAX_INCIDENT_EVENTS
-                cur.execute(
-                    f"""
+                ev_where = ["ia.incident_id = ?"]
+                ev_params: List[Any] = [case.incident_id]
+                if allowed_host_aliases is not None:
+                    sorted_aliases = sorted(allowed_host_aliases)
+                    host_ph = ",".join("?" for _ in sorted_aliases)
+                    ev_where.append(f"LOWER(e.host) IN ({host_ph})")
+                    ev_params.extend(sorted_aliases)
+                if eff_start_dt is not None:
+                    ev_where.append("unixepoch(e.timestamp, 'subsec') >= ?")
+                    ev_params.append(eff_start_dt.timestamp())
+                if eff_end_dt is not None:
+                    ev_where.append("unixepoch(e.timestamp, 'subsec') <= ?")
+                    ev_params.append(eff_end_dt.timestamp())
+
+                ev_sql = f"""
                     SELECT DISTINCT e.id, e.timestamp, e.source, e.event_type, e.severity, e.host, e.username, e.src_ip, e.dst_ip, e.action, e.raw_message
                     FROM detections d
                     JOIN detection_evidence de ON de.detection_id = d.id
                     JOIN incident_alerts ia ON d.alert_id = ia.alert_id
                     JOIN events e ON de.event_id = e.id
-                    WHERE ia.incident_id = ?
-                    ORDER BY e.timestamp ASC, e.id ASC
+                    WHERE {' AND '.join(ev_where)}
+                    ORDER BY COALESCE(unixepoch(e.timestamp, 'subsec'), 9e99) ASC, e.id ASC
                     LIMIT ?
-                    """,
-                    (case.incident_id, max_ev + 1),
-                )
+                """
+                cur.execute(ev_sql, tuple(ev_params + [max_ev + 1]))
                 ev_rows = cur.fetchall()
                 if len(ev_rows) > max_ev:
                     db_truncated = True
@@ -423,45 +506,71 @@ class UnifiedTimelineService:
         params: TimelineFilterParams,
     ) -> TimelineQueryResponse:
         """Filter, paginate, and return timeline items under case scope."""
-        all_items, db_truncated = self._build_raw_timeline_items_with_meta(case_id)
-
         case = self.case_repo.get_case(case_id, resolve_evidence=False)
         scope_time_start: Optional[str] = getattr(case.scope, "time_start", None) if case and case.scope else None
         scope_time_end: Optional[str] = getattr(case.scope, "time_end", None) if case and case.scope else None
         target_hosts: List[str] = getattr(case.scope, "target_hosts", []) or [] if case and case.scope else []
 
-        # Enforce case-scope bounds first so out-of-scope items never leak into results or breakdowns
-        scoped_items = all_items
-        if scope_time_start:
-            scoped_items = [i for i in scoped_items if i.timestamp >= scope_time_start]
-        if scope_time_end:
-            scoped_items = [i for i in scoped_items if i.timestamp <= scope_time_end]
-        if target_hosts:
-            target_norm = {h.strip().lower() for h in target_hosts if h.strip()}
-            scoped_items = [i for i in scoped_items if i.host_id.strip().lower() in target_norm]
+        host_catalog = HostCatalogIndex.from_db(self.db)
+        scope_start_dt, scope_end_dt, scope_is_empty = intersect_time_bounds(
+            scope_time_start,
+            scope_time_end,
+            None,
+            None,
+        )
+        eff_start_dt, eff_end_dt, is_empty_window = intersect_time_bounds(
+            scope_time_start,
+            scope_time_end,
+            params.time_start,
+            params.time_end,
+        )
+        if scope_is_empty or is_empty_window:
+            limit = min(max(params.limit, 1), 500)
+            offset = max(params.offset, 0)
+            return TimelineQueryResponse(
+                items=[],
+                total=0,
+                limit=limit,
+                offset=offset,
+                epistemic_breakdown={},
+                layer_breakdown={},
+                is_truncated=False,
+            )
 
-        # Enforce intersection of case temporal bounds and query parameters
-        eff_start = params.time_start
-        if scope_time_start:
-            if eff_start is None or scope_time_start > eff_start:
-                eff_start = scope_time_start
+        all_items, db_truncated = self._build_raw_timeline_items_with_meta(
+            case_id,
+            host_filter=params.host,
+            time_start=params.time_start,
+            time_end=params.time_end,
+            host_catalog=host_catalog,
+        )
 
-        eff_end = params.time_end
-        if scope_time_end:
-            if eff_end is None or scope_time_end < eff_end:
-                eff_end = scope_time_end
+        # Enforce case-scope bounds using UTC datetimes and exact host-catalog aliases
+        target_expanded = host_catalog.expand_scope_targets(target_hosts) if target_hosts else set()
+        scoped_items = [
+            i for i in all_items
+            if self._item_matches_time_bounds(i, scope_start_dt, scope_end_dt)
+            and (
+                not target_hosts
+                or host_catalog.matches_scope(i.host_id, target_hosts, expanded_targets=target_expanded)
+            )
+        ]
 
-        # Query filter pass
-        filtered = scoped_items
-        if eff_start:
-            filtered = [i for i in filtered if i.timestamp >= eff_start]
-        if eff_end:
-            filtered = [i for i in filtered if i.timestamp <= eff_end]
+        # Enforce intersected UTC time bounds and query host aliases
+        filtered = [
+            i for i in scoped_items
+            if self._item_matches_time_bounds(i, eff_start_dt, eff_end_dt)
+        ]
 
-        # Exact canonical host filtering (no substring matching)
         if params.host:
-            host_q = params.host.strip().lower()
-            filtered = [i for i in filtered if i.host_id.strip().lower() == host_q]
+            query_host_aliases = host_catalog.resolve_aliases(params.host)
+            if not query_host_aliases:
+                filtered = []
+            else:
+                filtered = [
+                    i for i in filtered
+                    if bool(host_catalog.resolve_aliases(i.host_id) & query_host_aliases)
+                ]
         if params.layer:
             layer_q = params.layer.strip().upper()
             filtered = [i for i in filtered if i.layer.value == layer_q]
@@ -537,12 +646,10 @@ class UnifiedTimelineService:
         time_span = 0.0
 
         if start_time and end_time:
-            try:
-                dt1 = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                dt2 = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            dt1 = parse_iso_datetime(start_time)
+            dt2 = parse_iso_datetime(end_time)
+            if dt1 is not None and dt2 is not None:
                 time_span = max((dt2 - dt1).total_seconds(), 0.0)
-            except Exception:
-                pass
 
         for idx, it in enumerate(items):
             cumulative_counts[it.layer.value] = cumulative_counts.get(it.layer.value, 0) + 1
@@ -694,11 +801,17 @@ class UnifiedTimelineService:
         export_format: str = "json",
         params: Optional[TimelineFilterParams] = None,
     ) -> Tuple[str, str]:
-        """Export case timeline deterministically in JSON or CSV format."""
-        filter_p = params or TimelineFilterParams(limit=500)
-        filter_p.limit = 500
+        """Export case timeline deterministically in JSON or CSV format with completeness metadata."""
+        filter_p = (params or TimelineFilterParams(limit=500)).model_copy(update={"limit": 500})
         res = self.query_timeline(case_id, filter_p)
         items = res.items
+        export_truncated = bool(res.is_truncated or (res.total > len(items)))
+        completeness_status = "PARTIAL" if export_truncated else "COMPLETE"
+        truncation_notice = (
+            f"Partial export: exported {len(items)} of {res.total} matching scoped items (export cap={filter_p.limit}, backend_capped={res.is_truncated})."
+            if export_truncated
+            else None
+        )
 
         if export_format.lower() == "csv":
             output = io.StringIO()
@@ -740,6 +853,9 @@ class UnifiedTimelineService:
                     it.provenance,
                     "YES" if it.is_bookmarked else "NO",
                 ])
+            output.write(
+                f"# completeness_status={completeness_status};exported_items={len(items)};total_matching={res.total};is_truncated={str(export_truncated).lower()}\n"
+            )
             return output.getvalue(), "text/csv"
 
         # Canonical deterministic JSON export
@@ -747,6 +863,10 @@ class UnifiedTimelineService:
             "case_id": case_id,
             "export_timestamp": "DETERMINISTIC_EXPORT",
             "total_items": len(items),
+            "total_matching": res.total,
+            "is_truncated": export_truncated,
+            "completeness_status": completeness_status,
+            "truncation_notice": truncation_notice,
             "epistemic_breakdown": res.epistemic_breakdown,
             "layer_breakdown": res.layer_breakdown,
             "items": [it.model_dump(mode="json") for it in items],

@@ -21,11 +21,12 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import uuid
 import xml.etree.ElementTree as ET
 
 from logintel.ai.domain.case import InvestigationCase, ResolutionStatus
+from logintel.storage.scope_utils import normalize_iso_utc, parse_iso_datetime
 from logintel.ai.domain.investigation_correlation import EvidenceCluster
 from logintel.ai.domain.investigation_graph import (
     CorroborationStatus,
@@ -76,17 +77,87 @@ class TemporalReconstructionEngine:
         self.temporal_threshold = temporal_threshold_seconds
 
     def _parse_timestamp(self, ts_str: Optional[str]) -> Optional[datetime]:
-        """Parse ISO-8601 timestamp string into timezone-aware datetime."""
-        if not ts_str:
-            return None
+        """Parse ISO-8601 timestamp string into timezone-aware UTC datetime."""
+        return parse_iso_datetime(ts_str)
+
+    def _coerce_epistemic_status(
+        self,
+        raw_val: Any,
+        default: EpistemicStatus = EpistemicStatus.UNKNOWN,
+    ) -> EpistemicStatus:
+        """Convert raw string/enum epistemic status without upgrading missing/unknown values."""
+        if raw_val is None:
+            return default
+        if isinstance(raw_val, EpistemicStatus):
+            return raw_val
+        val_str = str(getattr(raw_val, "value", raw_val)).strip().upper()
+        if not val_str:
+            return default
         try:
-            clean_ts = ts_str.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(clean_ts)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
+            return EpistemicStatus(val_str)
         except Exception:
-            return None
+            return default
+
+    def _combine_epistemic_statuses(self, statuses: Iterable[EpistemicStatus]) -> EpistemicStatus:
+        """Conservatively combine epistemic statuses (lowest certainty wins)."""
+        rank = {
+            EpistemicStatus.UNKNOWN: 0,
+            EpistemicStatus.INFERRED: 1,
+            EpistemicStatus.OBSERVED: 2,
+        }
+        items = list(statuses)
+        if not items:
+            return EpistemicStatus.UNKNOWN
+        return min(items, key=lambda s: rank.get(s, 0))
+
+    def _resolve_item_provenance(self, item: Dict[str, Any]) -> Tuple[EpistemicStatus, bool]:
+        """Extract conservative (epistemic_status, is_authoritative) from an evidence item.
+
+        Missing or unrecognized provenance never defaults to OBSERVED or authoritative.
+        """
+        raw_ep = item.get("_epistemic_status")
+        if raw_ep is None:
+            raw_ep = item.get("epistemic_status")
+        ep_status = self._coerce_epistemic_status(raw_ep, default=EpistemicStatus.UNKNOWN)
+
+        if "_is_authoritative" in item:
+            auth_flag = item.get("_is_authoritative") is True
+        elif "is_authoritative" in item:
+            auth_flag = item.get("is_authoritative") is True
+        else:
+            auth_flag = False
+
+        is_auth = (ep_status == EpistemicStatus.OBSERVED) and auth_flag
+        return ep_status, is_auth
+
+    def _is_graph_edge_authoritative_observed(
+        self,
+        edge: Any,
+        require_timestamp: bool = True,
+    ) -> bool:
+        """Verify graph edge has explicit OBSERVED status, authoritative flag, and corroboration."""
+        raw_ep = getattr(edge, "epistemic_status", None)
+        ep_val = str(getattr(raw_ep, "value", raw_ep or "")).strip().upper()
+        if ep_val != "OBSERVED":
+            return False
+        if getattr(edge, "is_authoritative", None) is not True:
+            return False
+        corrob = getattr(edge, "corroboration_status", None)
+        corrob_val = str(getattr(corrob, "value", corrob or "")).strip().upper()
+        if corrob_val not in {"DIRECT_EVIDENCE", "DIRECT_OBSERVATION", "CORROBORATED"}:
+            return False
+        refs = getattr(edge, "evidence_references", None) or []
+        if refs:
+            has_auth_ref = any(
+                self._coerce_epistemic_status(getattr(r, "epistemic_status", None)) == EpistemicStatus.OBSERVED
+                and getattr(r, "is_authoritative", None) is True
+                for r in refs
+            )
+            if not has_auth_ref:
+                return False
+        if require_timestamp and not (getattr(edge, "first_seen", None) or getattr(edge, "last_seen", None)):
+            return False
+        return True
 
     def _compute_hash(self, content: Any) -> str:
         """Compute deterministic SHA-256 content fingerprint."""
@@ -148,12 +219,85 @@ class TemporalReconstructionEngine:
         end_ts = max(valid_ts).isoformat() if valid_ts else None
         span = (max(valid_ts) - min(valid_ts)).total_seconds() if valid_ts else 0.0
 
-        # Deterministic provenance fingerprint for this reconstruction
+        # Deterministic provenance fingerprint sealing canonical reconstruction artifacts
+        bounded_episodes = episodes[: self.MAX_EPISODES]
+        bounded_transitions = transitions[: self.MAX_TRANSITIONS]
+        bounded_gaps = gaps[: self.MAX_GAPS]
+        bounded_traces = host_traces[: self.MAX_HOST_TRACES]
+        bounded_continuities = continuities[: self.MAX_CONTINUITIES]
+        bounded_campaigns = campaign_correlations[: self.MAX_CAMPAIGN_CORRELATIONS]
+
         prov_payload = {
             "case_id": case.case_id,
             "incident_id": case.incident_id,
-            "episodes_count": len(episodes),
-            "transitions_count": len(transitions),
+            "evidence_manifest": [
+                {
+                    "ref_id": it.get("_ref_id"),
+                    "source_type": it.get("_source_type"),
+                    "source_id": it.get("_source_id"),
+                    "hash": it.get("_hash"),
+                    "epistemic_status": self._resolve_item_provenance(it)[0].value,
+                    "is_authoritative": self._resolve_item_provenance(it)[1],
+                }
+                for it in evidence_items
+            ],
+            "episodes": [
+                {
+                    "id": ep.episode_id,
+                    "type": ep.episode_type.value,
+                    "start": ep.start_time,
+                    "end": ep.end_time,
+                    "epistemic": ep.epistemic_status.value,
+                    "refs": [r.citation_tag for r in ep.evidence_references],
+                }
+                for ep in bounded_episodes
+            ],
+            "transitions": [
+                {
+                    "id": tr.transition_id,
+                    "type": tr.transition_type.value,
+                    "from": tr.from_entity,
+                    "to": tr.to_entity,
+                    "ts": tr.timestamp,
+                    "epistemic": tr.epistemic_status.value,
+                    "basis": tr.correlation_basis,
+                }
+                for tr in bounded_transitions
+            ],
+            "evidence_chains": [
+                {
+                    "id": ch.chain_id,
+                    "epistemic": ch.epistemic_status.value,
+                    "steps": [(s.source_record_type, s.source_record_id, s.epistemic_status.value) for s in ch.steps],
+                }
+                for ch in chains
+            ],
+            "gaps": [
+                {"id": g.gap_id, "type": g.gap_type.value, "start": g.start_time, "end": g.end_time}
+                for g in bounded_gaps
+            ],
+            "multi_host_traces": [
+                {
+                    "id": mt.trace_id,
+                    "src": mt.source_host,
+                    "dst": mt.target_host,
+                    "epistemic": mt.epistemic_status.value,
+                }
+                for mt in bounded_traces
+            ],
+            "continuities": [
+                {"id": c.continuity_id, "type": c.continuity_type.value, "key": c.entity_key, "hosts": c.participating_hosts}
+                for c in bounded_continuities
+            ],
+            "attack_sequences": [
+                {
+                    "id": sq.sequence_id,
+                    "epistemic": sq.epistemic_status.value,
+                    "steps": [(st.step_number, st.mitre_technique_id, st.epistemic_status.value) for st in sq.steps],
+                }
+                for sq in attack_sequences
+            ],
+            "mitre_summary": mitre_summary,
             "start_time": start_ts,
             "end_time": end_ts,
         }
@@ -167,13 +311,13 @@ class TemporalReconstructionEngine:
             start_time=start_ts,
             end_time=end_ts,
             duration_seconds=span,
-            episodes=episodes[: self.MAX_EPISODES],
-            transitions=transitions[: self.MAX_TRANSITIONS],
+            episodes=bounded_episodes,
+            transitions=bounded_transitions,
             evidence_chains=chains,
-            gaps=gaps[: self.MAX_GAPS],
-            multi_host_traces=host_traces[: self.MAX_HOST_TRACES],
-            continuities=continuities[: self.MAX_CONTINUITIES],
-            campaign_correlations=campaign_correlations[: self.MAX_CAMPAIGN_CORRELATIONS],
+            gaps=bounded_gaps,
+            multi_host_traces=bounded_traces,
+            continuities=bounded_continuities,
+            campaign_correlations=bounded_campaigns,
             attack_sequences=attack_sequences,
             mitre_summary=mitre_summary,
             provenance_hash=prov_hash,
@@ -189,7 +333,28 @@ class TemporalReconstructionEngine:
                 rec["_source_type"] = ref.source_type
                 rec["_source_id"] = str(ref.source_id)
                 rec["_ref_id"] = ref.reference_id
+                rec["_ref_role"] = getattr(ref, "role", "SUPPORTING")
                 rec["_hash"] = self._compute_hash(ref.resolved_record)
+
+                ref_ep = self._coerce_epistemic_status(
+                    getattr(ref, "epistemic_status", None),
+                    default=EpistemicStatus.UNKNOWN,
+                )
+                statuses = [ref_ep]
+                if "epistemic_status" in rec and rec.get("epistemic_status") is not None:
+                    statuses.append(
+                        self._coerce_epistemic_status(
+                            rec.get("epistemic_status"),
+                            default=EpistemicStatus.UNKNOWN,
+                        )
+                    )
+                eff_ep = self._combine_epistemic_statuses(statuses)
+                is_auth = (eff_ep == EpistemicStatus.OBSERVED) and (rec.get("is_authoritative") is not False)
+                rec["_epistemic_status"] = eff_ep.value
+                rec["epistemic_status"] = eff_ep.value
+                rec["_is_authoritative"] = is_auth
+                rec["is_authoritative"] = is_auth
+
                 ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at")
                 rec["timestamp"] = str(ts) if ts else None
                 items.append(rec)
@@ -264,6 +429,9 @@ class TemporalReconstructionEngine:
             ev_ids = [str(it.get("_source_id")) for it in items if it.get("_source_type") == "event"]
 
             corroboration = CorroborationStatus.CORROBORATED if len(items) > 1 else CorroborationStatus.SINGLE_SOURCE
+            ep_status = self._combine_epistemic_statuses(
+                self._resolve_item_provenance(it)[0] for it in items
+            )
 
             return TemporalEpisode(
                 episode_id=f"ep-{case.case_id}-{suffix}",
@@ -277,7 +445,7 @@ class TemporalReconstructionEngine:
                 entities=entities,
                 evidence_references=refs[: self.MAX_EVIDENCE_REFS],
                 evidence_event_ids=ev_ids,
-                epistemic_status=EpistemicStatus.OBSERVED,
+                epistemic_status=ep_status,
                 corroboration_status=corroboration,
             )
 
@@ -492,16 +660,7 @@ class TemporalReconstructionEngine:
                         or "1970-01-01T00:00:00Z"
                     )
                     # Corroborated provenance check: only mark OBSERVED if explicit edge is observed, authoritative, and corroborated
-                    is_edge_observed = (
-                        getattr(edge.epistemic_status, "value", str(edge.epistemic_status)) == "OBSERVED"
-                        and getattr(edge, "is_authoritative", True)
-                        and getattr(edge, "corroboration_status", None) in [
-                            CorroborationStatus.DIRECT_EVIDENCE,
-                            CorroborationStatus.DIRECT_OBSERVATION,
-                            CorroborationStatus.CORROBORATED,
-                        ]
-                        and bool(edge.first_seen or edge.last_seen)
-                    )
+                    is_edge_observed = self._is_graph_edge_authoritative_observed(edge, require_timestamp=True)
                     ep_status = EpistemicStatus.OBSERVED if is_edge_observed else EpistemicStatus.INFERRED
 
                     transitions.append(
@@ -519,15 +678,32 @@ class TemporalReconstructionEngine:
                         )
                     )
 
-        # Deduplicate genuinely equivalent transitions while deterministically merging supporting evidence
-        deduped_map: Dict[str, TemporalTransition] = {}
+        return self._deduplicate_transitions(transitions)
+
+    def _deduplicate_transitions(self, transitions: List[TemporalTransition]) -> List[TemporalTransition]:
+        """Losslessly deduplicate transitions sharing provenance, semantics, and epistemic status.
+
+        Conflicting epistemic statuses (OBSERVED vs INFERRED) or distinct correlation bases
+        never merge and never upgrade an inferred transition to OBSERVED.
+        """
+        deduped_map: Dict[Tuple[str, str, str, str, str, str], TemporalTransition] = {}
         for t in transitions:
-            key = f"{t.transition_type.value}:{t.from_entity}->{t.to_entity}:{t.timestamp}"
+            norm_ts = normalize_iso_utc(t.timestamp) or str(t.timestamp or "")
+            basis_key = (t.correlation_basis or "").strip().lower()
+            key = (
+                t.transition_type.value,
+                t.from_entity,
+                t.to_entity,
+                norm_ts,
+                t.epistemic_status.value,
+                basis_key,
+            )
             if key not in deduped_map:
-                deduped_map[key] = t
+                deduped_map[key] = t.model_copy(
+                    update={"evidence_references": list(t.evidence_references)}
+                )
             else:
                 existing = deduped_map[key]
-                # Merge supporting evidence references without dropping distinct citations
                 existing_ref_keys = {
                     (ref.source_type, str(ref.source_id), ref.citation_tag)
                     for ref in existing.evidence_references
@@ -539,15 +715,12 @@ class TemporalReconstructionEngine:
                         existing.evidence_references.append(ref)
                 existing.evidence_references = existing.evidence_references[: self.MAX_EVIDENCE_REFS]
 
-                # Combine distinct reason notes and correlation bases
                 if t.reason and t.reason not in existing.reason:
                     existing.reason = f"{existing.reason}; {t.reason}"
-                if t.correlation_basis and t.correlation_basis not in existing.correlation_basis:
-                    existing.correlation_basis = f"{existing.correlation_basis} & {t.correlation_basis}"
 
-                # Preserve OBSERVED if either transition is directly observed
-                if t.epistemic_status == EpistemicStatus.OBSERVED:
-                    existing.epistemic_status = EpistemicStatus.OBSERVED
+                existing.epistemic_status = self._combine_epistemic_statuses(
+                    [existing.epistemic_status, t.epistemic_status]
+                )
 
         deduped = list(deduped_map.values())
         deduped.sort(key=lambda tr: (tr.timestamp, tr.transition_id))
@@ -566,6 +739,7 @@ class TemporalReconstructionEngine:
         steps: List[EvidenceChainStep] = []
         for idx, it in enumerate(evidence_items[: self.MAX_SEQUENCE_STEPS]):
             entity_val = it.get("host") or it.get("username") or it.get("src_ip") or "unknown_entity"
+            step_ep, _ = self._resolve_item_provenance(it)
             steps.append(
                 EvidenceChainStep(
                     step_index=idx + 1,
@@ -575,7 +749,7 @@ class TemporalReconstructionEngine:
                     timestamp=it.get("timestamp") or "1970-01-01T00:00:00Z",
                     entity_key=entity_val,
                     action_or_relation=it.get("action") or it.get("summary") or "Telemetric observation",
-                    epistemic_status=EpistemicStatus.OBSERVED,
+                    epistemic_status=step_ep,
                 )
             )
 
@@ -584,6 +758,7 @@ class TemporalReconstructionEngine:
 
         start_ts = steps[0].timestamp
         end_ts = steps[-1].timestamp
+        chain_ep = self._combine_epistemic_statuses(s.epistemic_status for s in steps)
 
         return [
             TemporalEvidenceChain(
@@ -595,7 +770,7 @@ class TemporalReconstructionEngine:
                 total_steps=len(steps),
                 start_time=start_ts,
                 end_time=end_ts,
-                epistemic_status=EpistemicStatus.OBSERVED,
+                epistemic_status=chain_ep,
             )
         ]
 
@@ -839,7 +1014,6 @@ class TemporalReconstructionEngine:
         cur_users = {str(it.get("username")) for it in evidence_items if it.get("username")}
         cur_ips = {str(it.get("src_ip")) for it in evidence_items if it.get("src_ip")}
         cur_hosts = {str(it.get("host")) for it in evidence_items if it.get("host")}
-        cur_entities = cur_users.union(cur_ips).union(cur_hosts)
 
         # Parse and filter valid timestamps from evidence items once
         valid_cur_dts = [
@@ -856,16 +1030,39 @@ class TemporalReconstructionEngine:
             other_user = inc.get("primary_user")
             other_host = inc.get("primary_host")
             other_title = inc.get("title", f"Incident INC-{other_id}")
+            other_ips: Set[str] = set()
+            for ip_key in ("src_ip", "primary_ip", "source_ip"):
+                if inc.get(ip_key):
+                    other_ips.add(str(inc.get(ip_key)))
+            for ip_item in (inc.get("ips") or []):
+                if ip_item:
+                    other_ips.add(str(ip_item))
 
             shared_entities = []
             reason = CampaignRelationReason.TEMPORAL_PROXIMITY
 
-            if other_user and other_user in cur_users:
+            if other_user and str(other_user) in cur_users:
                 shared_entities.append(f"user:{other_user}")
                 reason = CampaignRelationReason.SHARED_ACCOUNT
-            if other_host and other_host in cur_hosts:
+            if other_host and str(other_host) in cur_hosts:
                 shared_entities.append(f"host:{other_host}")
                 reason = CampaignRelationReason.SHARED_ENTITY
+            for ip_val in sorted(other_ips & cur_ips):
+                shared_entities.append(f"ip:{ip_val}")
+                if reason == CampaignRelationReason.TEMPORAL_PROXIMITY:
+                    reason = CampaignRelationReason.SHARED_SOURCE
+
+            for ent in sorted(str(e) for e in (inc.get("entities") or []) if e):
+                if ent.startswith("user:") and ent.split(":", 1)[1] in cur_users and ent not in shared_entities:
+                    shared_entities.append(ent)
+                    reason = CampaignRelationReason.SHARED_ACCOUNT
+                elif ent.startswith("host:") and ent.split(":", 1)[1] in cur_hosts and ent not in shared_entities:
+                    shared_entities.append(ent)
+                    reason = CampaignRelationReason.SHARED_ENTITY
+                elif ent.startswith("ip:") and ent.split(":", 1)[1] in cur_ips and ent not in shared_entities:
+                    shared_entities.append(ent)
+                    if reason == CampaignRelationReason.TEMPORAL_PROXIMITY:
+                        reason = CampaignRelationReason.SHARED_SOURCE
 
             # Check temporal proximity (within 24h) safely
             other_first = self._parse_timestamp(inc.get("first_seen")) or self._parse_timestamp(inc.get("timestamp"))
@@ -919,15 +1116,7 @@ class TemporalReconstructionEngine:
         if graph and graph.edges:
             for edge in graph.edges:
                 if edge.mitre_technique_id:
-                    is_edge_auth = (
-                        getattr(edge.epistemic_status, "value", str(edge.epistemic_status)) == "OBSERVED"
-                        and getattr(edge, "is_authoritative", True)
-                        and getattr(edge, "corroboration_status", None) in [
-                            CorroborationStatus.DIRECT_EVIDENCE,
-                            CorroborationStatus.DIRECT_OBSERVATION,
-                            CorroborationStatus.CORROBORATED,
-                        ]
-                    )
+                    is_edge_auth = self._is_graph_edge_authoritative_observed(edge, require_timestamp=False)
                     edge_epistemic = EpistemicStatus.OBSERVED if is_edge_auth else EpistemicStatus.INFERRED
                     mapping_entry = {
                         "technique_id": edge.mitre_technique_id,
@@ -956,6 +1145,7 @@ class TemporalReconstructionEngine:
         for idx, it in enumerate(evidence_items[: self.MAX_SEQUENCE_STEPS]):
             action = str(it.get("action") or it.get("summary") or "Action")
             entity_val = str(it.get("host") or it.get("username") or "entity")
+            it_ep, is_it_auth = self._resolve_item_provenance(it)
 
             # Extract all candidate MITRE techniques from resolved details or graph
             item_mappings: List[Dict[str, Any]] = []
@@ -964,23 +1154,47 @@ class TemporalReconstructionEngine:
                 try:
                     details = json.loads(details_raw) if isinstance(details_raw, str) else details_raw
                     if isinstance(details, dict):
-                        is_it_auth = bool(it.get("is_authoritative", True)) and (str(it.get("epistemic_status", "")).upper() != "INFERRED")
-                        it_ep = EpistemicStatus.OBSERVED if is_it_auth else EpistemicStatus.INFERRED
                         if "mitre_mappings" in details and isinstance(details["mitre_mappings"], list):
                             for m in details["mitre_mappings"]:
                                 if isinstance(m, dict) and m.get("technique_id"):
+                                    m_ep = (
+                                        self._combine_epistemic_statuses([
+                                            it_ep,
+                                            self._coerce_epistemic_status(m.get("epistemic_status"), default=it_ep),
+                                        ])
+                                        if "epistemic_status" in m
+                                        else it_ep
+                                    )
+                                    m_auth = (
+                                        is_it_auth
+                                        and (m_ep == EpistemicStatus.OBSERVED)
+                                        and (m.get("is_authoritative") is not False)
+                                    )
                                     item_mappings.append({
                                         "technique_id": m.get("technique_id"),
                                         "technique_name": m.get("tactic") or m.get("technique_name") or "Unknown Tactic",
-                                        "epistemic_status": it_ep,
-                                        "is_authoritative": is_it_auth,
+                                        "epistemic_status": m_ep,
+                                        "is_authoritative": m_auth,
                                     })
                         elif details.get("mitre_technique_id"):
+                            m_ep = (
+                                self._combine_epistemic_statuses([
+                                    it_ep,
+                                    self._coerce_epistemic_status(details.get("epistemic_status"), default=it_ep),
+                                ])
+                                if "epistemic_status" in details
+                                else it_ep
+                            )
+                            m_auth = (
+                                is_it_auth
+                                and (m_ep == EpistemicStatus.OBSERVED)
+                                and (details.get("is_authoritative") is not False)
+                            )
                             item_mappings.append({
                                 "technique_id": details.get("mitre_technique_id"),
                                 "technique_name": details.get("mitre_tactic") or "Unknown Tactic",
-                                "epistemic_status": it_ep,
-                                "is_authoritative": is_it_auth,
+                                "epistemic_status": m_ep,
+                                "is_authoritative": m_auth,
                             })
                 except Exception:
                     pass
@@ -996,12 +1210,11 @@ class TemporalReconstructionEngine:
             m_id = item_mappings[0]["technique_id"] if item_mappings else None
             m_name = item_mappings[0]["technique_name"] if item_mappings else None
 
-            # Carry epistemic status from evidence or MITRE mapping
-            step_epistemic = EpistemicStatus.OBSERVED
-            if str(it.get("epistemic_status", "")).upper() == "INFERRED":
-                step_epistemic = EpistemicStatus.INFERRED
-            elif item_mappings and item_mappings[0]["epistemic_status"] == EpistemicStatus.INFERRED:
-                step_epistemic = EpistemicStatus.INFERRED
+            # Carry conservative epistemic status from evidence and MITRE mappings
+            ep_candidates = [it_ep]
+            if item_mappings:
+                ep_candidates.append(item_mappings[0]["epistemic_status"])
+            step_epistemic = self._combine_epistemic_statuses(ep_candidates)
 
             # Neutral stage naming derived from action
             stage = "EXECUTION"
@@ -1056,8 +1269,7 @@ class TemporalReconstructionEngine:
         end_ts = max(valid_ts).isoformat() if valid_ts else steps[-1].timestamp
         span = (max(valid_ts) - min(valid_ts)).total_seconds() if valid_ts else 0.0
 
-        all_steps_observed = all(s.epistemic_status == EpistemicStatus.OBSERVED for s in steps)
-        seq_epistemic = EpistemicStatus.OBSERVED if all_steps_observed else EpistemicStatus.INFERRED
+        seq_epistemic = self._combine_epistemic_statuses(s.epistemic_status for s in steps)
 
         sequence = AttackSequenceReconstruction(
             sequence_id=f"atkseq-{case.case_id}-primary",
@@ -1083,14 +1295,7 @@ class TemporalReconstructionEngine:
             tag = it.get("_citation_tag", f"[{s_type}:{s_id}]")
             ts = it.get("timestamp") or it.get("created_at")
             summary = it.get("summary") or it.get("title") or it.get("raw_message", "Evidence record")[:80]
-            raw_ep = it.get("epistemic_status")
-            if isinstance(raw_ep, EpistemicStatus):
-                ep_stat = raw_ep
-            elif str(raw_ep).upper() == "INFERRED":
-                ep_stat = EpistemicStatus.INFERRED
-            else:
-                ep_stat = EpistemicStatus.OBSERVED
-            is_auth = bool(it.get("is_authoritative", True)) and (ep_stat == EpistemicStatus.OBSERVED)
+            ep_stat, is_auth = self._resolve_item_provenance(it)
 
             refs.append(
                 GraphEvidenceItem(
@@ -1103,10 +1308,9 @@ class TemporalReconstructionEngine:
                     summary=summary,
                     epistemic_status=ep_stat,
                     is_authoritative=is_auth,
-                    role="supporting",
+                    role=str(it.get("_ref_role") or "supporting").lower(),
                 )
             )
-        return refs
         return refs
 
     # -------------------------------------------------------------

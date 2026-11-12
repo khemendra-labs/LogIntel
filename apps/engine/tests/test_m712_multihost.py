@@ -1777,6 +1777,566 @@ def test_bounded_event_counts_are_explicit_and_truncated(tmp_path):
     assert tl_full.total >= 550
 
 
+def test_epistemic_preservation_and_conservative_merge(tmp_path):
+    """Items 1 & 8: Missing/inferred provenance fails closed; conservative merges never promote to OBSERVED."""
+    from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+    from logintel.ai.domain.investigation_temporal import EpistemicStatus
+    from logintel.ai.domain.investigation_graph import (
+        CorroborationStatus,
+        InvestigationGraph,
+        InvestigationGraphEdge,
+        RelationshipEpistemicStatus,
+    )
+    from types import SimpleNamespace
+    from logintel.storage.case_repo import CaseRepository
+
+    t_db = Database(db_path=tmp_path / "forensic_ep.db")
+    t_db.initialize()
+    with t_db.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO incidents (id, incident_key, title, summary, severity, status, primary_host, first_seen, last_seen) VALUES (1, 'INC-1', 'Epistemic Case', 'Epistemic summary', 'ALERT', 'OPEN', 'srv-01', '2026-10-15T10:00:00Z', '2026-10-15T10:05:00Z')"
+        )
+        cur.execute(
+            """
+            INSERT INTO events (id, timestamp, ingested_at, host, source, event_type, severity, action, outcome, summary, raw_message, parser, event_fingerprint, username, src_ip)
+            VALUES
+            ('ev-obs', '2026-10-15T10:00:00Z', '2026-10-15T10:00:01Z', 'srv-01', 'auth', 'login', 'INFORMATIONAL', 'login', 'success', 'Observed login', 'Accepted publickey', 'sshd', 'fp-1', 'alice', '10.0.0.1'),
+            ('ev-inf', '2026-10-15T10:01:00Z', '2026-10-15T10:01:01Z', 'srv-01', 'auth', 'login', 'ALERT', 'login', 'success', 'Inferred hop', 'Heuristic correlate', 'corr', 'fp-2', 'alice', '10.0.0.1')
+            """
+        )
+        conn.commit()
+
+    t_repo = CaseRepository(db_path=tmp_path / "cases_ep.db", forensic_db=t_db)
+    case = t_repo.create_case(incident_id=1, title="Epistemic Propagation")
+    t_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id="ev-obs",
+        role="PRIMARY",
+        epistemic_status="OBSERVED",
+        citation_tag="[event:ev-obs]",
+    )
+    t_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id="ev-inf",
+        role="SUPPORTING",
+        epistemic_status="INFERRED",
+        citation_tag="[event:ev-inf]",
+    )
+    hydrated_case = t_repo.get_case(case.case_id, resolve_evidence=True)
+
+    engine = TemporalReconstructionEngine()
+    harvested = engine._harvest_case_evidence(hydrated_case)
+    assert len(harvested) == 2
+    by_sid = {it["_source_id"]: it for it in harvested}
+    assert by_sid["ev-obs"]["_epistemic_status"] == "OBSERVED"
+    assert by_sid["ev-obs"]["_is_authoritative"] is True
+    assert by_sid["ev-inf"]["_epistemic_status"] == "INFERRED"
+    assert by_sid["ev-inf"]["_is_authoritative"] is False
+
+    # Episode mixing OBSERVED + INFERRED items must conservatively downgrade to INFERRED
+    episodes = engine.build_temporal_episodes(hydrated_case, harvested)
+    assert len(episodes) == 1
+    assert episodes[0].epistemic_status == EpistemicStatus.INFERRED
+    ref_map = {r.source_id: r for r in episodes[0].evidence_references}
+    assert ref_map["ev-obs"].epistemic_status == EpistemicStatus.OBSERVED
+    assert ref_map["ev-obs"].is_authoritative is True
+    assert ref_map["ev-inf"].epistemic_status == EpistemicStatus.INFERRED
+    assert ref_map["ev-inf"].is_authoritative is False
+
+    # Chains & attack sequences carry conservative status
+    chains = engine.build_evidence_chains(hydrated_case, harvested, [])
+    assert chains[0].epistemic_status == EpistemicStatus.INFERRED
+    assert chains[0].steps[0].epistemic_status == EpistemicStatus.OBSERVED
+    assert chains[0].steps[1].epistemic_status == EpistemicStatus.INFERRED
+
+    # Raw evidence dict with missing provenance must NOT default to OBSERVED/authoritative
+    missing_items = [{"id": "raw-1", "timestamp": "2026-10-15T10:02:00Z", "host": "srv-01", "action": "exec"}]
+    graph_refs = engine._build_graph_evidence_items(missing_items)
+    assert graph_refs[0].epistemic_status == EpistemicStatus.UNKNOWN
+    assert graph_refs[0].is_authoritative is False
+    seqs, _ = engine.reconstruct_attack_sequences(hydrated_case, missing_items, [])
+    assert seqs[0].steps[0].epistemic_status == EpistemicStatus.UNKNOWN
+    assert seqs[0].epistemic_status == EpistemicStatus.UNKNOWN
+
+    # Incomplete duck-typed graph edge missing is_authoritative / corroboration_status must fail closed to INFERRED
+    incomplete_edge = SimpleNamespace(
+        edge_id="edge-incomplete",
+        source_node_id="user:alice",
+        target_node_id="host:srv-01",
+        relationship_type="LOGGED_INTO",
+        epistemic_status=RelationshipEpistemicStatus.OBSERVED,
+        first_seen="2026-10-15T10:00:00Z",
+        last_seen="2026-10-15T10:00:00Z",
+        mitre_technique_id="T1078",
+        mitre_tactic="Initial Access",
+        evidence_event_ids=["ev-obs"],
+        evidence_references=[],
+    )
+    corroborated_edge = InvestigationGraphEdge(
+        edge_id="edge-corrob",
+        source_node_id="host:srv-01",
+        target_node_id="host:srv-02",
+        relationship_type="LATERAL_MOVEMENT",
+        epistemic_status=RelationshipEpistemicStatus.OBSERVED,
+        is_authoritative=True,
+        corroboration_status=CorroborationStatus.DIRECT_EVIDENCE,
+        first_seen="2026-10-15T10:03:00Z",
+        last_seen="2026-10-15T10:03:00Z",
+        evidence_references=[],
+    )
+    duck_graph = SimpleNamespace(edges=[incomplete_edge, corroborated_edge])
+    transitions = engine.detect_transitions(hydrated_case, [], [], graph=duck_graph)
+    tr_by_target = {t.to_entity: t for t in transitions}
+    assert tr_by_target["host:srv-01"].epistemic_status == EpistemicStatus.INFERRED
+    assert tr_by_target["host:srv-02"].epistemic_status == EpistemicStatus.OBSERVED
+
+    # Uncorroborated / inferred InvestigationGraphEdge must also yield INFERRED
+    uncorrob_edge = InvestigationGraphEdge(
+        edge_id="edge-uncorrob",
+        source_node_id="host:srv-01",
+        target_node_id="host:srv-03",
+        relationship_type="LATERAL_MOVEMENT",
+        epistemic_status=RelationshipEpistemicStatus.OBSERVED,
+        is_authoritative=True,
+        corroboration_status=CorroborationStatus.SINGLE_SOURCE,
+        first_seen="2026-10-15T10:04:00Z",
+        last_seen="2026-10-15T10:04:00Z",
+        evidence_references=[],
+    )
+    typed_graph = InvestigationGraph(
+        case_id=hydrated_case.case_id,
+        incident_id=1,
+        nodes=[],
+        edges=[uncorrob_edge, corroborated_edge],
+        total_nodes=0,
+        total_edges=2,
+        observed_edges_count=2,
+        inferred_edges_count=0,
+        corroborated_edges_count=1,
+        contradicted_edges_count=0,
+        generated_at="2026-10-15T10:05:00Z",
+    )
+    typed_transitions = engine.detect_transitions(hydrated_case, [], [], graph=typed_graph)
+    typed_map = {t.to_entity: t for t in typed_transitions}
+    assert typed_map["host:srv-03"].epistemic_status == EpistemicStatus.INFERRED
+    assert typed_map["host:srv-02"].epistemic_status == EpistemicStatus.OBSERVED
+
+
+def test_lossless_transition_dedupe_never_promotes_inferred():
+    """Item 2: Conflicting OBSERVED vs INFERRED transitions or distinct bases never merge or upgrade certainty."""
+    from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+    from logintel.ai.domain.investigation_temporal import TransitionType, TemporalTransition, EpistemicStatus
+    from logintel.ai.domain.investigation_graph import GraphEvidenceItem
+
+    engine = TemporalReconstructionEngine()
+    t1 = TemporalTransition(
+        transition_id="t-obs",
+        case_id=1,
+        transition_type=TransitionType.HOST_TO_HOST,
+        from_entity="host:a",
+        to_entity="host:b",
+        timestamp="2026-10-15T15:30:00+05:30",
+        reason="Observed network edge",
+        correlation_basis="Investigation topology edge",
+        epistemic_status=EpistemicStatus.OBSERVED,
+        evidence_references=[
+            GraphEvidenceItem(
+                reference_id="r1",
+                source_type="event",
+                source_id="e1",
+                source_hash="sha256:h1",
+                citation_tag="[event:e1]",
+                summary="observed",
+                epistemic_status=EpistemicStatus.OBSERVED,
+                is_authoritative=True,
+            )
+        ],
+    )
+    t2_inf = TemporalTransition(
+        transition_id="t-inf",
+        case_id=1,
+        transition_type=TransitionType.HOST_TO_HOST,
+        from_entity="host:a",
+        to_entity="host:b",
+        timestamp="2026-10-15T10:00:00Z",
+        reason="Inferred adjacency",
+        correlation_basis="Temporal adjacency of consecutive forensic records",
+        epistemic_status=EpistemicStatus.INFERRED,
+        evidence_references=[
+            GraphEvidenceItem(
+                reference_id="r2",
+                source_type="event",
+                source_id="e2",
+                source_hash="sha256:h2",
+                citation_tag="[event:e2]",
+                summary="inferred",
+                epistemic_status=EpistemicStatus.INFERRED,
+                is_authoritative=False,
+            )
+        ],
+    )
+    t3_inf_dup = TemporalTransition(
+        transition_id="t-inf-2",
+        case_id=1,
+        transition_type=TransitionType.HOST_TO_HOST,
+        from_entity="host:a",
+        to_entity="host:b",
+        timestamp="2026-10-15T10:00:00Z",
+        reason="Secondary inferred cue",
+        correlation_basis="Temporal adjacency of consecutive forensic records",
+        epistemic_status=EpistemicStatus.INFERRED,
+        evidence_references=[
+            GraphEvidenceItem(
+                reference_id="r3",
+                source_type="alert",
+                source_id="a3",
+                source_hash="sha256:h3",
+                citation_tag="[alert:a3]",
+                summary="alert",
+                epistemic_status=EpistemicStatus.INFERRED,
+                is_authoritative=False,
+            )
+        ],
+    )
+
+    deduped = engine._deduplicate_transitions([t2_inf, t1, t3_inf_dup])
+    # OBSERVED and INFERRED do not merge; the two equivalent INFERRED transitions DO merge cleanly
+    assert len(deduped) == 2
+    obs = next(t for t in deduped if t.epistemic_status == EpistemicStatus.OBSERVED)
+    inf = next(t for t in deduped if t.epistemic_status == EpistemicStatus.INFERRED)
+    assert len(obs.evidence_references) == 1
+    assert len(inf.evidence_references) == 2
+    assert "Inferred adjacency" in inf.reason
+    assert "Secondary inferred cue" in inf.reason
+
+
+def test_timezone_offset_and_inverted_bounds_fail_closed(tmp_path):
+    """Item 3: Timezone offsets (+05:30 vs Z) order/filter accurately; inverted or malformed bounds fail closed."""
+    from logintel.storage.case_repo import CaseRepository
+    from logintel.timeline.service import UnifiedTimelineService
+
+    t_db = Database(db_path=tmp_path / "forensic_tz.db")
+    t_db.initialize()
+    with t_db.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO hosts (id, hostname, os_name, os_version, first_seen, last_seen) VALUES ('h-tz', 'srv-tz', 'Linux', '6', '2026-10-15T09:00:00Z', '2026-10-15T15:00:00Z')"
+        )
+        cur.execute(
+            "INSERT INTO detection_rules (id, name, description, severity, category, rule_type, definition_yaml) VALUES ('r1', 'R1', 'Rule 1', 'ALERT', 'Auth', 'threshold', 'yaml')"
+        )
+        cur.execute(
+            "INSERT INTO incidents (id, incident_key, title, summary, severity, status, primary_host, first_seen, last_seen) VALUES (1, 'INC-TZ', 'TZ Case', 'TZ summary', 'ALERT', 'OPEN', 'srv-tz', '2026-10-15T09:00:00Z', '2026-10-15T15:00:00Z')"
+        )
+        cur.execute(
+            "INSERT INTO alerts (id, rule_id, dedup_key, title, description, severity, status, host, first_seen, last_seen, occurrence_count) VALUES (1, 'r1', 'dk-1', 'A', 'A', 'ALERT', 'OPEN', 'h-tz', '2026-10-15T10:00:00Z', '2026-10-15T12:00:00Z', 1)"
+        )
+        cur.execute("INSERT INTO incident_alerts (incident_id, alert_id) VALUES (1, 1)")
+        cur.execute(
+            "INSERT INTO detections (id, alert_id, rule_id, timestamp, host, summary, evidence_count) VALUES (1, 1, 'r1', '2026-10-15T10:00:00Z', 'h-tz', 'det', 1)"
+        )
+        # +05:30 timestamp 16:00:00+05:30 == 10:30:00Z (in scope 10:00Z..12:00Z despite lexical '16' > '12')
+        # unparseable timestamp 'bad-ts' must fail closed!
+        cur.execute(
+            """
+            INSERT INTO events (id, timestamp, ingested_at, host, source, event_type, severity, action, outcome, summary, raw_message, parser, event_fingerprint)
+            VALUES
+            ('ev-ist-in', '2026-10-15T16:00:00+05:30', '2026-10-15T10:30:01Z', 'h-tz', 'auth', 'login', 'INFORMATIONAL', 'login', 'success', 'IST event', 'IST in window', 'p', 'fp1'),
+            ('ev-utc-early', '2026-10-15T11:00:00Z', '2026-10-15T11:00:01Z', 'srv-tz', 'auth', 'login', 'INFORMATIONAL', 'login', 'success', 'UTC event', 'UTC later', 'p', 'fp2'),
+            ('ev-bad-ts', 'not-a-timestamp', '2026-10-15T11:00:01Z', 'srv-tz', 'auth', 'login', 'INFORMATIONAL', 'login', 'success', 'Bad ts', 'Corrupt ts', 'p', 'fp3')
+            """
+        )
+        cur.execute("INSERT INTO detection_evidence (detection_id, event_id) VALUES (1, 'ev-ist-in'), (1, 'ev-utc-early'), (1, 'ev-bad-ts')")
+        conn.commit()
+
+    t_repo = CaseRepository(db_path=tmp_path / "cases_tz.db", forensic_db=t_db)
+    t_tl = UnifiedTimelineService(forensic_db=t_db, case_repository=t_repo)
+    t_mh = MultiHostInvestigationService(case_repository=t_repo, forensic_database=t_db, timeline_service=t_tl)
+
+    case = t_repo.create_case(incident_id=1, title="TZ + Alias Case")
+    # Scope targets hostname 'srv-tz' and includes host-1 boundary safety check
+    t_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(
+            investigation_id=1,
+            subject_id="inc-1",
+            target_hosts=["srv-tz", "host-1"],
+            time_start="2026-10-15T10:00:00Z",
+            time_end="2026-10-15T12:00:00Z",
+        ),
+    )
+
+    # Item 4 + Item 3: alias 'h-tz' resolves to 'srv-tz'; 16:00+05:30 (10:30Z) precedes 11:00Z; 'bad-ts' excluded
+    tl_res = t_tl.query_timeline(case.case_id, TimelineFilterParams(host="h-tz"))
+    ev_ids = [it.source_id for it in tl_res.items if it.source_id.startswith("ev-")]
+    assert ev_ids == ["ev-ist-in", "ev-utc-early"]
+    assert "ev-bad-ts" not in ev_ids
+
+    # Inverted query range must fail closed (0 items)
+    inv_tl = t_tl.query_timeline(
+        case.case_id,
+        TimelineFilterParams(time_start="2026-10-15T12:00:00Z", time_end="2026-10-15T10:00:00Z"),
+    )
+    assert inv_tl.items == []
+    assert inv_tl.total == 0
+
+    inv_host_tl = t_mh.get_host_timeline(
+        case.case_id,
+        "srv-tz",
+        time_start="2026-10-15T12:00:00Z",
+        time_end="2026-10-15T10:00:00Z",
+    )
+    assert inv_host_tl.items == []
+    assert inv_host_tl.total == 0
+
+
+def test_host_alias_prefix_isolation_and_over_500_event_dedup(tmp_path):
+    """Items 4 & 5: Exact host aliases exclude host-1 vs host-10; >500 explicit refs never double-count."""
+    from logintel.storage.case_repo import CaseRepository
+    from logintel.timeline.service import UnifiedTimelineService
+
+    t_db = Database(db_path=tmp_path / "forensic_500.db")
+    t_db.initialize()
+    with t_db.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO hosts (id, hostname, os_name, os_version, first_seen, last_seen) VALUES
+            ('h-1', 'host-1', 'Linux', '6', '2026-10-15T10:00:00Z', '2026-10-15T11:00:00Z'),
+            ('h-10', 'host-10', 'Linux', '6', '2026-10-15T10:00:00Z', '2026-10-15T11:00:00Z')
+            """
+        )
+        cur.execute(
+            "INSERT INTO incidents (id, incident_key, title, summary, severity, status, primary_host, first_seen, last_seen) VALUES (1, 'INC-500', '500 Case', '500 summary', 'ALERT', 'OPEN', 'host-1', '2026-10-15T10:00:00Z', '2026-10-15T11:00:00Z')"
+        )
+        rows = []
+        for idx in range(560):
+            rows.append((
+                f"ev-h1-{idx:04d}",
+                f"2026-10-15T10:{idx // 60:02d}:{idx % 60:02d}Z",
+                "2026-10-15T11:00:00Z",
+                "host-1" if idx % 2 == 0 else "h-1",
+                "auth",
+                "login",
+                "INFORMATIONAL",
+                "login",
+                "success",
+                "ev",
+                f"msg {idx}",
+                "p",
+                f"fp-{idx}",
+            ))
+        rows.append((
+            "ev-h10-0001",
+            "2026-10-15T10:00:00Z",
+            "2026-10-15T11:00:00Z",
+            "host-10",
+            "auth",
+            "login",
+            "INFORMATIONAL",
+            "login",
+            "success",
+            "h10 ev",
+            "h10 msg",
+            "p",
+            "fp-h10",
+        ))
+        cur.executemany(
+            "INSERT INTO events (id, timestamp, ingested_at, host, source, event_type, severity, action, outcome, summary, raw_message, parser, event_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+
+    t_repo = CaseRepository(db_path=tmp_path / "cases_500.db", forensic_db=t_db)
+    t_tl = UnifiedTimelineService(forensic_db=t_db, case_repository=t_repo)
+    t_mh = MultiHostInvestigationService(case_repository=t_repo, forensic_database=t_db, timeline_service=t_tl)
+    case = t_repo.create_case(incident_id=1, title="500 Ref Dedup + Exact Host")
+    t_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(investigation_id=1, subject_id="inc-1", target_hosts=["host-1"]),
+    )
+
+    # Explicitly attach 520 overlapping event refs (> 500 chunk threshold) pointing to the same DB events
+    for idx in range(520):
+        t_repo.add_evidence_reference(
+            case_id=case.case_id,
+            source_type="event",
+            source_id=f"ev-h1-{idx:04d}",
+            role="SUPPORTING",
+            epistemic_status="OBSERVED",
+            citation_tag=f"[event:ev-h1-{idx:04d}]",
+        )
+
+    dossier = t_mh.get_case_dossier(case.case_id)
+    assert len(dossier.participating_hosts) == 1
+    assert dossier.participating_hosts[0].host_id == "h-1"
+    # Must be exactly 560, NEVER 560 + 560 = 1120 and NEVER include host-10!
+    assert dossier.participating_hosts[0].event_count == 560
+    assert not any("10" in h.hostname for h in dossier.participating_hosts)
+
+
+def test_sql_prefiltering_before_timeline_cap_and_export_completeness(tmp_path):
+    """Items 6, 7 & 10: Out-of-scope events never displace in-scope events before SQL cap; export reports completeness; provenance seals content."""
+    from logintel.storage.case_repo import CaseRepository
+    from logintel.timeline.service import UnifiedTimelineService
+    from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+
+    t_db = Database(db_path=tmp_path / "forensic_cap.db")
+    t_db.initialize()
+    with t_db.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO detection_rules (id, name, description, severity, category, rule_type, definition_yaml) VALUES ('r1', 'R1', 'Rule 1', 'ALERT', 'Auth', 'threshold', 'yaml')"
+        )
+        cur.execute(
+            "INSERT INTO incidents (id, incident_key, title, summary, severity, status, primary_host, first_seen, last_seen) VALUES (1, 'INC-CAP', 'Cap Case', 'Cap summary', 'ALERT', 'OPEN', 'in-scope-host', '2026-10-15T08:00:00Z', '2026-10-15T12:00:00Z')"
+        )
+        cur.execute(
+            "INSERT INTO alerts (id, rule_id, dedup_key, title, description, severity, status, host, first_seen, last_seen, occurrence_count) VALUES (1, 'r1', 'dk-cap', 'A', 'A', 'ALERT', 'OPEN', 'in-scope-host', '2026-10-15T10:30:00Z', '2026-10-15T10:35:00Z', 1)"
+        )
+        cur.execute(
+            "INSERT INTO detections (id, alert_id, rule_id, timestamp, host, summary, evidence_count) VALUES (1, 1, 'r1', '2026-10-15T10:30:00Z', 'in-scope-host', 'det', 1)"
+        )
+        ev_rows = []
+        det_rows = []
+        # 25 earlier out-of-scope events on 'rogue-host' and pre-window times (exceeding cap=10!)
+        for idx in range(25):
+            ev_id = f"ev-noise-{idx:03d}"
+            ev_rows.append((
+                ev_id,
+                f"2026-10-15T08:00:{idx:02d}Z",
+                "2026-10-15T08:01:00Z",
+                "rogue-host",
+                "auth",
+                "login",
+                "INFORMATIONAL",
+                "login",
+                "success",
+                "noise",
+                "noise",
+                "p",
+                f"fp-n-{idx}",
+            ))
+            det_rows.append((1, ev_id))
+        # 5 in-scope events later in time
+        for idx in range(5):
+            ev_id = f"ev-valid-{idx:03d}"
+            ev_rows.append((
+                ev_id,
+                f"2026-10-15T10:31:{idx:02d}Z",
+                "2026-10-15T10:32:00Z",
+                "in-scope-host",
+                "auth",
+                "login",
+                "INFORMATIONAL",
+                "login",
+                "success",
+                "valid",
+                "valid",
+                "p",
+                f"fp-v-{idx}",
+            ))
+            det_rows.append((1, ev_id))
+        cur.executemany(
+            "INSERT INTO events (id, timestamp, ingested_at, host, source, event_type, severity, action, outcome, summary, raw_message, parser, event_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ev_rows,
+        )
+        cur.execute("INSERT INTO incident_alerts (incident_id, alert_id) VALUES (1, 1)")
+        cur.executemany("INSERT INTO detection_evidence (detection_id, event_id) VALUES (?, ?)", det_rows)
+        conn.commit()
+
+    t_repo = CaseRepository(db_path=tmp_path / "cases_cap.db", forensic_db=t_db)
+    t_tl = UnifiedTimelineService(forensic_db=t_db, case_repository=t_repo)
+    t_tl.MAX_INCIDENT_EVENTS = 10
+    t_mh = MultiHostInvestigationService(case_repository=t_repo, forensic_database=t_db, timeline_service=t_tl)
+
+    case = t_repo.create_case(incident_id=1, title="SQL Pre-Filter Cap Test")
+    t_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(
+            investigation_id=1,
+            subject_id="inc-1",
+            target_hosts=["in-scope-host"],
+            time_start="2026-10-15T10:00:00Z",
+            time_end="2026-10-15T11:00:00Z",
+        ),
+    )
+
+    tl_res = t_tl.query_timeline(case.case_id, TimelineFilterParams(limit=50))
+    ev_ids = sorted(it.source_id for it in tl_res.items if it.source_id.startswith("ev-valid-"))
+    assert len(ev_ids) == 5
+    assert tl_res.is_truncated is False
+
+    # Item 7: export completeness metadata (COMPLETE when <=500 & not db_truncated; PARTIAL when db_truncated)
+    json_ok, _ = t_tl.export_timeline(case.case_id, export_format="json")
+    parsed_ok = json.loads(json_ok)
+    assert parsed_ok["is_truncated"] is False
+    assert parsed_ok["completeness_status"] == "COMPLETE"
+    assert parsed_ok["total_matching"] == parsed_ok["total_items"]
+
+    # Force backend cap truncation on in-scope items (cap=3 < 5 valid events)
+    t_tl.MAX_INCIDENT_EVENTS = 3
+    json_part, _ = t_tl.export_timeline(case.case_id, export_format="json")
+    csv_part, _ = t_tl.export_timeline(case.case_id, export_format="csv")
+    parsed_part = json.loads(json_part)
+    assert parsed_part["is_truncated"] is True
+    assert parsed_part["completeness_status"] == "PARTIAL"
+    assert parsed_part["truncation_notice"] is not None
+    assert "completeness_status=PARTIAL" in csv_part
+    assert "is_truncated=true" in csv_part
+
+    # Item 10: provenance_hash / root_digest changes when underlying evidence changes
+    dossier_before = t_mh.get_case_dossier(case.case_id)
+    export_before = t_mh.export_dossier(case.case_id, format="json")
+    recon_engine = TemporalReconstructionEngine()
+    recon_before = recon_engine.reconstruct_investigation(t_repo.get_case(case.case_id, resolve_evidence=True))
+
+    t_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id="ev-valid-000",
+        role="PRIMARY",
+        epistemic_status="OBSERVED",
+        citation_tag="[event:ev-valid-000]",
+    )
+    dossier_after = t_mh.get_case_dossier(case.case_id)
+    export_after = t_mh.export_dossier(case.case_id, format="json")
+    recon_after = recon_engine.reconstruct_investigation(t_repo.get_case(case.case_id, resolve_evidence=True))
+
+    assert dossier_after.provenance_hash != dossier_before.provenance_hash
+    assert export_after.root_digest == dossier_after.provenance_hash
+    assert export_after.root_digest != export_before.root_digest
+    assert recon_after.provenance_hash != recon_before.provenance_hash
+
+
+def test_campaign_correlation_shared_ip_and_entities(tmp_path):
+    """Item 9: Campaign correlation actively uses src_ip and entity sets with INFERRED status."""
+    from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+    from logintel.ai.domain.investigation_temporal import CampaignRelationReason, EpistemicStatus
+    from logintel.storage.case_repo import CaseRepository
+
+    t_db = Database(db_path=tmp_path / "forensic_camp.db")
+    t_db.initialize()
+    t_repo = CaseRepository(db_path=tmp_path / "cases_camp.db", forensic_db=t_db)
+    engine = TemporalReconstructionEngine()
+    case = t_repo.create_case(incident_id=77001, title="Campaign IP Case")
+    evidence = [
+        {"timestamp": "2026-10-15T10:00:00Z", "host": "web-01", "username": "svc", "src_ip": "198.51.100.77"}
+    ]
+    other_incidents = [
+        {"id": 77002, "title": "Peer Attacker IP Incident", "src_ip": "198.51.100.77", "first_seen": "2026-10-16T12:00:00Z"}
+    ]
+    corrs = engine.correlate_campaign_incidents(case, other_incidents, evidence)
+    assert len(corrs) == 1
+    assert corrs[0].relationship_reason == CampaignRelationReason.SHARED_SOURCE
+    assert "ip:198.51.100.77" in corrs[0].shared_entities
+    assert corrs[0].epistemic_status == EpistemicStatus.INFERRED
+
+
+
 
 
 

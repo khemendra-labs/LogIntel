@@ -86,7 +86,9 @@ class CaseMultiHostDossier(BaseModel):
     overall_visibility_gaps: List[HostVisibilityGap] = Field(default_factory=list, description="Overall case-level visibility and collection limitations")
     completeness_limitations: List[str] = Field(default_factory=list, description="Explicit boundary statements regarding telemetry completeness")
     generated_at: str = Field(description="ISO-8601 generation timestamp")
-    provenance_hash: str = Field(description="Deterministic SHA-256 fingerprint over the dossier content")
+    provenance_hash: str = Field(
+        description="Deterministic SHA-256 content integrity digest over dossier evidence, topology, counts, and scope bounds (excluding volatile generation timestamp)"
+    )
 
 
 class HostTimelineResponse(BaseModel):
