@@ -35,13 +35,31 @@ fn verify_engine_handshake() -> Result<bool, String> {
     }
 
     if response.contains("\"service\":\"logintel-engine\"") || response.contains("\"service\": \"logintel-engine\"") {
-        Ok(true)
-    } else {
-        Err(format!(
-            "Port 41721 is occupied by an alien service. Handshake rejected: {}",
-            response.lines().next().unwrap_or("")
-        ))
+        return Ok(true);
     }
+
+    // Fallback attempt to root /handshake
+    if let Ok(mut stream2) = TcpStream::connect_timeout(
+        &"127.0.0.1:41721".parse().unwrap(),
+        Duration::from_millis(500),
+    ) {
+        let _ = stream2.set_read_timeout(Some(Duration::from_millis(1000)));
+        let _ = stream2.set_write_timeout(Some(Duration::from_millis(500)));
+        let req2 = "GET /handshake HTTP/1.1\r\nHost: 127.0.0.1:41721\r\nConnection: close\r\n\r\n";
+        if stream2.write_all(req2.as_bytes()).is_ok() {
+            let mut response2 = String::new();
+            if stream2.read_to_string(&mut response2).is_ok() {
+                if response2.contains("\"service\":\"logintel-engine\"") || response2.contains("\"service\": \"logintel-engine\"") {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "Port 41721 is occupied by an alien service. Handshake rejected: {}",
+        response.lines().next().unwrap_or("")
+    ))
 }
 
 fn is_compatible_python(python_bin: &PathBuf) -> bool {
@@ -243,22 +261,33 @@ fn ensure_engine_running() -> Option<Child> {
 
 #[tauri::command]
 fn get_engine_token() -> Result<String, String> {
-    let xdg_data = std::env::var("XDG_DATA_HOME").ok();
-    let token_path = if let Some(data_dir) = xdg_data {
-        PathBuf::from(data_dir).join("logintel/.engine_token")
-    } else if let Some(home) = std::env::var("HOME").ok() {
-        PathBuf::from(home).join(".local/share/logintel/.engine_token")
-    } else {
-        return Err("Cannot determine user data directory for engine token".into());
-    };
+    let mut candidate_paths = Vec::new();
 
-    if !token_path.exists() {
-        return Err(format!("Engine token file not found at {:?}", token_path));
+    if let Ok(data_dir) = std::env::var("XDG_DATA_HOME") {
+        candidate_paths.push(PathBuf::from(data_dir).join("logintel/.engine_token"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        candidate_paths.push(PathBuf::from(home).join(".local/share/logintel/.engine_token"));
+    }
+    candidate_paths.push(PathBuf::from("/var/lib/logintel/.engine_token"));
+    candidate_paths.push(PathBuf::from("/run/logintel/engine.token"));
+    candidate_paths.push(PathBuf::from("/etc/logintel/engine.token"));
+
+    for path in &candidate_paths {
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed);
+                }
+            }
+        }
     }
 
-    std::fs::read_to_string(&token_path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| format!("Failed to read engine token: {}", e))
+    Err(format!(
+        "Engine token file not found in candidates: {:?}",
+        candidate_paths
+    ))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -299,6 +328,7 @@ pub fn run() {
             };
 
             if needs_restart {
+                drop(lock);
                 if restart_count < MAX_RESTARTS {
                     restart_count += 1;
                     let backoff = Duration::from_secs(restart_count as u64);
@@ -307,7 +337,9 @@ pub fn run() {
                         restart_count, MAX_RESTARTS, backoff
                     );
                     thread::sleep(backoff);
-                    *lock = spawn_engine_process();
+                    if let Ok(mut l) = child_for_monitor.lock() {
+                        *l = spawn_engine_process();
+                    }
                 } else {
                     eprintln!("CRITICAL: Engine crashed repeatedly and exceeded maximum restart limit ({})", MAX_RESTARTS);
                     break;
@@ -330,6 +362,7 @@ pub fn run() {
                     if let Some(mut child) = lock.take() {
                         println!("Terminating managed LogIntel Python engine process...");
                         let _ = child.kill();
+                        let _ = child.wait();
                     }
                 }
             }

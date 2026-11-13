@@ -8,7 +8,7 @@ distinguishing temporal anomalies (out-of-order sequence) from state contradicti
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from logintel.ai.domain.investigation_intel import TemporalWindowAnalysis
 
@@ -46,7 +46,14 @@ class TemporalIntelligenceEngine:
         # Track user and host concurrent sessions to identify state contradictions
         user_host_timestamps: Dict[str, List[Tuple[datetime, str, str]]] = {}
 
-        for it in sorted(items, key=lambda x: str(x.get("timestamp") or x.get("created_at") or "")):
+        for it in sorted(
+            items,
+            key=lambda x: (
+                self._parse_iso(x.get("timestamp") or x.get("created_at"))
+                or datetime.max.replace(tzinfo=timezone.utc),
+                str(x.get("id") or x.get("_source_id") or ""),
+            ),
+        ):
             ts_str = it.get("timestamp") or it.get("created_at")
             item_dt = self._parse_iso(ts_str)
             if not item_dt:

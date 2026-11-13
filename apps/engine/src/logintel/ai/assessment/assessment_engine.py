@@ -199,7 +199,7 @@ class AssessmentEngine:
                     StructuredFinding(
                         finding_id=f_id,
                         case_id=case.case_id,
-                        title=f"Transition: {tr.transition_type.value} ({tr.from_entity} -> {tr.to_entity})",
+                        title=f"Transition: {getattr(tr.transition_type, 'value', tr.transition_type)} ({tr.from_entity} -> {tr.to_entity})",
                         description=f"Observed or reconstructed transition from {tr.from_entity} to {tr.to_entity} at {tr.timestamp}. Basis: {tr.correlation_basis}.",
                         epistemic_status=tr.epistemic_status,
                         severity="MEDIUM" if tr.epistemic_status == EpistemicStatus.OBSERVED else "LOW",
@@ -207,7 +207,7 @@ class AssessmentEngine:
                         supporting_references=ev_refs,
                         contradicting_references=[],
                         related_entities=entities,
-                        related_events=[r.source_id for r in tr.evidence_references if r.source_type == "EVENT"],
+                        related_events=[r.source_id for r in tr.evidence_references if str(r.source_type).upper() == "EVENT"],
                         related_incidents=[case.incident_id],
                         related_sequences=[],
                         mitre_references=[],
@@ -229,11 +229,13 @@ class AssessmentEngine:
             ep_val = ref.epistemic_status.value if hasattr(ref.epistemic_status, "value") else str(ref.epistemic_status)
             role_val = ref.role.value if hasattr(ref.role, "value") else str(ref.role)
 
-            epistemic = (
-                EpistemicStatus.OBSERVED
-                if ep_val.upper() == "OBSERVED"
-                else EpistemicStatus.INFERRED
-            )
+            ep_upper = ep_val.upper()
+            if ep_upper == "OBSERVED":
+                epistemic = EpistemicStatus.OBSERVED
+            elif ep_upper == "UNKNOWN":
+                epistemic = EpistemicStatus.UNKNOWN
+            else:
+                epistemic = EpistemicStatus.INFERRED
 
             findings.append(
                 StructuredFinding(
@@ -248,7 +250,7 @@ class AssessmentEngine:
                     supporting_references=[ref.citation_tag] if role_val.upper() == "SUPPORTING" else [],
                     contradicting_references=[ref.citation_tag] if role_val.upper() == "CONTRADICTING" else [],
                     related_entities=[ref.citation_tag],
-                    related_events=[ref.source_id] if ref.source_type == "EVENT" else [],
+                    related_events=[ref.source_id] if str(ref.source_type).upper() == "EVENT" else [],
                     related_incidents=[case.incident_id],
                     related_sequences=[],
                     mitre_references=[],
@@ -309,8 +311,8 @@ class AssessmentEngine:
                     "hypothesis_id": f"hyp-comp-{case.case_id}-1",
                     "statement": "Compromised credential used to conduct lateral movement or unauthorized activity.",
                     "status": "OPEN",
-                    "supporting_evidence_tags": [r.citation_tag for r in case.evidence_references if r.role.value == "SUPPORTING"][:5],
-                    "contradicting_evidence_tags": [r.citation_tag for r in case.evidence_references if r.role.value == "CONTRADICTING"][:5],
+                    "supporting_evidence_tags": [r.citation_tag for r in case.evidence_references if getattr(r.role, "value", r.role) == "SUPPORTING"][:5],
+                    "contradicting_evidence_tags": [r.citation_tag for r in case.evidence_references if getattr(r.role, "value", r.role) == "CONTRADICTING"][:5],
                     "evidence_gaps": ["Process execution telemetry during transition"],
                     "epistemic_status": "INFERRED",
                 },
@@ -319,7 +321,7 @@ class AssessmentEngine:
                     "statement": "Legitimate administrator maintenance or scheduled system task execution.",
                     "status": "OPEN",
                     "supporting_evidence_tags": [],
-                    "contradicting_evidence_tags": [r.citation_tag for r in case.evidence_references if r.role.value == "SUPPORTING"][:5],
+                    "contradicting_evidence_tags": [r.citation_tag for r in case.evidence_references if getattr(r.role, "value", r.role) == "SUPPORTING"][:5],
                     "evidence_gaps": ["Maintenance ticket or administrative change authorization record"],
                     "epistemic_status": "INFERRED",
                 },
@@ -669,8 +671,8 @@ class AssessmentEngine:
                 f"with {len(contra_dedup)} contradicting observations noted."
             )
         else:
-            has_observed = any(f.epistemic_status == EpistemicStatus.OBSERVED for f in findings)
-            epistemic = EpistemicStatus.OBSERVED if has_observed else EpistemicStatus.INFERRED
+            all_observed = bool(findings) and all(f.epistemic_status == EpistemicStatus.OBSERVED for f in findings)
+            epistemic = EpistemicStatus.OBSERVED if all_observed else EpistemicStatus.INFERRED
             statement = (
                 f"Forensic evidence establishes the reconstructed incident progression for case {case.case_id}."
             )

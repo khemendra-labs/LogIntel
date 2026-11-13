@@ -164,17 +164,62 @@ class IngestionEngine:
                     alert = self.alerts_repository.record_detection(detection, rule)
                     self.metrics["total_alerts_recorded"] += 1
                     from logintel.notifications import notification_service
+
+                    # Locate the trigger/evidence event to include granular forensic telemetry
+                    trigger_ev = None
+                    trigger_id = detection.get_trigger_event_id()
+                    for ev in inserted_events:
+                        if ev.id == trigger_id or (not trigger_ev and ev.id in detection.evidence_event_ids):
+                            trigger_ev = ev
+                            if ev.id == trigger_id:
+                                break
+
+                    payload = {
+                        "alert_id": alert.id,
+                        "rule_id": rule.id,
+                        "rule_name": rule.name,
+                        "rule_description": rule.description,
+                        "rule_category": rule.category.value if hasattr(rule.category, "value") else str(rule.category),
+                        "severity": alert.severity.value,
+                        "host": alert.host,
+                        "status": alert.status.value,
+                        "occurrence_count": alert.occurrence_count,
+                        "first_seen": alert.first_seen.isoformat() if hasattr(alert.first_seen, "isoformat") else str(alert.first_seen),
+                        "last_seen": alert.last_seen.isoformat() if hasattr(alert.last_seen, "isoformat") else str(alert.last_seen),
+                        "summary": detection.summary or alert.description or rule.name,
+                        "evidence_count": len(detection.evidence_event_ids),
+                    }
+                    if trigger_ev:
+                        payload["trigger_event"] = {
+                            "event_id": trigger_ev.id,
+                            "timestamp": trigger_ev.timestamp.isoformat() if hasattr(trigger_ev.timestamp, "isoformat") else str(trigger_ev.timestamp),
+                            "event_type": trigger_ev.event_type,
+                            "source": trigger_ev.source,
+                            "severity": trigger_ev.severity.value if hasattr(trigger_ev.severity, "value") else str(trigger_ev.severity),
+                            "action": trigger_ev.action,
+                            "outcome": trigger_ev.outcome.value if hasattr(trigger_ev.outcome, "value") else str(trigger_ev.outcome),
+                            "summary": trigger_ev.summary,
+                            "raw_message": trigger_ev.raw_message,
+                            "user": trigger_ev.actor.username if trigger_ev.actor else None,
+                            "uid": trigger_ev.actor.uid if trigger_ev.actor else None,
+                            "terminal": trigger_ev.actor.terminal if trigger_ev.actor else None,
+                            "process_name": trigger_ev.process.name if trigger_ev.process else None,
+                            "process_pid": trigger_ev.process.pid if trigger_ev.process else None,
+                            "process_ppid": trigger_ev.process.ppid if trigger_ev.process else None,
+                            "executable": trigger_ev.process.executable if trigger_ev.process else None,
+                            "command_line": trigger_ev.process.command_line if trigger_ev.process else None,
+                            "src_ip": trigger_ev.network.src_ip if trigger_ev.network else None,
+                            "src_port": trigger_ev.network.src_port if trigger_ev.network else None,
+                            "dst_ip": trigger_ev.network.dst_ip if trigger_ev.network else None,
+                            "dst_port": trigger_ev.network.dst_port if trigger_ev.network else None,
+                            "protocol": trigger_ev.network.protocol if trigger_ev.network else None,
+                        }
+
                     notification_service.publish(
                         event_type="alert.detected",
                         resource_type="alert",
                         resource_id=str(alert.id),
-                        payload={
-                            "rule_id": rule.id,
-                            "severity": alert.severity.value,
-                            "host": alert.host,
-                            "status": alert.status.value,
-                            "occurrence_count": alert.occurrence_count,
-                        },
+                        payload=payload,
                     )
                 self.metrics["total_detections"] += len(detections)
             except Exception as exc:
@@ -207,69 +252,77 @@ class IngestionEngine:
         respect_schedule: bool = False,
     ) -> int:
         """Execute one ingestion pass across all active collectors."""
-        total_cycle_ingested = 0
+        acquired = self._lock.acquire(timeout=2.0)
+        if not acquired:
+            logger.info("Ingestion cycle already in progress; skipping overlapping run.")
+            return 0
 
-        for name, collector in self.collectors.items():
-            if respect_schedule and not historical:
-                now = time.monotonic()
-                previous_poll = self._last_live_poll.get(name)
-                if previous_poll is not None and now - previous_poll < self._poll_interval_for(name):
+        try:
+            total_cycle_ingested = 0
+
+            for name, collector in self.collectors.items():
+                if respect_schedule and not historical:
+                    now = time.monotonic()
+                    previous_poll = self._last_live_poll.get(name)
+                    if previous_poll is not None and now - previous_poll < self._poll_interval_for(name):
+                        continue
+                    # Record the attempted poll too, so an unavailable source does
+                    # not cause repeated costly availability checks every second.
+                    self._last_live_poll[name] = now
+
+                avail, reason = collector.check_availability()
+                if not avail:
+                    logger.debug("Skipping collector %s: %s", name, reason)
                     continue
-                # Record the attempted poll too, so an unavailable source does
-                # not cause repeated costly availability checks every second.
-                self._last_live_poll[name] = now
 
-            avail, reason = collector.check_availability()
-            if not avail:
-                logger.debug("Skipping collector %s: %s", name, reason)
-                continue
+                try:
+                    if historical:
+                        generator = collector.collect_historical(limit=limit_per_source)
+                    else:
+                        generator = collector.collect_new()
 
-            try:
-                if historical:
-                    generator = collector.collect_historical(limit=limit_per_source)
-                else:
-                    generator = collector.collect_new()
+                    batch: List[RawRecord] = []
+                    last_offset: Optional[str] = None
+                    cycle_records = 0
 
-                batch: List[RawRecord] = []
-                last_offset: Optional[str] = None
-                cycle_records = 0
+                    for rec in generator:
+                        batch.append(rec)
+                        cycle_records += 1
+                        if rec.source_offset:
+                            last_offset = str(rec.source_offset)
 
-                for rec in generator:
-                    batch.append(rec)
-                    cycle_records += 1
-                    if rec.source_offset:
-                        last_offset = str(rec.source_offset)
+                        if len(batch) >= settings.collectors.batch_size:
+                            count = self.ingest_records(batch)
+                            total_cycle_ingested += count
+                            batch.clear()
 
-                    if len(batch) >= settings.collectors.batch_size:
+                    if batch:
                         count = self.ingest_records(batch)
                         total_cycle_ingested += count
-                        batch.clear()
 
-                if batch:
-                    count = self.ingest_records(batch)
-                    total_cycle_ingested += count
+                    # Update ingestion state with cursor, offset, and inode
+                    tailer = getattr(collector, "tailer", None)
+                    self.repo.update_ingestion_state(
+                        source_name=name,
+                        cursor=getattr(collector, "cursor", None),
+                        byte_offset=getattr(tailer, "current_offset", 0) if tailer else 0,
+                        inode=getattr(tailer, "current_inode", None) if tailer else None,
+                        records_delta=cycle_records,
+                    )
 
-                # Update ingestion state with cursor, offset, and inode
-                tailer = getattr(collector, "tailer", None)
-                self.repo.update_ingestion_state(
-                    source_name=name,
-                    cursor=getattr(collector, "cursor", None),
-                    byte_offset=getattr(tailer, "current_offset", 0) if tailer else 0,
-                    inode=getattr(tailer, "current_inode", None) if tailer else None,
-                    records_delta=cycle_records,
-                )
+                except Exception as exc:
+                    self.metrics["total_errors"] += 1
+                    logger.error("Collector %s encountered an error during collection cycle: %s", name, exc)
+                    self.repo.update_ingestion_state(
+                        source_name=name,
+                        error_count_delta=1,
+                        last_error=str(exc),
+                    )
 
-            except Exception as exc:
-                self.metrics["total_errors"] += 1
-                logger.error("Collector %s encountered an error during collection cycle: %s", name, exc)
-                self.repo.update_ingestion_state(
-                    source_name=name,
-                    error_count_delta=1,
-                    last_error=str(exc),
-                )
-
-        self.metrics["last_cycle_timestamp"] = time.time()
-        return total_cycle_ingested
+            self.metrics["last_cycle_timestamp"] = time.time()
+            return total_cycle_ingested
+        finally:
+            self._lock.release()
 
     def _loop(self) -> None:
         """Continuous background collection thread."""

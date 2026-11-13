@@ -263,6 +263,8 @@ def test_m53_cor_009_mitre_citations_resolve_only_to_existing_m4():
 def test_m53_cor_010_canonical_reconciliation_zero_mutation():
     """Verify live database against pre-M5.2 baseline content hash manifest."""
     baseline_path = Path("docs/m5_1_final_baseline_content_hashes.json")
+    if not baseline_path.exists():
+        baseline_path = Path(__file__).resolve().parents[3] / "docs" / "m5_1_final_baseline_content_hashes.json"
     db_path = Path("/home/khemendra-labs/.local/share/logintel/logintel.db")
 
     assert baseline_path.exists()

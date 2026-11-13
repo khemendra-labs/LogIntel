@@ -59,6 +59,16 @@ RULE_TO_MITRE: Dict[str, Tuple[str, str, str]] = {
 }
 
 
+def _parse_utc_dt(ts_val: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO timestamp string into a UTC-aware datetime, preserving offsets."""
+    if not ts_val:
+        return None
+    dt = datetime.fromisoformat(str(ts_val).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class InvestigationRepository:
     """Repository handling analyst notes, entity pivots, attack-path synthesis, and threat hunting."""
 
@@ -404,15 +414,17 @@ class InvestigationRepository:
             if ev_row["process_name"]:
                 entities.append(f"process:{ev_row['process_name']}")
 
-            # Query relationships supported by this event
+            # Query relationships supported by this event (exact JSON match, no substring collisions)
             cur.execute(
                 """
                 SELECT id, incident_id, source_entity_key, target_entity_key,
                        relationship_type, confidence, matched_at
                 FROM incident_relationships
-                WHERE evidence_event_ids_json LIKE ?
+                WHERE evidence_event_ids_json IS NOT NULL
+                  AND json_valid(evidence_event_ids_json)
+                  AND EXISTS (SELECT 1 FROM json_each(evidence_event_ids_json) WHERE value = ?)
                 """,
-                (f"%{event_id}%",),
+                (event_id,),
             )
             relationships = [dict(r) for r in cur.fetchall()]
 
@@ -494,8 +506,8 @@ class InvestigationRepository:
             first_seen_str = agg[1]
             last_seen_str = agg[2]
 
-            first_seen = datetime.fromisoformat(first_seen_str).replace(tzinfo=timezone.utc) if first_seen_str else None
-            last_seen = datetime.fromisoformat(last_seen_str).replace(tzinfo=timezone.utc) if last_seen_str else None
+            first_seen = _parse_utc_dt(first_seen_str)
+            last_seen = _parse_utc_dt(last_seen_str)
 
             # Get associated hosts
             cur.execute(
@@ -564,6 +576,17 @@ class InvestigationRepository:
             # Fetch related incidents directly matching this entity or through primary_host/primary_user
             cur.execute(
                 """
+                SELECT COUNT(DISTINCT i.id)
+                FROM incidents i
+                LEFT JOIN incident_entities ie ON i.id = ie.incident_id
+                WHERE ie.entity_key = ? OR LOWER(i.primary_host) = LOWER(?) OR i.primary_user = ?
+                """,
+                (entity_key, evalue, evalue),
+            )
+            total_incidents = cur.fetchone()[0] or 0
+
+            cur.execute(
+                """
                 SELECT DISTINCT i.id, i.incident_key, i.title, i.severity, i.status, i.first_seen, i.last_seen
                 FROM incidents i
                 LEFT JOIN incident_entities ie ON i.id = ie.incident_id
@@ -588,20 +611,35 @@ class InvestigationRepository:
                 time_agg = cur.fetchone()
                 if time_agg and time_agg[0]:
                     try:
-                        first_seen = datetime.fromisoformat(time_agg[0]).replace(tzinfo=timezone.utc)
-                        last_seen = datetime.fromisoformat(time_agg[1]).replace(tzinfo=timezone.utc)
+                        first_seen = _parse_utc_dt(time_agg[0])
+                        last_seen = _parse_utc_dt(time_agg[1])
                     except Exception:
                         pass
 
-            # Related alerts query
+            # Related alerts query (exact count + bounded sample)
             if etype_str == "HOST":
+                cur.execute(
+                    "SELECT COUNT(*) FROM alerts WHERE LOWER(host) = LOWER(?)",
+                    (evalue,),
+                )
+                total_alerts = cur.fetchone()[0] or 0
                 cur.execute(
                     "SELECT id, title, severity, status, host, first_seen, last_seen FROM alerts WHERE LOWER(host) = LOWER(?) ORDER BY last_seen DESC LIMIT 10",
                     (evalue,),
                 )
                 alerts_list = [dict(r) for r in cur.fetchall()]
-                total_alerts = len(alerts_list)
             else:
+                cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT a.id)
+                    FROM alerts a
+                    JOIN incident_alerts ia ON a.id = ia.alert_id
+                    JOIN incident_entities ie ON ia.incident_id = ie.incident_id
+                    WHERE ie.entity_key = ?
+                    """,
+                    (entity_key,),
+                )
+                total_alerts = cur.fetchone()[0] or 0
                 cur.execute(
                     """
                     SELECT DISTINCT a.id, a.title, a.severity, a.status, a.host, a.first_seen, a.last_seen
@@ -614,7 +652,6 @@ class InvestigationRepository:
                     (entity_key,),
                 )
                 alerts_list = [dict(r) for r in cur.fetchall()]
-                total_alerts = len(alerts_list)
 
         return EntityPivotSummary(
             entity_key=entity_key,
@@ -624,9 +661,9 @@ class InvestigationRepository:
             last_seen=last_seen,
             total_events=total_events,
             total_alerts=total_alerts,
-            total_incidents=len(incidents_list),
+            total_incidents=total_incidents,
             alert_count=total_alerts,
-            incident_count=len(incidents_list),
+            incident_count=total_incidents,
             associated_hosts=assoc_hosts,
             associated_users=assoc_users,
             associated_ips=assoc_ips,
@@ -897,6 +934,11 @@ class InvestigationRepository:
             where_clauses.append("LOWER(process_name) = LOWER(?)")
             params.append(f.process_name.strip())
 
+        if getattr(f, "command", None):
+            cmd_pattern = f"%{f.command.strip()}%"
+            where_clauses.append("process_command_line LIKE ?")
+            params.append(cmd_pattern)
+
         if f.event_type:
             where_clauses.append("UPPER(event_type) = UPPER(?)")
             params.append(f.event_type.strip())
@@ -980,6 +1022,8 @@ class InvestigationRepository:
             active_filters.append(f"outcome='{f.outcome}'")
         if f.process_name:
             active_filters.append(f"process='{f.process_name}'")
+        if getattr(f, "command", None):
+            active_filters.append(f"command='{f.command}'")
         if f.severity:
             active_filters.append(f"severity='{f.severity}'")
         summary_str = ", ".join(active_filters) if active_filters else "All events"
@@ -1011,14 +1055,14 @@ class InvestigationRepository:
         notes = self.list_notes(incident_id)
 
         return {
-            "incident": incident.model_dump(),
-            "alerts": [a.model_dump() for a in alerts],
-            "entities": [e.model_dump() for e in entities],
-            "relationships": [r.model_dump() for r in relationships],
-            "timeline": [t.model_dump() for t in timeline],
-            "attack_path": attack_path.model_dump(),
-            "mitre_mappings": [m.model_dump() for m in mitre_mappings],
-            "notes": [n.model_dump() for n in notes],
+            "incident": incident.model_dump(mode="json"),
+            "alerts": [a.model_dump(mode="json") for a in alerts],
+            "entities": [e.model_dump(mode="json") for e in entities],
+            "relationships": [r.model_dump(mode="json") for r in relationships],
+            "timeline": [t.model_dump(mode="json") for t in timeline],
+            "attack_path": attack_path.model_dump(mode="json"),
+            "mitre_mappings": [m.model_dump(mode="json") for m in mitre_mappings],
+            "notes": [n.model_dump(mode="json") for n in notes],
             "timeline_total": len(timeline),
         }
 
@@ -1123,7 +1167,9 @@ class InvestigationRepository:
                 cur = conn.cursor()
                 cur.execute(
                     f"""
-                    SELECT id, host, username, src_ip, dst_ip, process_name, event_type, outcome, summary, metadata_json, timestamp
+                    SELECT id, host, username, src_ip, dst_ip, src_port, dst_port,
+                           process_pid, process_ppid, process_name, process_command_line,
+                           event_type, outcome, summary, metadata_json, timestamp
                     FROM events
                     WHERE id IN ({placeholders})
                     """,
@@ -1150,7 +1196,9 @@ class InvestigationRepository:
             cur = conn.cursor()
             cur.execute(
                 """
-                SELECT id, host, username, src_ip, dst_ip, process_name, event_type, outcome, summary, metadata_json, timestamp
+                SELECT id, host, username, src_ip, dst_ip, src_port, dst_port,
+                       process_pid, process_ppid, process_name, process_command_line,
+                       event_type, outcome, summary, metadata_json, timestamp
                 FROM events
                 WHERE LOWER(host) = LOWER(?)
                 ORDER BY timestamp DESC

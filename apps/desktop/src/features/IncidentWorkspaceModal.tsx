@@ -562,7 +562,7 @@ export function IncidentWorkspaceModal({
                   }}
                   onClick={() => setActiveTab("evidence")}
                 >
-                  Evidence Workbench (M7.3)
+                  Evidence Workbench
                 </button>
 
                 <button
@@ -575,7 +575,7 @@ export function IncidentWorkspaceModal({
                   }}
                   onClick={() => setActiveTab("findings")}
                 >
-                  Findings & Hypotheses (M7.4)
+                  Findings & Hypotheses
                 </button>
 
                 <button
@@ -588,7 +588,7 @@ export function IncidentWorkspaceModal({
                   }}
                   onClick={() => setActiveTab("hunting")}
                 >
-                  Threat Hunting (M7.5)
+                  Threat Hunting
                 </button>
 
                 <button
@@ -601,7 +601,7 @@ export function IncidentWorkspaceModal({
                   }}
                   onClick={() => setActiveTab("report")}
                 >
-                  Investigation Report (M7.6)
+                  Investigation Report
                 </button>
 
                 <button
@@ -614,7 +614,7 @@ export function IncidentWorkspaceModal({
                   }}
                   onClick={() => setActiveTab("comparison")}
                 >
-                  Case Comparison (M7.7)
+                  Case Comparison
                 </button>
 
                 <button
@@ -627,7 +627,7 @@ export function IncidentWorkspaceModal({
                   }}
                   onClick={() => setActiveTab("review")}
                 >
-                  Forensic Review (M7.8)
+                  Forensic Review
                 </button>
 
                 <button
@@ -640,7 +640,7 @@ export function IncidentWorkspaceModal({
                   }}
                   onClick={() => setActiveTab("multihost")}
                 >
-                  Multi-Host (M7.12)
+                  Multi-Host Analysis
                 </button>
 
                 <button
@@ -850,7 +850,7 @@ export function IncidentWorkspaceModal({
                         style={{ fontSize: "11px", padding: "3px 8px" }}
                         onClick={() => setTimelineMode("unified")}
                       >
-                        Unified Timeline & Replay (M7.2)
+                        Unified Timeline & Replay
                       </button>
                       <button
                         className={timelineMode === "classic" ? "btn btn-primary" : "btn btn-secondary"}

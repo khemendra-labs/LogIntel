@@ -586,7 +586,7 @@ export function InvestigationGraphExplorer({
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 <div style={{ borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
                   <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700 }}>
-                    Evidence Side Panel (M58-17)
+                    Evidence Side Panel
                   </div>
                   <div style={{ fontSize: "13px", fontWeight: 700, marginTop: "4px" }}>
                     {selectedEdge.source_node_id} &rarr; {selectedEdge.target_node_id}
@@ -959,7 +959,7 @@ export function InvestigationGraphExplorer({
         <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "3px", padding: "12px", background: "var(--bg-surface)", flex: 1, overflowY: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px", marginBottom: "12px" }}>
             <div style={{ fontWeight: 700, fontSize: "13px" }}>
-              Deterministic Temporal Relationship Intelligence (M58-05)
+              Deterministic Temporal Relationship Intelligence
             </div>
             <button
               className="btn btn-secondary"

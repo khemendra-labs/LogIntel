@@ -5,20 +5,24 @@ Wants=systemd-journald.service
 
 [Service]
 Type=simple
+User=root
+Group=adm
 ExecStart=/usr/lib/logintel/engine/.venv/bin/python -m logintel.main --host 127.0.0.1 --port 41721
-Restart=on-failure
-RestartSec=5s
+Restart=always
+RestartSec=3s
 # Directory and environment configuration
 StateDirectory=logintel
+StateDirectoryMode=0755
+RuntimeDirectory=logintel
+RuntimeDirectoryMode=0755
 LogsDirectory=logintel
+LogsDirectoryMode=0755
 Environment=PYTHONUNBUFFERED=1
 Environment=XDG_DATA_HOME=/var/lib
 Environment=XDG_STATE_HOME=/var/log
 WorkingDirectory=/usr/lib/logintel/engine
 
 # Hardening
-ProtectSystem=full
-ProtectHome=true
 NoNewPrivileges=true
 
 [Install]

@@ -76,8 +76,10 @@ class GovernedThreatHuntManager:
 
         # Check for SQL injection in parameter values
         for k, v in parameters.items():
-            if isinstance(v, str) and SQL_INJECTION_PATTERN.search(v):
-                errors.append(f"Potential SQL injection detected in parameter '{k}': {v}")
+            vals = [v] if isinstance(v, str) else (v if isinstance(v, (list, tuple, set)) else [])
+            for item in vals:
+                if isinstance(item, str) and SQL_INJECTION_PATTERN.search(item):
+                    errors.append(f"Potential SQL injection detected in parameter '{k}': {item}")
 
         # Limit bounds
         limit = parameters.get("limit", 50)
@@ -189,7 +191,8 @@ class GovernedThreatHuntManager:
                 cur = conn.cursor()
                 rows = cur.execute(sql, params).fetchall()
                 matched = [dict(r) for r in rows]
-        except Exception:
+        except Exception as e:
+            logger.error("Governed threat hunt execution failed: %s", e, exc_info=True)
             return GovernedThreatHuntExecution(
                 case_id=proposal.case_id,
                 proposal_id=proposal.proposal_id,

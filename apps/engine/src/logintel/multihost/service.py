@@ -124,6 +124,9 @@ class MultiHostInvestigationService:
         host_evidence_tags: Dict[str, Set[str]] = {}
         host_discrepancies: Dict[str, List[HostDiscrepancy]] = {}
         host_gaps: Dict[str, List[HostVisibilityGap]] = {}
+        host_observed_evidence: Dict[str, bool] = {}
+        host_inferred_evidence: Dict[str, bool] = {}
+        host_evidence_manifest: Dict[str, List[Dict[str, Any]]] = {}
 
         def register_host(raw_host: str) -> str:
             norm = self._normalize_host_str(raw_host)
@@ -259,10 +262,11 @@ class MultiHostInvestigationService:
             if ref_host and _is_host_in_scope(ref_host):
                 key = register_host(ref_host)
                 host_evidence_tags.setdefault(key, set()).add(ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]")
-                
-                # Enforce temporal scope boundaries for evidence references
+
+                # Enforce temporal scope boundaries for evidence references (do not mask missing telemetry timestamps with ref.created_at when bounds exist)
+                has_bounds = scope_start_dt is not None or scope_end_dt is not None
                 if ref.source_type == "alert":
-                    a_first = rec.get("first_seen") or rec.get("timestamp") or rec.get("created_at") or ref.created_at
+                    a_first = rec.get("first_seen") or rec.get("timestamp") or rec.get("created_at") or (None if has_bounds else ref.created_at)
                     a_last = rec.get("last_seen") or a_first
                     if not _alert_overlaps_scope(a_first, a_last):
                         continue
@@ -274,7 +278,8 @@ class MultiHostInvestigationService:
                         counted_alerts.add(alert_id)
                         host_alert_counts[key] = host_alert_counts.get(key, 0) + 1
                 else:
-                    ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at") or ref.created_at
+                    rec_ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at")
+                    ts = rec_ts if rec_ts else (None if (has_bounds and ref.source_type in ("event", "detection")) else ref.created_at)
                     if not _is_in_scope_time(ts):
                         continue
                     update_timestamps(key, ts, clamp=False)
@@ -284,6 +289,24 @@ class MultiHostInvestigationService:
                         if ev_id not in counted_events:
                             counted_events.add(ev_id)
                             host_event_counts[key] = host_event_counts.get(key, 0) + 1
+
+                ref_ep = self.engine._coerce_epistemic_status(getattr(ref, "epistemic_status", None))
+                ep_parts = [ref_ep]
+                if "epistemic_status" in rec and rec.get("epistemic_status") is not None:
+                    ep_parts.append(self.engine._coerce_epistemic_status(rec.get("epistemic_status")))
+                eff_ep = self.engine._combine_epistemic_statuses(ep_parts)
+                is_auth = (eff_ep.value == "OBSERVED") and (rec.get("is_authoritative") is not False)
+                if eff_ep.value == "OBSERVED" and is_auth:
+                    host_observed_evidence[key] = True
+                elif eff_ep.value == "INFERRED" or (eff_ep.value == "OBSERVED" and not is_auth):
+                    host_inferred_evidence[key] = True
+                host_evidence_manifest.setdefault(key, []).append({
+                    "source_type": ref.source_type,
+                    "source_id": str(ref.source_id),
+                    "epistemic_status": eff_ep.value if is_auth or eff_ep.value != "OBSERVED" else "INFERRED",
+                    "is_authoritative": is_auth,
+                    "hash": self._compute_hash(rec),
+                })
 
         # 3. Read incident alerts from logintel.db
         if self.forensic_db and case.incident_id:
@@ -315,6 +338,7 @@ class MultiHostInvestigationService:
                             update_timestamps(key, a_first, clamp=True)
                             update_timestamps(key, a_last, clamp=True)
                             host_evidence_tags.setdefault(key, set()).add(f"[alert:{row['id']}]")
+                            host_observed_evidence[key] = True
             except Exception as e:
                 logger.warning("Error reading incident alerts for case %d: %s", case_id, e)
 
@@ -373,6 +397,8 @@ class MultiHostInvestigationService:
 
                         db_cnt = max(0, total_matching - overlap_cnt)
                         host_event_counts[ckey] = host_event_counts.get(ckey, 0) + db_cnt
+                        if db_cnt > 0:
+                            host_observed_evidence[ckey] = True
 
                         if total_matching > 0:
                             cur.execute(
@@ -516,10 +542,12 @@ class MultiHostInvestigationService:
 
             ev_cnt = host_event_counts.get(ckey, 0)
             al_cnt = host_alert_counts.get(ckey, 0)
-            is_in_target = (ckey.lower() in target_hosts_norm) or (display_name.lower() in target_hosts_norm)
+            is_in_target = _is_host_in_scope(ckey) or _is_host_in_scope(display_name)
+            in_hops = inbound_hops.get(ckey, 0)
+            out_hops = outbound_hops.get(ckey, 0)
 
-            # Check if target host has zero telemetry
-            if is_in_target and ev_cnt == 0 and al_cnt == 0:
+            # Determine conservative host epistemic status
+            if is_in_target and ev_cnt == 0 and al_cnt == 0 and not host_inferred_evidence.get(ckey):
                 gap = HostVisibilityGap(
                     gap_type="TARGET_HOST_TELEMETRY_ABSENT",
                     host_identifier=ckey,
@@ -529,8 +557,12 @@ class MultiHostInvestigationService:
                 gaps.append(gap)
                 overall_gaps.append(gap)
                 epistemic_status = HostEpistemicStatus.UNKNOWN
-            else:
+            elif host_observed_evidence.get(ckey):
                 epistemic_status = HostEpistemicStatus.OBSERVED
+            elif host_inferred_evidence.get(ckey) or in_hops > 0 or out_hops > 0:
+                epistemic_status = HostEpistemicStatus.INFERRED
+            else:
+                epistemic_status = HostEpistemicStatus.UNKNOWN
 
             participating_hosts.append(
                 CaseHostSummary(
@@ -615,6 +647,10 @@ class MultiHostInvestigationService:
                     "inbound_lateral_hops": h.inbound_lateral_hops,
                     "outbound_lateral_hops": h.outbound_lateral_hops,
                     "evidence_references": h.evidence_references,
+                    "evidence_manifest": sorted(
+                        host_evidence_manifest.get(h.host_id, []),
+                        key=lambda m: (str(m.get("source_type", "")), str(m.get("source_id", "")), str(m.get("hash", ""))),
+                    ),
                     "epistemic_status": h.epistemic_status.value,
                     "gaps": [(g.gap_type, g.description) for g in h.telemetry_gaps],
                     "discrepancies": [(d.field, d.catalog_value, d.telemetry_value) for d in h.discrepancies],

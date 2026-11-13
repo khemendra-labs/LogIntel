@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import re
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import uuid
 import xml.etree.ElementTree as ET
@@ -158,6 +159,20 @@ class TemporalReconstructionEngine:
         if require_timestamp and not (getattr(edge, "first_seen", None) or getattr(edge, "last_seen", None)):
             return False
         return True
+
+    def _resolve_graph_edge_epistemic(
+        self,
+        edge: Any,
+        require_timestamp: bool = True,
+    ) -> Tuple[EpistemicStatus, bool]:
+        """Resolve conservative (epistemic_status, is_authoritative) for a graph edge."""
+        if self._is_graph_edge_authoritative_observed(edge, require_timestamp=require_timestamp):
+            return EpistemicStatus.OBSERVED, True
+        raw_ep = getattr(edge, "epistemic_status", None)
+        coerced = self._coerce_epistemic_status(raw_ep, default=EpistemicStatus.UNKNOWN)
+        if coerced == EpistemicStatus.UNKNOWN:
+            return EpistemicStatus.UNKNOWN, False
+        return EpistemicStatus.INFERRED, False
 
     def _compute_hash(self, content: Any) -> str:
         """Compute deterministic SHA-256 content fingerprint."""
@@ -359,9 +374,11 @@ class TemporalReconstructionEngine:
                 rec["timestamp"] = str(ts) if ts else None
                 items.append(rec)
 
-        # Sort deterministically: timestamp ascending, then source_id ascending
-        def sort_key(it: Dict[str, Any]) -> Tuple[str, str]:
-            return (it.get("timestamp") or "9999-99-99T99:99:99Z", str(it.get("_source_id", "")))
+        # Sort deterministically: parsed timestamp ascending, then source_id ascending
+        def sort_key(it: Dict[str, Any]) -> Tuple[datetime, str]:
+            parsed = self._parse_timestamp(it.get("timestamp"))
+            dt = parsed if parsed is not None else datetime.max.replace(tzinfo=timezone.utc)
+            return (dt, str(it.get("_source_id", "")))
 
         items.sort(key=sort_key)
         return items
@@ -464,8 +481,13 @@ class TemporalReconstructionEngine:
         if other_items and not episodes:
             episodes.append(make_episode(EpisodeType.GENERIC_EPISODE, "Investigative Telemetry Activity", other_items, "gen"))
 
-        # Sort episodes chronologically
-        episodes.sort(key=lambda ep: (ep.start_time, ep.episode_id))
+        # Sort episodes chronologically by parsed start_time
+        episodes.sort(
+            key=lambda ep: (
+                self._parse_timestamp(ep.start_time) or datetime.max.replace(tzinfo=timezone.utc),
+                ep.episode_id,
+            )
+        )
         return episodes
 
     def detect_transitions(
@@ -493,13 +515,18 @@ class TemporalReconstructionEngine:
             ts = nxt.get("timestamp") or cur.get("timestamp") or "1970-01-01T00:00:00Z"
             refs = self._build_graph_evidence_items([cur, nxt])
 
+            cur_ep, cur_auth = self._resolve_item_provenance(cur)
+            nxt_ep, nxt_auth = self._resolve_item_provenance(nxt)
+            pair_ep = self._combine_epistemic_statuses([cur_ep, nxt_ep])
+            pair_auth = cur_auth and nxt_auth
+
             # A. USER_TO_HOST
             if cur_user and nxt_host and cur_user != nxt_host:
                 has_explicit_u2h = bool(
                     (nxt.get("username") == cur_user and nxt.get("host") == nxt_host)
                     or (cur.get("username") == cur_user and (cur.get("target_host") == nxt_host or cur.get("dst_host") == nxt_host))
                 )
-                if has_explicit_u2h:
+                if has_explicit_u2h and pair_auth and pair_ep == EpistemicStatus.OBSERVED:
                     u2h_reason = f"User {cur_user} executed activity on host {nxt_host}"
                     u2h_basis = "Authoritative credential session link"
                     u2h_status = EpistemicStatus.OBSERVED
@@ -531,7 +558,7 @@ class TemporalReconstructionEngine:
                     or (nxt.get("src_host") and nxt.get("src_host") == cur_host)
                     or (nxt.get("source_host") and nxt.get("source_host") == cur_host)
                 )
-                if has_explicit_h2h:
+                if has_explicit_h2h and pair_auth and pair_ep == EpistemicStatus.OBSERVED:
                     h2h_reason = f"Activity transitioned from host {cur_host} to host {nxt_host}"
                     h2h_basis = "Explicit cross-host connection telemetry"
                     h2h_status = EpistemicStatus.OBSERVED
@@ -561,7 +588,7 @@ class TemporalReconstructionEngine:
                     (nxt.get("username") == cur_user and (nxt.get("process_name") == nxt_proc or nxt.get("action") == nxt_proc))
                     or (cur.get("username") == cur_user and (cur.get("process_name") == nxt_proc or cur.get("action") == nxt_proc))
                 )
-                if has_explicit_u2p:
+                if has_explicit_u2p and pair_auth and pair_ep == EpistemicStatus.OBSERVED:
                     u2p_reason = f"User {cur_user} invoked process {nxt_proc}"
                     u2p_basis = "Authenticated user execution context"
                     u2p_status = EpistemicStatus.OBSERVED
@@ -589,10 +616,15 @@ class TemporalReconstructionEngine:
             dst_ip = nxt.get("dst_ip") or nxt.get("dest_ip")
             if cur_proc and dst_ip:
                 has_explicit_p2n = bool(
-                    (cur.get("dst_ip") == dst_ip or cur.get("dest_ip") == dst_ip)
-                    and (cur.get("process_name") == cur_proc or cur.get("action") == cur_proc)
+                    (
+                        nxt.get("process_name") == cur_proc
+                        or nxt.get("action") == cur_proc
+                        or (cur.get("pid") and cur.get("pid") == nxt.get("pid"))
+                        or (cur.get("process_name") == cur_proc and (cur.get("dst_ip") == dst_ip or cur.get("dest_ip") == dst_ip))
+                    )
+                    and (nxt.get("dst_ip") == dst_ip or nxt.get("dest_ip") == dst_ip)
                 )
-                if has_explicit_p2n:
+                if has_explicit_p2n and pair_auth and pair_ep == EpistemicStatus.OBSERVED:
                     p2n_reason = f"Process {cur_proc} initiated connection to destination {dst_ip}"
                     p2n_basis = "Process socket/network telemetry"
                     p2n_status = EpistemicStatus.OBSERVED
@@ -659,9 +691,8 @@ class TemporalReconstructionEngine:
                         or getattr(case, "created_at", None)
                         or "1970-01-01T00:00:00Z"
                     )
-                    # Corroborated provenance check: only mark OBSERVED if explicit edge is observed, authoritative, and corroborated
-                    is_edge_observed = self._is_graph_edge_authoritative_observed(edge, require_timestamp=True)
-                    ep_status = EpistemicStatus.OBSERVED if is_edge_observed else EpistemicStatus.INFERRED
+                    # Corroborated provenance check: fail closed on missing/uncorroborated provenance
+                    ep_status, _ = self._resolve_graph_edge_epistemic(edge, require_timestamp=True)
 
                     transitions.append(
                         TemporalTransition(
@@ -723,7 +754,12 @@ class TemporalReconstructionEngine:
                 )
 
         deduped = list(deduped_map.values())
-        deduped.sort(key=lambda tr: (tr.timestamp, tr.transition_id))
+        deduped.sort(
+            key=lambda tr: (
+                self._parse_timestamp(tr.timestamp) or datetime.max.replace(tzinfo=timezone.utc),
+                tr.transition_id,
+            )
+        )
         return deduped[: self.MAX_TRANSITIONS]
 
     def build_evidence_chains(
@@ -937,7 +973,12 @@ class TemporalReconstructionEngine:
                 )
             )
 
-        traces.sort(key=lambda tr: (tr.start_time, tr.trace_id))
+        traces.sort(
+            key=lambda tr: (
+                self._parse_timestamp(tr.start_time) or datetime.max.replace(tzinfo=timezone.utc),
+                tr.trace_id,
+            )
+        )
         return traces[: self.MAX_HOST_TRACES]
 
     def detect_entity_continuity(
@@ -1079,11 +1120,15 @@ class TemporalReconstructionEngine:
                 status = CampaignCorrelationStatus.INSUFFICIENT_EVIDENCE
 
             if status in [CampaignCorrelationStatus.CORRELATED, CampaignCorrelationStatus.POTENTIALLY_RELATED]:
+                try:
+                    rel_inc_id = int(re.sub(r"\D", "", str(other_id)) or 0)
+                except Exception:
+                    rel_inc_id = 0
                 correlations.append(
                     IncidentCampaignCorrelation(
                         correlation_id=f"camp-{case.case_id}-{other_id}",
                         primary_incident_id=case.incident_id,
-                        related_incident_id=int(other_id),
+                        related_incident_id=rel_inc_id,
                         related_incident_title=other_title,
                         relationship_reason=reason,
                         correlation_status=status,
@@ -1116,8 +1161,7 @@ class TemporalReconstructionEngine:
         if graph and graph.edges:
             for edge in graph.edges:
                 if edge.mitre_technique_id:
-                    is_edge_auth = self._is_graph_edge_authoritative_observed(edge, require_timestamp=False)
-                    edge_epistemic = EpistemicStatus.OBSERVED if is_edge_auth else EpistemicStatus.INFERRED
+                    edge_epistemic, is_edge_auth = self._resolve_graph_edge_epistemic(edge, require_timestamp=False)
                     mapping_entry = {
                         "technique_id": edge.mitre_technique_id,
                         "technique_name": edge.mitre_tactic or "Unknown Tactic",

@@ -1575,11 +1575,21 @@ export type CollectionStatus =
   | "UNKNOWN";
 
 export type TimelineSourceLayer =
-  | "EVENT"
+  | "AUTH"
+  | "PROCESS"
+  | "NETWORK"
+  | "FILESYSTEM"
+  | "SYSTEMD"
+  | "KERNEL"
+  | "CONTAINER"
   | "ALERT"
+  | "DETECTION"
+  | "INCIDENT"
+  | "CORRELATION"
+  | "ANALYST_NOTE"
+  | "EVENT"
   | "EVIDENCE"
   | "HOST_TELEMETRY"
-  | "INCIDENT"
   | "AUDIT";
 
 export interface InvestigationTimelineItem {
@@ -1589,7 +1599,8 @@ export interface InvestigationTimelineItem {
   timestamp_precision: TimestampPrecision;
   host_id: string;
   event_type: string;
-  source_layer: TimelineSourceLayer;
+  layer?: TimelineSourceLayer;
+  source_layer?: TimelineSourceLayer;
   source_id: string;
   entity_refs: string[];
   relationship_refs: string[];
@@ -1612,6 +1623,7 @@ export interface TimelineFilterParams {
   entity?: string;
   epistemic_status?: EpistemicStatus;
   collection_status?: CollectionStatus;
+  bookmarked_only?: boolean;
   search_text?: string;
   limit?: number;
   offset?: number;
@@ -1619,11 +1631,16 @@ export interface TimelineFilterParams {
 
 export interface TimelineReplayFrame {
   frame_index: number;
+  timeline_id?: string;
   timestamp: string;
-  item: InvestigationTimelineItem;
+  title?: string;
+  layer?: TimelineSourceLayer;
+  item?: InvestigationTimelineItem;
   active_entities: string[];
   active_hosts: string[];
   epistemic_status: EpistemicStatus;
+  is_evidence?: boolean;
+  cumulative_counts?: Record<string, number>;
 }
 
 export interface TimelineReplaySession {
@@ -1635,12 +1652,15 @@ export interface TimelineReplaySession {
 }
 
 export interface TimelineContextResponse {
-  timeline_id: string;
-  case_id: number;
+  timeline_id?: string;
+  case_id?: number;
   item: InvestigationTimelineItem;
-  linked_entities: Array<Record<string, any>>;
-  linked_evidence: Array<Record<string, any>>;
-  linked_alerts: Array<Record<string, any>>;
+  related_graph_nodes?: string[];
+  related_evidence?: string[];
+  source_record?: Record<string, any>;
+  linked_entities?: Array<Record<string, any>>;
+  linked_evidence?: Array<Record<string, any>>;
+  linked_alerts?: Array<Record<string, any>>;
   traceable_path: Array<{
     level: string;
     id: string;

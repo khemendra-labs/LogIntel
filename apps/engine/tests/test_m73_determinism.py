@@ -17,7 +17,18 @@ def det_case():
             description="Testing determinism across N=10 operations",
             created_by="SecAnalyst-1",
         )
-    return case.case_id
+    conn = case_repo._get_connection()
+    with case_repo._lock, conn:
+        conn.execute(
+            "DELETE FROM case_evidence_references WHERE case_id = ? AND source_type IN ('collection', 'collection_item')",
+            (case.case_id,),
+        )
+    yield case.case_id
+    with case_repo._lock, conn:
+        conn.execute(
+            "DELETE FROM case_evidence_references WHERE case_id = ? AND source_type IN ('collection', 'collection_item')",
+            (case.case_id,),
+        )
 
 
 def test_n10_identical_collection_listings(det_case):

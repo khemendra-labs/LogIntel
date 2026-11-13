@@ -41,6 +41,21 @@ def isolated_cases():
             description="Confidential Case A",
             created_by="SecAnalyst-1",
         )
+    case_b = case_repo.get_case(2, resolve_evidence=False)
+    if not case_b:
+        case_b = case_repo.create_case(
+            incident_id=2,
+            title="Security Case B",
+            description="Confidential Case B",
+            created_by="SecAnalyst-2",
+        )
+    conn = case_repo._get_connection()
+    with case_repo._lock, conn:
+        conn.execute(
+            "DELETE FROM case_evidence_references WHERE case_id IN (?, ?) AND source_type IN ('collection', 'collection_item')",
+            (case_a.case_id, case_b.case_id),
+        )
+
     case_repo.add_evidence_reference(
         case_id=case_a.case_id,
         source_type="event",
@@ -50,15 +65,6 @@ def isolated_cases():
         citation_tag="[event:101-A]",
         analyst_annotation="Confidential to Case A",
     )
-
-    case_b = case_repo.get_case(2, resolve_evidence=False)
-    if not case_b:
-        case_b = case_repo.create_case(
-            incident_id=2,
-            title="Security Case B",
-            description="Confidential Case B",
-            created_by="SecAnalyst-2",
-        )
     case_repo.add_evidence_reference(
         case_id=case_b.case_id,
         source_type="event",
@@ -69,7 +75,12 @@ def isolated_cases():
         analyst_annotation="Confidential to Case B",
     )
 
-    return case_a.case_id, case_b.case_id
+    yield case_a.case_id, case_b.case_id
+    with case_repo._lock, conn:
+        conn.execute(
+            "DELETE FROM case_evidence_references WHERE case_id IN (?, ?) AND source_type IN ('collection', 'collection_item')",
+            (case_a.case_id, case_b.case_id),
+        )
 
 
 def test_m73_sec_001_authentication(unauth_client):

@@ -411,7 +411,10 @@ def test_m59_sec_018_zero_shell_execution(m59_sec_setup, monkeypatch):
 def test_m59_sec_019_local_only_boundary():
     """M59-SEC-019: Local-only network boundary (no cloud telemetry export)."""
     # Inspect all network references in correlation module
-    corr_file = Path("apps/engine/src/logintel/ai/correlation/advanced_correlator.py").read_text()
+    corr_path = Path("apps/engine/src/logintel/ai/correlation/advanced_correlator.py")
+    if not corr_path.exists():
+        corr_path = Path("src/logintel/ai/correlation/advanced_correlator.py")
+    corr_file = corr_path.read_text()
     for cloud_domain in ["api.openai.com", "anthropic.com", "amazonaws.com", "googleapis.com", "azure.com"]:
         assert cloud_domain not in corr_file, f"External cloud API domain {cloud_domain} found in correlation module!"
 

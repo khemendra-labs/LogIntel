@@ -75,10 +75,12 @@ class AgentCollectors:
         return records
 
     def _collect_journal(self) -> List[Dict[str, Any]]:
-        command = ["journalctl", "--no-pager", "-o", "json", "-n", str(self.config.journal_max_records)]
+        command = ["journalctl", "--no-pager", "-o", "json"]
         cursor = self.state.get("journal_cursor")
         if cursor:
             command.extend(["--after-cursor", cursor])
+        else:
+            command.extend(["-n", str(self.config.journal_max_records)])
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
         except OSError:
@@ -98,4 +100,6 @@ class AgentCollectors:
                 message = bytes(message).decode("utf-8", errors="replace")
             if message:
                 records.append({"source": "journald", "raw_content": str(message), "source_file": "journald", "source_offset": self.state.get("journal_cursor")})
+                if len(records) >= self.config.journal_max_records:
+                    break
         return records

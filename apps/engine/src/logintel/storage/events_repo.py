@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from logintel.logging import get_logger
 from logintel.models import CanonicalEvent
@@ -16,6 +17,9 @@ class EventsRepository:
 
     def __init__(self, database: Optional[Database] = None):
         self.db = database or db
+        self._stats_cache: Optional[Dict[str, Any]] = None
+        self._stats_cached_at: float = 0.0
+        self._stats_cache_hours: int = 0
 
     def insert_events(self, events: List[CanonicalEvent]) -> int:
         """Batch insert canonical events into the database. Returns number of inserted events."""
@@ -164,6 +168,14 @@ class EventsRepository:
 
     def get_event_statistics(self, hours: int = 24) -> Dict[str, Any]:
         """Aggregate event counts, severity breakdowns, sources, and hourly timeline."""
+        now_mono = time.monotonic()
+        if (
+            self._stats_cache is not None
+            and self._stats_cache_hours == hours
+            and (now_mono - self._stats_cached_at) < 4.0
+        ):
+            return self._stats_cache
+
         since_time = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
         with self.db.connection() as conn:
@@ -214,15 +226,26 @@ class EventsRepository:
             # Recent security-relevant events (failures, warnings, alerts)
             cursor.execute(
                 """
-                SELECT * FROM events
-                WHERE severity IN ('WARNING', 'ALERT', 'CRITICAL') OR outcome = 'FAILURE'
+                SELECT * FROM (
+                    SELECT * FROM events
+                    WHERE severity IN ('WARNING', 'ALERT', 'CRITICAL')
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                )
+                UNION
+                SELECT * FROM (
+                    SELECT * FROM events
+                    WHERE outcome = 'FAILURE'
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                )
                 ORDER BY timestamp DESC
                 LIMIT 10
                 """
             )
             recent_alerts = [CanonicalEvent.from_db_row(dict(r)).model_dump(mode="json") for r in cursor.fetchall()]
 
-            return {
+            result = {
                 "total_events": total_events,
                 "window_hours": hours,
                 "window_events": window_events,
@@ -232,6 +255,10 @@ class EventsRepository:
                 "timeline": timeline,
                 "recent_alerts": recent_alerts,
             }
+            self._stats_cache = result
+            self._stats_cached_at = now_mono
+            self._stats_cache_hours = hours
+            return result
 
     def get_ingestion_state(self, source_name: str) -> Optional[Dict[str, Any]]:
         """Fetch current ingestion state record for a source."""

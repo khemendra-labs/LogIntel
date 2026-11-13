@@ -1,0 +1,16 @@
+[Unit]
+Description=LogIntel Security Telemetry Engine Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=%I
+WorkingDirectory=%h/LogIntel/apps/engine
+ExecStart=%h/LogIntel/apps/engine/.venv/bin/python -m uvicorn logintel.api.app:create_app --factory --host 127.0.0.1 --port 41721
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+

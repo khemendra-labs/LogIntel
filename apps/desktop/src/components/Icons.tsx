@@ -1,12 +1,22 @@
 import React from "react";
+import prahariLogo from "../assets/prahari_logo.png";
 
 export function BrandLogo({ className = "" }: { className?: string }) {
   return (
-    <svg className={className} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square">
-      <path d="M12 2L3 7v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V7l-9-5z" />
-      <path d="M12 7v10" strokeWidth="1.75" />
-      <path d="M8 12h8" strokeWidth="1.75" />
-    </svg>
+    <img
+      src={prahariLogo}
+      alt="Prahari Sentinel"
+      className={className}
+      style={{
+        width: "28px",
+        height: "28px",
+        borderRadius: "7px",
+        objectFit: "cover",
+        boxShadow: "0 0 12px rgba(0, 210, 255, 0.5)",
+        border: "1px solid rgba(0, 210, 255, 0.6)",
+        verticalAlign: "middle",
+      }}
+    />
   );
 }
 

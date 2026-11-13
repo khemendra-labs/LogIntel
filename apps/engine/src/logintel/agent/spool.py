@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 import uuid
@@ -12,6 +14,8 @@ class JsonlSpool:
     def __init__(self, directory: Path, max_bytes: int) -> None:
         self.directory = directory
         self.max_bytes = max_bytes
+        self._seq = 0
+        self._lock = threading.Lock()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.directory.chmod(0o700)
 
@@ -26,7 +30,10 @@ class JsonlSpool:
         encoded = payload.encode("utf-8")
         if len(encoded) > self.max_bytes or self.bytes_used() + len(encoded) > self.max_bytes:
             raise RuntimeError("Agent spool capacity reached; telemetry is retained at source until capacity is available")
-        target = self.directory / f"{uuid.uuid4().hex}.jsonl"
+        with self._lock:
+            self._seq += 1
+            seq = self._seq
+        target = self.directory / f"{time.time_ns():020d}-{seq:08d}-{uuid.uuid4().hex[:8]}.jsonl"
         temporary = target.with_suffix(".tmp")
         temporary.write_bytes(encoded)
         temporary.chmod(0o600)

@@ -41,9 +41,13 @@ class UnixSocketHTTPConnection(http.client.HTTPConnection):
 
     def connect(self):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
-        sock.connect(self.socket_path)
-        self.sock = sock
+        try:
+            sock.settimeout(self.timeout)
+            sock.connect(self.socket_path)
+            self.sock = sock
+        except Exception:
+            sock.close()
+            raise
 
 
 class DockerSocketCollector:
@@ -57,19 +61,21 @@ class DockerSocketCollector:
         if not os.path.exists(self.socket_path):
             return False, f"Docker socket '{self.socket_path}' does not exist"
 
+        conn: Optional[UnixSocketHTTPConnection] = None
         try:
             conn = UnixSocketHTTPConnection(self.socket_path, timeout=2.0)
             conn.request("GET", "/_ping")
             res = conn.getresponse()
             if res.status == 200:
-                conn.close()
                 return True, None
-            conn.close()
             return False, f"Docker socket returned HTTP {res.status}"
         except PermissionError:
             return False, f"Permission denied accessing '{self.socket_path}'. User must belong to 'docker' group."
         except Exception as exc:
             return False, f"Error connecting to Docker socket: {exc}"
+        finally:
+            if conn is not None:
+                conn.close()
 
     def list_containers(self, all_containers: bool = False) -> List[ContainerInfo]:
         """Fetch containers via GET /containers/json."""
@@ -77,17 +83,16 @@ class DockerSocketCollector:
         if not avail:
             return []
 
+        conn: Optional[UnixSocketHTTPConnection] = None
         try:
             conn = UnixSocketHTTPConnection(self.socket_path, timeout=3.0)
             path = "/containers/json?all=1" if all_containers else "/containers/json"
             conn.request("GET", path)
             res = conn.getresponse()
             if res.status != 200:
-                conn.close()
                 return []
 
             data = json.loads(res.read().decode("utf-8"))
-            conn.close()
 
             containers: List[ContainerInfo] = []
             for item in data:
@@ -123,6 +128,9 @@ class DockerSocketCollector:
             return containers
         except Exception:
             return []
+        finally:
+            if conn is not None:
+                conn.close()
 
     def inspect_container(self, container_id: str) -> Optional[ContainerInfo]:
         """Fetch detailed container configuration via GET /containers/{id}/json."""
@@ -130,16 +138,15 @@ class DockerSocketCollector:
         if not avail:
             return None
 
+        conn: Optional[UnixSocketHTTPConnection] = None
         try:
             conn = UnixSocketHTTPConnection(self.socket_path, timeout=3.0)
             conn.request("GET", f"/containers/{container_id}/json")
             res = conn.getresponse()
             if res.status != 200:
-                conn.close()
                 return None
 
             data = json.loads(res.read().decode("utf-8"))
-            conn.close()
 
             cid = data.get("Id", container_id)[:12]
             cname = data.get("Name", "").lstrip("/") or None
@@ -173,6 +180,9 @@ class DockerSocketCollector:
             )
         except Exception:
             return None
+        finally:
+            if conn is not None:
+                conn.close()
 
     def create_canonical_event(self, event: ContainerLifecycleEvent) -> CanonicalEvent:
         """Convert a container lifecycle or security event to a CanonicalEvent."""

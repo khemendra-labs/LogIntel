@@ -267,9 +267,9 @@ class ReportingAndHandoffService:
         # 6. Evidence Collections
         raw_collections = []
         try:
-            from logintel.collections.service import collections_service
+            from logintel.collections.service import workbench_service
 
-            all_colls = collections_service.get_collections(case_id)
+            all_colls = workbench_service.get_collections(case_id)
             for c in all_colls:
                 c_dict = c.model_dump(mode="json") if hasattr(c, "model_dump") else dict(c)
                 if not selected_collection_ids or c_dict.get("collection_id") in selected_collection_ids:
@@ -420,11 +420,15 @@ class ReportingAndHandoffService:
         included_refs = []
         for ref in case.evidence_references:
             if not selected_evidence_ids or ref.reference_id in selected_evidence_ids:
+                ref_ep = getattr(ref, "epistemic_status", None)
+                ep_val = str(ref_ep.value if hasattr(ref_ep, "value") else (ref_ep or "UNKNOWN")).upper()
+                if ep_val not in ("OBSERVED", "INFERRED", "UNKNOWN"):
+                    ep_val = "UNKNOWN"
                 ref_dict = {
                     "source_type": ref.source_type,
                     "source_id": ref.reference_id,
                     "citation_tag": ref.citation_tag,
-                    "epistemic_status": getattr(ref, "epistemic_status", "OBSERVED"),
+                    "epistemic_status": ep_val,
                     "analyst_annotation": ref.analyst_annotation,
                     "created_at": ref.created_at,
                 }
@@ -1047,9 +1051,9 @@ class ReportingAndHandoffService:
                         "KEY_FINDING",
                         "FINDING",
                         self._sanitize_csv_cell(f.get("finding_id")),
-                        self._sanitize_csv_cell(f.get("finding_type")),
+                        self._sanitize_csv_cell(f.get("severity") or f.get("finding_type")),
                         self._sanitize_csv_cell(f.get("epistemic_status")),
-                        self._sanitize_csv_cell(f.get("description")),
+                        self._sanitize_csv_cell(f.get("statement") or f.get("description")),
                     ]
                 )
 
@@ -1094,7 +1098,8 @@ class ReportingAndHandoffService:
             ]
             if report.key_findings.findings:
                 for f in report.key_findings.findings:
-                    lines.append(f"- **[{f.get('epistemic_status', 'UNKNOWN')}] {f.get('title', 'Finding')}**: {f.get('description', '')}")
+                    desc = f.get("statement") or f.get("description") or ""
+                    lines.append(f"- **[{f.get('epistemic_status', 'UNKNOWN')}] {f.get('title', 'Finding')}**: {desc}")
             else:
                 lines.append("_No findings recorded._")
 

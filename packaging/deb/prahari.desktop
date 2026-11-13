@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Prahari
+GenericName=Linux Security Sentinel
+Comment=Prahari (प्रहरी) — Autonomous Linux Security Sentinel & Telemetry Platform
+Exec=prahari
+Icon=prahari
+Terminal=false
+Type=Application
+Categories=Utility;System;Security;
+StartupNotify=true
+StartupWMClass=logintel
+Keywords=prahari;logintel;security;telemetry;investigation;journald;logs;audit;sentinel;

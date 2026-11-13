@@ -14,7 +14,7 @@ import io
 import json
 import re
 import urllib.request
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from logintel.comparison.models import (
     CampaignCorrelationCandidate,
@@ -89,13 +89,17 @@ class CaseComparisonService:
         return f"cand-{digest}"
 
     def _parse_iso_timestamp(self, ts_str: Optional[str]) -> Optional[datetime]:
-        """Safely parse ISO timestamp string into datetime."""
+        """Safely parse ISO timestamp string into UTC-normalized datetime."""
         if not ts_str:
             return None
         try:
-            # Normalize trailing Z
-            clean = ts_str.replace("Z", "+00:00")
-            return datetime.fromisoformat(clean)
+            clean = ts_str.strip()
+            if clean.endswith("Z"):
+                clean = clean[:-1] + "+00:00"
+            dt = datetime.fromisoformat(clean)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
         except Exception:
             return None
 
@@ -291,11 +295,14 @@ class CaseComparisonService:
                 if case and case.incident_id:
                     with self.forensic_db.connection() as f_conn:
                         inc_rows = f_conn.execute(
-                            "SELECT entity_type, entity_value FROM incident_entities WHERE incident_id = ? LIMIT 200",
+                            "SELECT entity_type, entity_key, display_name FROM incident_entities WHERE incident_id = ? LIMIT 200",
                             (case.incident_id,),
                         ).fetchall()
                         for ir in inc_rows:
-                            key = (ir["entity_type"].upper(), ir["entity_value"].strip())
+                            raw_val = (ir["display_name"] or "").strip() or (ir["entity_key"] or "").strip()
+                            if not raw_val:
+                                continue
+                            key = (ir["entity_type"].upper(), raw_val)
                             entity_map.setdefault(key, {}).setdefault(cid_str, set()).add(f"inc-{case.incident_id}")
         except Exception as e:
             logger.debug("Incident entity extraction skipped: %s", e)
@@ -323,89 +330,108 @@ class CaseComparisonService:
         shared.sort(key=lambda x: (x.entity_type, x.entity_value))
         return shared[:500]
 
-    def _compute_temporal_overlap(self, case_ids: List[int]) -> TemporalOverlapResult:
+    def _compute_temporal_overlap(self, case_ids: Union[List[int], List[TemporalComparisonWindow]]) -> TemporalOverlapResult:
         """Compute chronological window bounds and overlap between cases."""
-        conn = self.case_repo._get_connection()
-        windows: List[TemporalComparisonWindow] = []
+        if case_ids and isinstance(case_ids[0], TemporalComparisonWindow):
+            windows: List[TemporalComparisonWindow] = list(case_ids)  # type: ignore
+        else:
+            conn = self.case_repo._get_connection()
+            windows: List[TemporalComparisonWindow] = []
 
-        for cid in case_ids:
-            # Retrieve timestamps from evidence references
-            rows = conn.execute(
-                """
-                SELECT created_at FROM case_evidence_references
-                WHERE case_id = ?
-                ORDER BY created_at ASC
-                """,
-                (cid,),
-            ).fetchall()
+            for cid in case_ids:
+                # Retrieve timestamps from evidence references
+                rows = conn.execute(
+                    """
+                    SELECT created_at FROM case_evidence_references
+                    WHERE case_id = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (cid,),
+                ).fetchall()
 
-            start_t: Optional[str] = None
-            end_t: Optional[str] = None
-            if rows:
-                start_t = rows[0]["created_at"]
-                end_t = rows[-1]["created_at"]
+                start_t: Optional[str] = None
+                end_t: Optional[str] = None
+                if rows:
+                    start_t = rows[0]["created_at"]
+                    end_t = rows[-1]["created_at"]
 
-            # Fallback to case creation timestamp if no evidence rows
-            if not start_t:
-                case = self.case_repo.get_case(cid, resolve_evidence=False)
-                if case:
-                    start_t = case.created_at
-                    end_t = case.updated_at or case.created_at
+                # Fallback to case creation timestamp if no evidence rows
+                if not start_t:
+                    case = self.case_repo.get_case(cid, resolve_evidence=False)
+                    if case:
+                        start_t = case.created_at
+                        end_t = case.updated_at or case.created_at
 
-            windows.append(
-                TemporalComparisonWindow(
-                    case_id=cid,
-                    start_time=start_t,
-                    end_time=end_t,
-                    event_count=len(rows),
+                windows.append(
+                    TemporalComparisonWindow(
+                        case_id=cid,  # type: ignore
+                        start_time=start_t or "1970-01-01T00:00:00Z",
+                        end_time=end_t or "1970-01-01T00:00:00Z",
+                        event_count=len(rows),
+                    )
                 )
-            )
 
-        # Check if we have valid bounds for comparison
-        valid_windows = [w for w in windows if w.start_time and w.end_time]
-        if len(valid_windows) < 2:
+        # Check if we have valid bounds for comparison (normalizing inverted bounds)
+        parsed_windows: List[Tuple[datetime, datetime, TemporalComparisonWindow]] = []
+        for w in windows:
+            s_dt = self._parse_iso_timestamp(w.start_time)
+            e_dt = self._parse_iso_timestamp(w.end_time)
+            if s_dt is not None and e_dt is not None:
+                actual_start = min(s_dt, e_dt)
+                actual_end = max(s_dt, e_dt)
+                parsed_windows.append((actual_start, actual_end, w))
+
+        if len(parsed_windows) < 2:
             return TemporalOverlapResult(
                 relationship="INSUFFICIENT_DATA",
                 case_windows=windows,
             )
 
-        # Determine overlap bounds across all cases
-        max_start = max(w.start_time for w in valid_windows)
-        min_end = min(w.end_time for w in valid_windows)
+        # Determine overlap bounds across all cases using parsed UTC datetimes
+        max_start_dt, _, max_start_win = max(parsed_windows, key=lambda x: x[0])
+        _, min_end_dt, min_end_win = min(parsed_windows, key=lambda x: x[1])
 
-        max_start_dt = self._parse_iso_timestamp(max_start)
-        min_end_dt = self._parse_iso_timestamp(min_end)
-
-        if max_start_dt and min_end_dt and max_start_dt <= min_end_dt:
+        if max_start_dt <= min_end_dt:
             # Active overlap window
             delta_sec = int((min_end_dt - max_start_dt).total_seconds())
             return TemporalOverlapResult(
                 relationship="OVERLAPPING",
-                overlap_start=max_start,
-                overlap_end=min_end,
+                overlap_start=max_start_win.start_time,
+                overlap_end=min_end_win.end_time,
                 delta_seconds=delta_sec,
                 case_windows=windows,
             )
 
         # Sequential or disjoint
-        # Check ordering between first two cases
-        w1, w2 = valid_windows[0], valid_windows[1]
-        w1_end_dt = self._parse_iso_timestamp(w1.end_time)
-        w2_start_dt = self._parse_iso_timestamp(w2.start_time)
-        w2_end_dt = self._parse_iso_timestamp(w2.end_time)
-        w1_start_dt = self._parse_iso_timestamp(w1.start_time)
+        # Check ordering between first two cases or full chronological chain
+        w1_start_dt, w1_end_dt, _ = parsed_windows[0]
+        w2_start_dt, w2_end_dt, _ = parsed_windows[1]
 
-        if w1_end_dt and w2_start_dt and w1_end_dt < w2_start_dt:
+        if w1_end_dt <= w2_start_dt:
             delta = int((w2_start_dt - w1_end_dt).total_seconds())
             return TemporalOverlapResult(
                 relationship="SEQUENTIAL_BEFORE",
                 delta_seconds=delta,
                 case_windows=windows,
             )
-        elif w2_end_dt and w1_start_dt and w2_end_dt < w1_start_dt:
+        elif w2_end_dt <= w1_start_dt:
             delta = int((w1_start_dt - w2_end_dt).total_seconds())
             return TemporalOverlapResult(
                 relationship="SEQUENTIAL_AFTER",
+                delta_seconds=delta,
+                case_windows=windows,
+            )
+
+        sorted_by_time = sorted(parsed_windows, key=lambda x: x[0])
+        is_sequential = all(
+            sorted_by_time[i][1] <= sorted_by_time[i + 1][0]
+            for i in range(len(sorted_by_time) - 1)
+        )
+        if is_sequential:
+            delta = int((sorted_by_time[-1][0] - sorted_by_time[0][1]).total_seconds())
+            rel = "SEQUENTIAL_BEFORE" if parsed_windows[0][0] <= parsed_windows[1][0] else "SEQUENTIAL_AFTER"
+            return TemporalOverlapResult(
+                relationship=rel,
                 delta_seconds=delta,
                 case_windows=windows,
             )

@@ -2336,6 +2336,239 @@ def test_campaign_correlation_shared_ip_and_entities(tmp_path):
     assert corrs[0].epistemic_status == EpistemicStatus.INFERRED
 
 
+def test_timeline_and_host_summary_preserve_non_observed_epistemic_and_graph_edges(tmp_path):
+    """Items 1 & 8: Non-observed/malformed refs stay non-observed across timeline exports & host summaries; missing/false/inferred graph edges fail closed."""
+    from types import SimpleNamespace
+    from logintel.storage.case_repo import CaseRepository
+    from logintel.timeline.service import UnifiedTimelineService
+    from logintel.timeline.models import EpistemicStatus as TimelineEpistemicStatus
+    from logintel.multihost.models import HostEpistemicStatus
+    from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+    from logintel.ai.domain.investigation_temporal import EpistemicStatus
+    from logintel.ai.domain.investigation_graph import (
+        CorroborationStatus,
+        InvestigationGraphEdge,
+        RelationshipEpistemicStatus,
+    )
+
+    t_db = Database(db_path=tmp_path / "forensic_nonobs.db")
+    t_db.initialize()
+    t_repo = CaseRepository(db_path=tmp_path / "cases_nonobs.db", forensic_db=t_db)
+    t_tl = UnifiedTimelineService(forensic_db=t_db, case_repository=t_repo)
+    t_mh = MultiHostInvestigationService(case_repository=t_repo, forensic_database=t_db, timeline_service=t_tl)
+
+    case = t_repo.create_case(incident_id=1, title="Non-Observed Propagation")
+    t_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(
+            investigation_id=1,
+            subject_id="inc-1",
+            target_hosts=["host-inferred", "host-unknown"],
+        ),
+    )
+    t_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id="ev-inf-host",
+        role="SUPPORTING",
+        epistemic_status="INFERRED",
+        citation_tag="[event:ev-inf-host]",
+        analyst_annotation=json.dumps({
+            "id": "ev-inf-host",
+            "host": "host-inferred",
+            "timestamp": "2026-10-15T10:00:00Z",
+            "summary": "Heuristic association",
+        }),
+    )
+    t_repo.add_evidence_reference(
+        case_id=case.case_id,
+        source_type="event",
+        source_id="ev-malformed-ep",
+        role="SUPPORTING",
+        epistemic_status="CORRUPT_STATUS",
+        citation_tag="[event:ev-malformed-ep]",
+        analyst_annotation=json.dumps({
+            "id": "ev-malformed-ep",
+            "host": "host-unknown",
+            "timestamp": "2026-10-15T10:01:00Z",
+            "summary": "Unverified record",
+        }),
+    )
+
+    tl = t_tl.query_timeline(case.case_id, TimelineFilterParams(limit=50))
+    by_src = {it.source_id: it for it in tl.items}
+    assert by_src["ev-inf-host"].epistemic_status == TimelineEpistemicStatus.INFERRED
+    assert by_src["ev-malformed-ep"].epistemic_status == TimelineEpistemicStatus.UNKNOWN
+
+    json_exp, _ = t_tl.export_timeline(case.case_id, export_format="json")
+    csv_exp, _ = t_tl.export_timeline(case.case_id, export_format="csv")
+    parsed_exp = json.loads(json_exp)
+    exp_statuses = {it["source_id"]: it["epistemic_status"] for it in parsed_exp["items"]}
+    assert exp_statuses["ev-inf-host"] == "INFERRED"
+    assert exp_statuses["ev-malformed-ep"] == "UNKNOWN"
+    assert ",UNKNOWN," in csv_exp
+    assert ",INFERRED," in csv_exp
+
+    dossier_inf = t_mh.get_case_dossier(case.case_id)
+    hosts_by_id = {h.host_id: h for h in dossier_inf.participating_hosts}
+    assert hosts_by_id["host-inferred"].epistemic_status == HostEpistemicStatus.INFERRED
+
+    # Dedicated case with only UNKNOWN / malformed provenance must stay UNKNOWN (never OBSERVED or INFERRED)
+    case_unk = t_repo.create_case(incident_id=2, title="Unknown Provenance Host")
+    t_repo.update_case_scope(
+        case_id=case_unk.case_id,
+        scope=InvestigationScope(
+            investigation_id=2,
+            subject_id="inc-2",
+            target_hosts=["host-unknown"],
+        ),
+    )
+    t_repo.add_evidence_reference(
+        case_id=case_unk.case_id,
+        source_type="event",
+        source_id="ev-only-unk",
+        role="SUPPORTING",
+        epistemic_status="CORRUPT_STATUS",
+        citation_tag="[event:ev-only-unk]",
+        analyst_annotation=json.dumps({
+            "id": "ev-only-unk",
+            "host": "host-unknown",
+            "timestamp": "2026-10-15T10:01:00Z",
+            "summary": "Unverified record",
+        }),
+    )
+    dossier_unk = t_mh.get_case_dossier(case_unk.case_id)
+    assert dossier_unk.participating_hosts[0].epistemic_status == HostEpistemicStatus.UNKNOWN
+
+    # Graph edge checks: missing epistemic_status -> UNKNOWN, is_authoritative=False -> INFERRED, inferred -> INFERRED, supported -> OBSERVED
+    edge_missing = SimpleNamespace(
+        edge_id="e-miss",
+        source_node_id="host:a",
+        target_node_id="host:miss",
+        relationship_type="LATERAL_MOVEMENT",
+        first_seen="2026-10-15T10:00:00Z",
+        last_seen="2026-10-15T10:00:00Z",
+        evidence_references=[],
+    )
+    edge_false_auth = InvestigationGraphEdge(
+        edge_id="e-false",
+        source_node_id="host:a",
+        target_node_id="host:false",
+        relationship_type="LATERAL_MOVEMENT",
+        epistemic_status=RelationshipEpistemicStatus.OBSERVED,
+        is_authoritative=False,
+        corroboration_status=CorroborationStatus.DIRECT_EVIDENCE,
+        first_seen="2026-10-15T10:01:00Z",
+        last_seen="2026-10-15T10:01:00Z",
+    )
+    edge_inferred = InvestigationGraphEdge(
+        edge_id="e-inf",
+        source_node_id="host:a",
+        target_node_id="host:inf",
+        relationship_type="LATERAL_MOVEMENT",
+        epistemic_status=RelationshipEpistemicStatus.INFERRED,
+        is_authoritative=True,
+        corroboration_status=CorroborationStatus.TEMPORALLY_ALIGNED,
+        first_seen="2026-10-15T10:02:00Z",
+        last_seen="2026-10-15T10:02:00Z",
+    )
+    edge_supported = InvestigationGraphEdge(
+        edge_id="e-ok",
+        source_node_id="host:a",
+        target_node_id="host:ok",
+        relationship_type="LATERAL_MOVEMENT",
+        epistemic_status=RelationshipEpistemicStatus.OBSERVED,
+        is_authoritative=True,
+        corroboration_status=CorroborationStatus.DIRECT_EVIDENCE,
+        first_seen="2026-10-15T10:03:00Z",
+        last_seen="2026-10-15T10:03:00Z",
+    )
+    transitions = TemporalReconstructionEngine().detect_transitions(
+        t_repo.get_case(case.case_id, resolve_evidence=False),
+        [],
+        [],
+        graph=SimpleNamespace(edges=[edge_missing, edge_false_auth, edge_inferred, edge_supported]),
+    )
+    by_dst = {t.to_entity: t.epistemic_status for t in transitions}
+    assert by_dst["host:miss"] == EpistemicStatus.UNKNOWN
+    assert by_dst["host:false"] == EpistemicStatus.INFERRED
+    assert by_dst["host:inf"] == EpistemicStatus.INFERRED
+    assert by_dst["host:ok"] == EpistemicStatus.OBSERVED
+
+
+def test_time_boundary_equality_missing_timestamps_and_digest_invariance(tmp_path):
+    """Items 3 & 10: Boundary timestamps are inclusive, missing timestamps fail closed under active bounds, and volatile generated_at never alters digests."""
+    from logintel.storage.case_repo import CaseRepository
+    from logintel.timeline.service import UnifiedTimelineService
+    from logintel.ai.temporal.reconstruction_engine import TemporalReconstructionEngine
+
+    t_db = Database(db_path=tmp_path / "forensic_bnd.db")
+    t_db.initialize()
+    t_repo = CaseRepository(db_path=tmp_path / "cases_bnd.db", forensic_db=t_db)
+    t_tl = UnifiedTimelineService(forensic_db=t_db, case_repository=t_repo)
+    t_mh = MultiHostInvestigationService(case_repository=t_repo, forensic_database=t_db, timeline_service=t_tl)
+
+    case = t_repo.create_case(incident_id=1, title="Boundary & Missing Timestamp Case")
+    t_repo.update_case_scope(
+        case_id=case.case_id,
+        scope=InvestigationScope(
+            investigation_id=1,
+            subject_id="inc-1",
+            target_hosts=["host-bnd"],
+            time_start="2026-10-15T10:00:00Z",
+            time_end="2026-10-15T12:00:00Z",
+        ),
+    )
+
+    # Exact boundary hits (+05:30 equivalent of 10:00:00Z, exact 12:00:00Z end) plus missing-timestamp ref
+    for sid, ts in [
+        ("ev-at-start", "2026-10-15T15:30:00+05:30"),
+        ("ev-at-end", "2026-10-15T12:00:00Z"),
+        ("ev-missing-ts", None),
+        ("ev-bad-ts", "invalid-iso"),
+    ]:
+        t_repo.add_evidence_reference(
+            case_id=case.case_id,
+            source_type="event",
+            source_id=sid,
+            role="SUPPORTING",
+            epistemic_status="OBSERVED",
+            citation_tag=f"[event:{sid}]",
+            analyst_annotation=json.dumps({
+                "id": sid,
+                "host": "host-bnd",
+                "timestamp": ts,
+            }),
+        )
+
+    dossier1 = t_mh.get_case_dossier(case.case_id)
+    assert dossier1.participating_hosts[0].event_count == 2
+
+    tl_res = t_tl.query_timeline(case.case_id, TimelineFilterParams(limit=50))
+    tl_ids = [it.source_id for it in tl_res.items if it.source_id.startswith("ev-")]
+    assert tl_ids == ["ev-at-start", "ev-at-end"]
+
+    # Malformed query time_start fails closed
+    bad_q = t_tl.query_timeline(case.case_id, TimelineFilterParams(time_start="not-an-iso-date"))
+    assert bad_q.items == []
+    assert bad_q.total == 0
+
+    # Different synthesis runs change generated_at while keeping provenance_hash identical
+    time.sleep(0.01)
+    dossier2 = t_mh.get_case_dossier(case.case_id)
+    assert dossier2.generated_at != dossier1.generated_at
+    assert dossier2.provenance_hash == dossier1.provenance_hash
+
+    recon_engine = TemporalReconstructionEngine()
+    hydrated = t_repo.get_case(case.case_id, resolve_evidence=True)
+    rec1 = recon_engine.reconstruct_investigation(hydrated)
+    time.sleep(0.01)
+    rec2 = recon_engine.reconstruct_investigation(hydrated)
+    assert rec2.generated_at != rec1.generated_at
+    assert rec2.provenance_hash == rec1.provenance_hash
+
+
+
 
 
 

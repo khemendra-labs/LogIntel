@@ -142,7 +142,8 @@ class IncidentsRepository:
 
                     conn.execute("COMMIT;")
                 except Exception:
-                    conn.execute("ROLLBACK;")
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK;")
                     raise
                 finally:
                     conn.isolation_level = old_isolation
@@ -365,7 +366,8 @@ class IncidentsRepository:
                     self._sync_incident_metrics(cur, incident_id)
                     conn.execute("COMMIT;")
                 except Exception:
-                    conn.execute("ROLLBACK;")
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK;")
                     raise
                 finally:
                     conn.isolation_level = old_isolation
@@ -394,7 +396,8 @@ class IncidentsRepository:
                     self._sync_incident_metrics(cur, incident_id)
                     conn.execute("COMMIT;")
                 except Exception:
-                    conn.execute("ROLLBACK;")
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK;")
                     raise
                 finally:
                     conn.isolation_level = old_isolation
@@ -442,28 +445,37 @@ class IncidentsRepository:
 
         with self._lock:
             with self.db.connection() as conn:
-                cur = conn.cursor()
-                for ent in entities:
-                    meta = getattr(ent, "metadata", None) or getattr(ent, "metadata_json", {})
-                    meta_json = json.dumps(meta) if meta else "{}"
-                    cur.execute(
-                        """
-                        INSERT INTO incident_entities (
-                            incident_id, entity_key, entity_type, display_name, metadata_json
-                        ) VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT(incident_id, entity_key) DO UPDATE SET
-                            display_name = excluded.display_name,
-                            metadata_json = excluded.metadata_json
-                        """,
-                        (
-                            incident_id,
-                            ent.entity_key,
-                            ent.entity_type.value,
-                            ent.display_name,
-                            meta_json,
-                        ),
-                    )
-                conn.commit()
+                old_isolation = conn.isolation_level
+                conn.isolation_level = None
+                try:
+                    conn.execute("BEGIN IMMEDIATE;")
+                    cur = conn.cursor()
+                    for ent in entities:
+                        meta = getattr(ent, "metadata", None) or getattr(ent, "metadata_json", {})
+                        meta_json = json.dumps(meta) if meta else "{}"
+                        cur.execute(
+                            """
+                            INSERT INTO incident_entities (
+                                incident_id, entity_key, entity_type, display_name, metadata_json
+                            ) VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(incident_id, entity_key) DO UPDATE SET
+                                display_name = excluded.display_name,
+                                metadata_json = excluded.metadata_json
+                            """,
+                            (
+                                incident_id,
+                                ent.entity_key,
+                                ent.entity_type.value,
+                                ent.display_name,
+                                meta_json,
+                            ),
+                        )
+                    conn.execute("COMMIT;")
+                except Exception:
+                    conn.execute("ROLLBACK;")
+                    raise
+                finally:
+                    conn.isolation_level = old_isolation
 
         return self.get_incident_entities(incident_id)
 
@@ -510,7 +522,8 @@ class IncidentsRepository:
                         )
                     conn.execute("COMMIT;")
                 except Exception:
-                    conn.execute("ROLLBACK;")
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK;")
                     raise
                 finally:
                     conn.isolation_level = old_isolation
@@ -611,14 +624,28 @@ class IncidentsRepository:
                         )
                     cur.execute("DELETE FROM incident_relationships WHERE incident_id = ?", (source_incident_id,))
 
-                    # 5. Recompute timestamps and severity
+                    # 5. Recompute timestamps and severity (parsed timezone-aware comparisons)
                     s_first = source_row["first_seen"]
                     t_first = target_row["first_seen"]
-                    combined_first = min(filter(None, [s_first, t_first]))
+                    first_candidates = [
+                        (self._parse_dt(ts), ts) for ts in [s_first, t_first] if ts is not None
+                    ]
+                    valid_firsts = [(dt, ts) for dt, ts in first_candidates if dt is not None]
+                    if valid_firsts:
+                        combined_first = min(valid_firsts, key=lambda x: x[0])[1]
+                    else:
+                        combined_first = s_first or t_first
 
                     s_last = source_row["last_seen"]
                     t_last = target_row["last_seen"]
-                    combined_last = max(filter(None, [s_last, t_last]))
+                    last_candidates = [
+                        (self._parse_dt(ts), ts) for ts in [s_last, t_last] if ts is not None
+                    ]
+                    valid_lasts = [(dt, ts) for dt, ts in last_candidates if dt is not None]
+                    if valid_lasts:
+                        combined_last = max(valid_lasts, key=lambda x: x[0])[1]
+                    else:
+                        combined_last = s_last or t_last
 
                     severity_order = {
                         "CRITICAL": 5, "ALERT": 4, "WARNING": 3,
@@ -640,14 +667,25 @@ class IncidentsRepository:
                     # 6. Recompute aggregated counts (alert_count, event_count)
                     self._sync_incident_metrics(cur, target_incident_id)
 
-                    # 7. Delete source incident
+                    # 7. Preserve investigation notes and audit logs before deleting source incident
+                    cur.execute(
+                        "UPDATE investigation_notes SET incident_id = ? WHERE incident_id = ?",
+                        (target_incident_id, source_incident_id),
+                    )
+                    cur.execute(
+                        "UPDATE investigation_notes_audit SET incident_id = ? WHERE incident_id = ?",
+                        (target_incident_id, source_incident_id),
+                    )
+
+                    # 8. Delete source incident
                     cur.execute("DELETE FROM incidents WHERE id = ?", (source_incident_id,))
 
                     conn.execute("COMMIT;")
                     self._merged_into[source_incident_id] = target_incident_id
                     logger.info("Successfully merged incident %d into incident %d", source_incident_id, target_incident_id)
                 except Exception:
-                    conn.execute("ROLLBACK;")
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK;")
                     raise
                 finally:
                     conn.isolation_level = old_isolation
@@ -740,7 +778,7 @@ class IncidentsRepository:
                             item_type=TimelineItemType.ALERT,
                             title=f"Alert: {r['title']}",
                             summary=r["description"],
-                            severity=Severity(r["severity"]),
+                            severity=Severity(str(r["severity"]).upper()),
                             ref_id=str(r["id"]),
                             details={"occurrence_count": r["occurrence_count"], "host": r["host"]},
                         )
@@ -770,7 +808,7 @@ class IncidentsRepository:
                             item_type=TimelineItemType.EVENT,
                             title=f"{r['event_type']} ({r['outcome']})",
                             summary=r["summary"],
-                            severity=Severity(r["severity"]),
+                            severity=Severity(str(r["severity"]).upper()),
                             ref_id=r["id"],
                             details={
                                 "host": r["host"],
@@ -1056,7 +1094,15 @@ class IncidentsRepository:
                 if conf_hierarchy.get(conf_val, 1) > conf_hierarchy.get(prior_conf, 1)
                 else prior_conf
             )
-            earliest_matched = min(filter(None, [existing["matched_at"], rel_matched_iso]))
+            ex_matched = existing["matched_at"]
+            match_candidates = [
+                (cls._parse_dt(ts), ts) for ts in [ex_matched, rel_matched_iso] if ts is not None
+            ]
+            valid_matches = [(dt, ts) for dt, ts in match_candidates if dt is not None]
+            if valid_matches:
+                earliest_matched = min(valid_matches, key=lambda x: x[0])[1]
+            else:
+                earliest_matched = ex_matched or rel_matched_iso
 
             cur.execute(
                 """

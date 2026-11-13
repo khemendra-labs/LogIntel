@@ -176,8 +176,8 @@ class InvestigationIntelligenceService:
 
         for step in reconstruction.steps:
             # Differentiate observed steps vs inferred steps
-            is_observed = getattr(step, "nature", None) == "OBSERVED" or bool(step.supporting_event_ids)
-            epistemic = EpistemicStatus.OBSERVED if is_observed else EpistemicStatus.INFERRED
+            nature_val = str(getattr(getattr(step, "nature", None), "value", getattr(step, "nature", ""))).upper()
+            epistemic = EpistemicStatus.OBSERVED if nature_val == "OBSERVED" else EpistemicStatus.INFERRED
             supp = [f"[event:{eid}]" for eid in (step.supporting_event_ids or [])]
 
             steps.append(

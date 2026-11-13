@@ -89,6 +89,8 @@ class HypothesisEvidenceAnalyzer:
 
         if available_contradicting > 0:
             support_status = HypothesisSupportStatus.CONTRADICTED
+        elif hyp.contradicting_evidence_tags and available_contradicting == 0:
+            support_status = HypothesisSupportStatus.UNRESOLVED
         elif available_supporting >= 2 and not hyp.evidence_gaps:
             support_status = HypothesisSupportStatus.SUPPORTED_BY_CURRENT_EVIDENCE
         elif available_supporting >= 1:

@@ -88,9 +88,7 @@ class HealthService:
         ingestion_states = {s["source_name"]: s for s in self.repo.get_all_ingestion_states()}
 
         # 1. Inspect journald
-        journal_collector = (
-            collectors.get("journald") if collectors else JournalCollector()
-        )
+        journal_collector = (collectors.get("journald") if collectors else None) or JournalCollector()
         j_avail, j_reason = journal_collector.check_availability()
         j_state = ingestion_states.get("journald", {})
         sources_health.append(

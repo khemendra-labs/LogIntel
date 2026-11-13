@@ -133,9 +133,10 @@ class UnifiedTimelineService:
                 return is_interval_overlapping_bounds(item.timestamp, str(last_seen), start_dt, end_dt)
         return is_timestamp_in_bounds(item.timestamp, start_dt, end_dt)
 
-    def _load_bookmarks(self, case_id: int) -> Dict[str, str]:
+    def _load_bookmarks(self, case_id: int, case: Optional[InvestigationCase] = None) -> Dict[str, str]:
         """Load analyst bookmarks for a case from case_evidence_references without schema changes."""
-        case = self.case_repo.get_case(case_id)
+        if case is None:
+            case = self.case_repo.get_case(case_id)
         if not case:
             return {}
         bookmarks: Dict[str, str] = {}
@@ -195,7 +196,7 @@ class UnifiedTimelineService:
 
         db_truncated = False
 
-        bookmarks = self._load_bookmarks(case_id)
+        bookmarks = self._load_bookmarks(case_id, case=case)
         items: List[InvestigationTimelineItem] = []
         items_by_id: Dict[str, InvestigationTimelineItem] = {}
         seen_ids: Set[str] = set()
@@ -215,10 +216,45 @@ class UnifiedTimelineService:
                         rec = parsed
                 except Exception:
                     pass
-            ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at") or ref.created_at
+            has_active_bounds = eff_start_dt is not None or eff_end_dt is not None
+            rec_ts = rec.get("timestamp") or rec.get("first_seen") or rec.get("created_at")
+            if rec_ts:
+                ts = rec_ts
+            elif has_active_bounds and ref.source_type in ("event", "alert", "detection"):
+                ts = None
+            else:
+                ts = ref.created_at
             host = rec.get("host") or (target_hosts[0] if target_hosts else "unknown-host")
             source = rec.get("source") or ref.source_type
             ev_type = rec.get("event_type") or rec.get("action") or ref.source_type.upper()
+
+            def _coerce_ep(val: Any, fallback: EpistemicStatus = EpistemicStatus.UNKNOWN) -> EpistemicStatus:
+                if val is None:
+                    return fallback
+                raw = str(getattr(val, "value", val)).strip().upper()
+                if not raw:
+                    return fallback
+                try:
+                    return EpistemicStatus(raw)
+                except Exception:
+                    return fallback
+
+            def _min_ep(vals: List[EpistemicStatus]) -> EpistemicStatus:
+                rank = {
+                    EpistemicStatus.UNKNOWN: 0,
+                    EpistemicStatus.INFERRED: 1,
+                    EpistemicStatus.OBSERVED: 2,
+                }
+                return min(vals, key=lambda s: rank.get(s, 0))
+
+            ref_ep = _coerce_ep(getattr(ref, "epistemic_status", None), EpistemicStatus.UNKNOWN)
+            ep_parts = [ref_ep]
+            if "epistemic_status" in rec and rec.get("epistemic_status") is not None:
+                ep_parts.append(_coerce_ep(rec.get("epistemic_status"), EpistemicStatus.UNKNOWN))
+            epistemic = _min_ep(ep_parts)
+            is_auth_rec = rec.get("is_authoritative") is not False
+            if epistemic == EpistemicStatus.OBSERVED and not is_auth_rec:
+                epistemic = EpistemicStatus.INFERRED
 
             if ref.source_type == "alert":
                 layer = TimelineSourceLayer.ALERT
@@ -248,14 +284,16 @@ class UnifiedTimelineService:
             if rec.get("path"):
                 entities.append(f"file:{rec['path']}")
 
+            ts_str = str(ts) if ts else ""
             cand_id = f"tl-{pfx}-{ref.source_id}"
             if cand_id in items_by_id:
                 existing = items_by_id[cand_id]
-                # If truly equivalent record (same host, timestamp, and source domain), merge evidence refs
-                if existing.host_id == str(host) and existing.timestamp == str(ts) and existing.source_id == str(ref.source_id):
+                # If truly equivalent record (same host, timestamp, and source domain), merge evidence refs conservatively
+                if existing.host_id == str(host) and existing.timestamp == ts_str and existing.source_id == str(ref.source_id):
                     tag = ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]"
                     if tag not in existing.evidence_refs:
                         existing.evidence_refs.append(tag)
+                    existing.epistemic_status = _min_ep([existing.epistemic_status, epistemic])
                     continue
                 else:
                     # Distinct record sharing a bare ID: disambiguate with host
@@ -268,19 +306,18 @@ class UnifiedTimelineService:
             seen_ids.add(t_id)
 
             summary = rec.get("summary") or rec.get("raw_message") or rec.get("description") or f"Forensic {ref.source_type}"
-            epistemic = EpistemicStatus.OBSERVED
-            if ref.epistemic_status:
-                try:
-                    epistemic = EpistemicStatus(ref.epistemic_status)
-                except Exception:
-                    epistemic = EpistemicStatus.OBSERVED
+            provenance_label = (
+                f"Authoritative forensic reference ({ref.source_type}:{ref.source_id})"
+                if epistemic == EpistemicStatus.OBSERVED
+                else f"Non-authoritative forensic reference ({ref.source_type}:{ref.source_id}, status={epistemic.value})"
+            )
 
             is_bm = t_id in bookmarks
             item = InvestigationTimelineItem(
                 timeline_id=t_id,
                 case_id=case_id,
-                timestamp=str(ts),
-                timestamp_precision=self._detect_precision(str(ts)),
+                timestamp=ts_str,
+                timestamp_precision=self._detect_precision(ts_str),
                 host_id=str(host),
                 layer=layer,
                 event_type=str(ev_type),
@@ -295,7 +332,7 @@ class UnifiedTimelineService:
                 evidence_refs=[ref.citation_tag or f"[{ref.source_type}:{ref.source_id}]"],
                 epistemic_status=epistemic,
                 collection_status=CollectionStatus.SOURCE_AVAILABLE,
-                provenance=f"Authoritative forensic reference ({ref.source_type}:{ref.source_id})",
+                provenance=provenance_label,
                 is_bookmarked=is_bm,
                 bookmark_notes=bookmarks.get(t_id),
                 metadata=rec,

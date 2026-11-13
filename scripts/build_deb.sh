@@ -28,8 +28,11 @@ mkdir -p "${DEB_DIR}/usr/bin"
 mkdir -p "${DEB_DIR}/usr/lib/logintel/engine"
 mkdir -p "${DEB_DIR}/usr/share/logintel/rules"
 mkdir -p "${DEB_DIR}/usr/share/applications"
-mkdir -p "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps"
+mkdir -p "${DEB_DIR}/usr/share/pixmaps"
 mkdir -p "${DEB_DIR}/usr/share/icons/hicolor/32x32/apps"
+mkdir -p "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps"
+mkdir -p "${DEB_DIR}/usr/share/icons/hicolor/256x256/apps"
+mkdir -p "${DEB_DIR}/usr/share/icons/hicolor/512x512/apps"
 mkdir -p "${DEB_DIR}/usr/share/doc/logintel"
 mkdir -p "${DEB_DIR}/usr/lib/systemd/system"
 mkdir -p "${OUTPUT_DIR}"
@@ -156,9 +159,12 @@ cat << 'EOF' > "${DEB_DIR}/usr/bin/logintel"
 set -e
 export PYTHONPATH="/usr/lib/logintel/engine:/usr/lib/logintel/engine/.venv/lib/python3.12/site-packages:${PYTHONPATH:-}"
 export LOGINTEL_RULES_DIR="/usr/share/logintel/rules"
+# Prevent WebKitGTK 4.1 hardware acceleration / DMA-BUF freeze on Linux Wayland/X11
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
 exec /usr/bin/logintel-bin "$@"
 EOF
 chmod 755 "${DEB_DIR}/usr/bin/logintel"
+ln -sf logintel "${DEB_DIR}/usr/bin/prahari"
 
 # Engine CLI Wrapper
 cat << 'EOF' > "${DEB_DIR}/usr/bin/logintel-engine"
@@ -189,14 +195,37 @@ exec /usr/lib/logintel/engine/.venv/bin/python -m logintel.agent.main "$@"
 EOF
 chmod 755 "${DEB_DIR}/usr/bin/logintel-agent"
 
-# 5. Install Desktop Entry & Icons
-cp "${ROOT_DIR}/packaging/deb/logintel.desktop" "${DEB_DIR}/usr/share/applications/logintel.desktop"
-chmod 644 "${DEB_DIR}/usr/share/applications/logintel.desktop"
-cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128.png" "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps/logintel.png"
-chmod 644 "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps/logintel.png"
+# 5. Install Desktop Entry & Icons (Single unified Prahari launcher)
+cp "${ROOT_DIR}/packaging/deb/prahari.desktop" "${DEB_DIR}/usr/share/applications/prahari.desktop"
+chmod 644 "${DEB_DIR}/usr/share/applications/prahari.desktop"
+
+# Install into /usr/share/pixmaps (standard Ubuntu/GNOME desktop dock search path)
+if [ -f "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128.png" ]; then
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128.png" "${DEB_DIR}/usr/share/pixmaps/prahari.png"
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128.png" "${DEB_DIR}/usr/share/pixmaps/logintel.png"
+    chmod 644 "${DEB_DIR}/usr/share/pixmaps/prahari.png" "${DEB_DIR}/usr/share/pixmaps/logintel.png"
+fi
+
+# Install hicolor icon resolutions (32x32, 128x128, 256x256, 512x512)
 if [ -f "${ROOT_DIR}/apps/desktop/src-tauri/icons/32x32.png" ]; then
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/32x32.png" "${DEB_DIR}/usr/share/icons/hicolor/32x32/apps/prahari.png"
     cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/32x32.png" "${DEB_DIR}/usr/share/icons/hicolor/32x32/apps/logintel.png"
-    chmod 644 "${DEB_DIR}/usr/share/icons/hicolor/32x32/apps/logintel.png"
+    chmod 644 "${DEB_DIR}/usr/share/icons/hicolor/32x32/apps/prahari.png" "${DEB_DIR}/usr/share/icons/hicolor/32x32/apps/logintel.png"
+fi
+if [ -f "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128.png" ]; then
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128.png" "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps/prahari.png"
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128.png" "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps/logintel.png"
+    chmod 644 "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps/prahari.png" "${DEB_DIR}/usr/share/icons/hicolor/128x128/apps/logintel.png"
+fi
+if [ -f "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128@2x.png" ]; then
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128@2x.png" "${DEB_DIR}/usr/share/icons/hicolor/256x256/apps/prahari.png"
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/128x128@2x.png" "${DEB_DIR}/usr/share/icons/hicolor/256x256/apps/logintel.png"
+    chmod 644 "${DEB_DIR}/usr/share/icons/hicolor/256x256/apps/prahari.png" "${DEB_DIR}/usr/share/icons/hicolor/256x256/apps/logintel.png"
+fi
+if [ -f "${ROOT_DIR}/apps/desktop/src-tauri/icons/icon.png" ]; then
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/icon.png" "${DEB_DIR}/usr/share/icons/hicolor/512x512/apps/prahari.png"
+    cp "${ROOT_DIR}/apps/desktop/src-tauri/icons/icon.png" "${DEB_DIR}/usr/share/icons/hicolor/512x512/apps/logintel.png"
+    chmod 644 "${DEB_DIR}/usr/share/icons/hicolor/512x512/apps/prahari.png" "${DEB_DIR}/usr/share/icons/hicolor/512x512/apps/logintel.png"
 fi
 
 # 6. Install Systemd Service Unit
@@ -252,6 +281,9 @@ cat << 'EOF' > "${DEB_DIR}/DEBIAN/postinst"
 set -e
 
 if [ "$1" = "configure" ]; then
+    # Remove any lingering legacy desktop entry so only one Prahari icon shows on the homescreen
+    rm -f /usr/share/applications/logintel.desktop
+
     # Update desktop and icon databases if tools are available
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database -q /usr/share/applications || true
@@ -260,13 +292,38 @@ if [ "$1" = "configure" ]; then
         gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
     fi
     
+    # Ensure directory permissions are set properly for desktop client IPC discovery
+    mkdir -p /var/lib/logintel /run/logintel
+    chown root:adm /var/lib/logintel /run/logintel 2>/dev/null || true
+    chmod 755 /var/lib/logintel /run/logintel 2>/dev/null || true
+
+    # Reload systemd, enable and start 24/7 background telemetry engine daemon
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl enable logintel-engine.service >/dev/null 2>&1 || true
+        systemctl restart logintel-engine.service >/dev/null 2>&1 || true
+    fi
+
+    # Fix permissions on newly created token files if present
+    sleep 1
+    if [ -f /var/lib/logintel/.engine_token ]; then
+        chmod 644 /var/lib/logintel/.engine_token 2>/dev/null || true
+    fi
+    if [ -f /run/logintel/engine.token ]; then
+        chmod 644 /run/logintel/engine.token 2>/dev/null || true
+    fi
+
     echo "=========================================================="
-    echo " LogIntel has been installed successfully!"
-    echo " Ensure your user is a member of the 'adm' group to read"
-    echo " system security telemetry without root privileges:"
+    echo " Prahari (LogIntel) has been installed successfully!"
+    echo " The Prahari background engine is actively running 24/7:"
+    echo "   systemctl status logintel-engine"
+    echo ""
+    echo " Ensure your user is a member of the 'adm' group to connect"
+    echo " and read system security telemetry:"
     echo "   sudo usermod -aG adm \$USER"
-    echo " Then launch LogIntel from your applications menu or type:"
-    echo "   logintel"
+    echo ""
+    echo " Then launch Prahari from your applications menu or type:"
+    echo "   prahari   (or logintel)"
     echo " Replay CLI available via:"
     echo "   logintel-replay --help"
     echo "=========================================================="
@@ -279,6 +336,11 @@ chmod 755 "${DEB_DIR}/DEBIAN/postinst"
 cat << 'EOF' > "${DEB_DIR}/DEBIAN/prerm"
 #!/bin/sh
 set -e
+# Stop and disable systemd daemon before package removal or upgrade
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop logintel-engine.service >/dev/null 2>&1 || true
+    systemctl disable logintel-engine.service >/dev/null 2>&1 || true
+fi
 # Gracefully terminate any lingering user engine processes on uninstall
 pkill -f "logintel.main" || true
 pkill -f "logintel-bin" || true
@@ -292,6 +354,9 @@ cat << 'EOF' > "${DEB_DIR}/DEBIAN/postrm"
 set -e
 
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database -q /usr/share/applications || true
     fi
@@ -301,7 +366,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 fi
 
 if [ "$1" = "purge" ]; then
-    echo "Notice: User telemetry databases in ~/.local/share/logintel/ were preserved."
+    echo "Notice: Telemetry databases were preserved."
 fi
 exit 0
 EOF

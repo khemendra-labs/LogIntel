@@ -159,7 +159,7 @@ export function EventForensicsModal({
                   <div style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>
                     {event.network?.src_ip || "N/A"}
                     {event.network?.src_port ? `:${event.network.src_port}` : ""}
-                    {event.network?.dest_ip ? ` &rarr; ${event.network.dest_ip}:${event.network.dest_port || ""}` : ""}
+                    {event.network?.dest_ip ? ` \u2192 ${event.network.dest_ip}:${event.network.dest_port || ""}` : ""}
                   </div>
                 </div>
                 <div>

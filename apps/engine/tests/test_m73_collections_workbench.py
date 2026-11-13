@@ -30,6 +30,12 @@ def test_case():
             description="Case for validating Evidence Collections & Workbench",
             created_by="SecAnalyst-1",
         )
+    conn = case_repo._get_connection()
+    with case_repo._lock, conn:
+        conn.execute(
+            "DELETE FROM case_evidence_references WHERE case_id = ? AND source_type IN ('collection', 'collection_item')",
+            (case.case_id,),
+        )
     # Ensure some underlying evidence exists in the case
     case_repo.add_evidence_reference(
         case_id=case.case_id,
@@ -49,7 +55,12 @@ def test_case():
         citation_tag="[alert:5]",
         analyst_annotation="Privilege escalation detection alert",
     )
-    return case.case_id
+    yield case.case_id
+    with case_repo._lock, conn:
+        conn.execute(
+            "DELETE FROM case_evidence_references WHERE case_id = ? AND source_type IN ('collection', 'collection_item')",
+            (case.case_id,),
+        )
 
 
 def test_collection_lifecycle(test_case):

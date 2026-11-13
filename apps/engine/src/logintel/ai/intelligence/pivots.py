@@ -34,6 +34,20 @@ class EntityPivotResolver:
         clean_val = entity_value.strip()
         etype = entity_type.upper()
 
+        if not clean_val:
+            return EntityPivotAnalysis(
+                entity_type=etype,
+                entity_value="",
+                case_id=case_id,
+                related_events=[],
+                related_alerts=[],
+                related_detections=[],
+                related_incidents=[],
+                related_cases=[],
+                related_entities=[],
+                temporal_activity=[],
+            )
+
         related_events: List[Dict[str, Any]] = []
         related_alerts: List[Dict[str, Any]] = []
         related_detections: List[Dict[str, Any]] = []

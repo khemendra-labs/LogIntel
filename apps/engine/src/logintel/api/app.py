@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from logintel.api.routes import router
@@ -42,10 +43,21 @@ async def lifespan(app: FastAPI):
     ingestion_engine.stop()
     db.close()
     try:
+        from logintel.storage.case_repo import case_repo
+        case_repo.close()
+    except Exception:
+        pass
+    try:
         if settings.token_path.exists():
             settings.token_path.unlink()
     except Exception:
         pass
+    for rt in [Path("/run/logintel/engine.token"), Path("/etc/logintel/engine.token")]:
+        try:
+            if rt.exists():
+                rt.unlink()
+        except Exception:
+            pass
     logger.info("LogIntel Engine shutdown complete.")
 
 
@@ -72,6 +84,17 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router)
+
+    @app.get("/handshake")
+    def root_handshake():
+        """Unauthenticated root handshake endpoint for Tauri engine identity and compatibility check."""
+        return {
+            "service": "logintel-engine",
+            "version": settings.version,
+            "api_version": "v1",
+            "status": "ready",
+        }
+
     return app
 
 

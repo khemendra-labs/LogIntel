@@ -6,6 +6,7 @@ import {
   fetchCases,
   fetchEventDetail,
   fetchEventStatistics,
+  fetchHandshake,
   fetchIncidents,
   fetchSystemStatus,
   fetchTelemetryHealth,
@@ -62,8 +63,9 @@ export function App() {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
 
-  // In-flight request lock to prevent overlapping polling intervals
+  // In-flight request lock and abort controller to prevent overlapping polling intervals
   const isFetchingRef = useRef<boolean>(false);
+  const pollAbortRef = useRef<AbortController | null>(null);
 
   // Modals
   const [selectedEvent, setSelectedEvent] = useState<CanonicalEvent | null>(null);
@@ -77,10 +79,20 @@ export function App() {
   const [activityFilter, setActivityFilter] = useState<{ severity?: string; source?: string } | null>(null);
 
   const loadData = async (hours = overviewHours) => {
+    if (typeof document !== "undefined" && document.hidden) return;
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
 
+    if (pollAbortRef.current) {
+      pollAbortRef.current.abort();
+      pollAbortRef.current = null;
+    }
+    const currentAbort = new AbortController();
+    pollAbortRef.current = currentAbort;
+    const signal = currentAbort.signal;
+
     try {
+      const isOverview = currentTab === "overview";
       const [
         sysStatus,
         telHealth,
@@ -93,25 +105,33 @@ export function App() {
         invIncidents,
         caseList,
       ] = await Promise.all([
-        fetchSystemStatus().catch(() => null),
-        fetchTelemetryHealth().catch(() => null),
-        fetchEventStatistics(hours).catch(() => null),
-        fetchAlerts({ status: "OPEN", limit: 1 }).catch(() => ({ total: 0 })),
-        fetchAlerts({ status: "ACKNOWLEDGED", limit: 1 }).catch(() => ({ total: 0 })),
-        fetchAlerts({ status: "RESOLVED", limit: 1 }).catch(() => ({ total: 0 })),
-        fetchAlerts({ status: "FALSE_POSITIVE", limit: 1 }).catch(() => ({ total: 0 })),
-        fetchIncidents({ status: "OPEN", limit: 1 }).catch(() => ({ total: 0 })),
-        fetchIncidents({ status: "INVESTIGATING", limit: 1 }).catch(() => ({ total: 0 })),
-        fetchCases(undefined, 100).catch(() => []),
+        fetchSystemStatus(signal).catch(() => null),
+        fetchTelemetryHealth(signal).catch(() => null),
+        isOverview ? fetchEventStatistics(hours, signal).catch(() => null) : Promise.resolve(null),
+        fetchAlerts({ status: "OPEN", limit: 1 }, signal).catch(() => ({ total: 0 })),
+        fetchAlerts({ status: "ACKNOWLEDGED", limit: 1 }, signal).catch(() => ({ total: 0 })),
+        fetchAlerts({ status: "RESOLVED", limit: 1 }, signal).catch(() => ({ total: 0 })),
+        fetchAlerts({ status: "FALSE_POSITIVE", limit: 1 }, signal).catch(() => ({ total: 0 })),
+        fetchIncidents({ status: "OPEN", limit: 1 }, signal).catch(() => ({ total: 0 })),
+        fetchIncidents({ status: "INVESTIGATING", limit: 1 }, signal).catch(() => ({ total: 0 })),
+        fetchCases(undefined, 100, signal).catch(() => []),
       ]);
+
+      if (signal.aborted) return;
 
       if (sysStatus) {
         setStatus(sysStatus);
         setBackendConnected(true);
         setBackendError(null);
       } else {
-        setBackendConnected(false);
-        setBackendError("LogIntel engine is unreachable at 127.0.0.1:41721. Verify that the backend service is running.");
+        const handshake = await fetchHandshake().catch(() => null);
+        if (handshake && handshake.service === "logintel-engine") {
+          setBackendConnected(false);
+          setBackendError("LogIntel engine is active, but client authentication is synchronizing. Retrying connection...");
+        } else {
+          setBackendConnected(false);
+          setBackendError("LogIntel engine is unreachable at 127.0.0.1:41721. Verify that the backend service is running.");
+        }
       }
 
       if (telHealth) setHealth(telHealth);
@@ -134,6 +154,7 @@ export function App() {
         }
       }
     } catch (err) {
+      if (signal.aborted) return;
       console.error("Error polling backend engine:", err);
       setBackendConnected(false);
       setBackendError(err instanceof Error ? err.message : "Error connecting to backend");
@@ -146,9 +167,15 @@ export function App() {
     loadData(overviewHours);
     const interval = setInterval(() => {
       loadData(overviewHours);
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [overviewHours]);
+    }, 10000);
+    return () => {
+      clearInterval(interval);
+      if (pollAbortRef.current) {
+        pollAbortRef.current.abort();
+        pollAbortRef.current = null;
+      }
+    };
+  }, [overviewHours, currentTab]);
 
   const handleTimeWindowChange = async (hours: number) => {
     setOverviewHours(hours);
@@ -204,7 +231,6 @@ export function App() {
         <Navigation
           currentTab={currentTab}
           onTabChange={(tab) => {
-            if (tab === "activity") setActivityFilter(null);
             setCurrentTab(tab);
           }}
           status={status}
@@ -235,6 +261,7 @@ export function App() {
               onNavigateToDiagnostics={() => setCurrentTab("diagnostics")}
               onTimeWindowChange={handleTimeWindowChange}
               currentHours={overviewHours}
+              refreshTrigger={refreshTrigger}
               isLoadingStats={isLoadingStats}
               backendConnected={backendConnected}
               backendError={backendError}

@@ -1445,43 +1445,46 @@ class CaseService:
         # 5. Check if cached assessment exists and not forced refresh
         latest = self.case_repo.get_latest_case_assessment(case_id)
         if latest and not refresh:
-            from logintel.ai.domain.investigation_assessment import (
-                CaseAssessment,
-                CaseConclusion,
-                ClosureReadinessAssessment,
-                EvidenceSufficiencyAssessment,
-                PrioritizedEvidenceGap,
-                ProvenanceManifest,
-                StructuredFinding,
-                CompetingHypothesisAssessment,
-                InvestigationQuestion,
-            )
-            return CaseAssessment(
-                case_id=case_id,
-                assessment_id=latest["assessment_id"],
-                assessment_version=latest["assessment_version"],
-                created_at=latest["created_at"],
-                updated_at=latest["updated_at"],
-                case_state=latest.get("case_state") or case.status.value,
-                evidence_state=latest["evidence_state"],
-                assessment_state=latest.get("assessment_state") or "DRAFT",
-                epistemic_summary=latest.get("epistemic_summary") or {},
-                key_findings=[StructuredFinding.model_validate(f) for f in latest["findings"]],
-                supporting_evidence=latest.get("supporting_evidence") or [f["finding_id"] for f in latest["findings"] if f.get("review_state") == "ACCEPTED"],
-                contradicting_evidence=latest.get("contradicting_evidence") or [],
-                evidence_gaps=[PrioritizedEvidenceGap.model_validate(g) for g in latest["gaps"]],
-                hypotheses=[CompetingHypothesisAssessment.model_validate(h) for h in latest["hypotheses"]],
-                questions=[InvestigationQuestion.model_validate(q) for q in latest["questions"]],
-                evidence_sufficiency=EvidenceSufficiencyAssessment.model_validate(latest["sufficiency"]),
-                attack_sequence_summary=latest.get("attack_sequence_summary") or [],
-                affected_entities=latest.get("affected_entities") or [],
-                affected_hosts=latest.get("affected_hosts") or [],
-                mitre_summary=latest.get("mitre_summary") or [],
-                analyst_assessment=latest.get("analyst_assessment") or "",
-                closure_readiness=ClosureReadinessAssessment.model_validate(latest["readiness"]),
-                conclusion=CaseConclusion.model_validate(latest["conclusion"]),
-                provenance=ProvenanceManifest.model_validate(latest["provenance"]),
-            )
+            try:
+                from logintel.ai.domain.investigation_assessment import (
+                    CaseAssessment,
+                    CaseConclusion,
+                    ClosureReadinessAssessment,
+                    EvidenceSufficiencyAssessment,
+                    PrioritizedEvidenceGap,
+                    ProvenanceManifest,
+                    StructuredFinding,
+                    CompetingHypothesisAssessment,
+                    InvestigationQuestion,
+                )
+                return CaseAssessment(
+                    case_id=case_id,
+                    assessment_id=latest["assessment_id"],
+                    assessment_version=latest["assessment_version"],
+                    created_at=latest["created_at"],
+                    updated_at=latest["updated_at"],
+                    case_state=latest.get("case_state") or case.status.value,
+                    evidence_state=latest["evidence_state"],
+                    assessment_state=latest.get("assessment_state") or "DRAFT",
+                    epistemic_summary=latest.get("epistemic_summary") or {},
+                    key_findings=[StructuredFinding.model_validate(f) for f in latest.get("findings", [])],
+                    supporting_evidence=latest.get("supporting_evidence") or [f["finding_id"] for f in latest.get("findings", []) if f.get("review_state") == "ACCEPTED"],
+                    contradicting_evidence=latest.get("contradicting_evidence") or [],
+                    evidence_gaps=[PrioritizedEvidenceGap.model_validate(g) for g in latest.get("gaps", [])],
+                    hypotheses=[CompetingHypothesisAssessment.model_validate(h) for h in latest.get("hypotheses", [])],
+                    questions=[InvestigationQuestion.model_validate(q) for q in latest.get("questions", [])],
+                    evidence_sufficiency=EvidenceSufficiencyAssessment.model_validate(latest["sufficiency"]),
+                    attack_sequence_summary=latest.get("attack_sequence_summary") or [],
+                    affected_entities=latest.get("affected_entities") or [],
+                    affected_hosts=latest.get("affected_hosts") or [],
+                    mitre_summary=latest.get("mitre_summary") or [],
+                    analyst_assessment=latest.get("analyst_assessment") or "",
+                    closure_readiness=ClosureReadinessAssessment.model_validate(latest["readiness"]),
+                    conclusion=CaseConclusion.model_validate(latest["conclusion"]),
+                    provenance=ProvenanceManifest.model_validate(latest["provenance"]),
+                )
+            except Exception as e:
+                logger.warning("Failed to deserialize cached assessment for case %s: %s; falling back to synthesis", case_id, e)
 
         analyst_note = latest.get("analyst_assessment", "") if latest else ""
         version = (latest.get("assessment_version", 0) + 1) if refresh and latest else (latest.get("assessment_version", 1) if latest else 1)

@@ -357,7 +357,8 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
                 conn.execute("COMMIT;")
                 logger.info("Applied migration %d successfully", version)
             except Exception as e:
-                conn.execute("ROLLBACK;")
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK;")
                 logger.error("Failed to apply migration %d (%s): %s", version, name, e)
                 raise
             finally:
@@ -409,5 +410,13 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_upper_event_type ON events(UPPER(event_type), timestamp DESC);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_upper_outcome ON events(UPPER(outcome), timestamp DESC);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_lower_user ON events(LOWER(username), timestamp DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_action ON events(action);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_action_time ON events(action, timestamp DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_time_severity ON events(timestamp DESC, severity);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_time_source ON events(timestamp DESC, source);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_time_event_type ON events(timestamp DESC, event_type);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_severity_time ON events(severity, timestamp DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_source_time ON events(source, timestamp DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_outcome_time ON events(outcome, timestamp DESC);")
         conn.commit()
 

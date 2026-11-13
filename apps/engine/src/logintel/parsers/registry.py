@@ -59,7 +59,11 @@ class ParserRegistry:
                 logger.warning("Parser %s failed on record: %s", parser.name, exc)
 
         # Fallback
-        fallback_event = self._fallback_parser.parse(record)
+        fallback_event = None
+        try:
+            fallback_event = self._fallback_parser.parse(record)
+        except Exception as exc:
+            logger.warning("Fallback parser failed on record: %s", exc)
         return fallback_event or CanonicalEvent(
             host=record.host or "unknown",
             source=record.source,

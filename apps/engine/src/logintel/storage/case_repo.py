@@ -87,6 +87,15 @@ class CaseRepository:
             self._enforce_storage_permissions()
         return self._local.conn
 
+    def close(self) -> None:
+        """Close current thread connection to cases.db."""
+        if hasattr(self._local, "conn") and self._local.conn is not None:
+            try:
+                self._local.conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
+
     def _initialize_schema(self) -> None:
         """Create case storage tables, foreign keys, and performance indexes."""
         with self._lock:
@@ -416,6 +425,16 @@ class CaseRepository:
                 )
 
             return self.get_case(case_id)  # type: ignore
+
+    def case_exists(self, case_id: int) -> bool:
+        """Lightweight existence check for an investigation case."""
+        with self._lock:
+            conn = self._get_connection()
+            row = conn.execute(
+                "SELECT 1 FROM investigation_cases WHERE case_id = ?",
+                (case_id,),
+            ).fetchone()
+            return row is not None
 
     def get_case(self, case_id: int, resolve_evidence: bool = True) -> Optional[InvestigationCase]:
         """Load an investigation case and all related records from SQLite."""
@@ -1185,10 +1204,22 @@ class CaseRepository:
                             found_record = dict(row)
                             status = ResolutionStatus.AVAILABLE
                     elif ref.source_type in ("entity", "entities", "incident_entity", "incident_entities", "incident_entitie"):
-                        row = conn.execute(
-                            "SELECT * FROM incident_entities WHERE entity_key = ?",
-                            (ref.source_id,),
-                        ).fetchone()
+                        inc_id = None
+                        if ref.case_id:
+                            c_conn = self._get_connection()
+                            c_row = c_conn.execute("SELECT incident_id FROM investigation_cases WHERE case_id = ?", (ref.case_id,)).fetchone()
+                            if c_row:
+                                inc_id = c_row["incident_id"]
+                        if inc_id is not None:
+                            row = conn.execute(
+                                "SELECT * FROM incident_entities WHERE incident_id = ? AND entity_key = ?",
+                                (inc_id, ref.source_id),
+                            ).fetchone()
+                        else:
+                            row = conn.execute(
+                                "SELECT * FROM incident_entities WHERE entity_key = ?",
+                                (ref.source_id,),
+                            ).fetchone()
                         if row:
                             found_record = dict(row)
                             status = ResolutionStatus.AVAILABLE
@@ -1318,27 +1349,30 @@ class CaseRepository:
         new_value: Optional[str] = None,
         reason: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
+        conn: Optional[sqlite3.Connection] = None,
     ) -> None:
         """Append an entry to the immutable case_audit_log table."""
         now_iso = datetime.now(timezone.utc).isoformat()
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO case_audit_log (
-                    case_id, timestamp, actor, action, previous_value, new_value, reason, details_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    case_id,
-                    now_iso,
-                    actor,
-                    action,
-                    previous_value,
-                    new_value,
-                    reason,
-                    json.dumps(details or {}),
-                ),
-            )
+        sql = """
+        INSERT INTO case_audit_log (
+            case_id, timestamp, actor, action, previous_value, new_value, reason, details_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            case_id,
+            now_iso,
+            actor,
+            action,
+            previous_value,
+            new_value,
+            reason,
+            json.dumps(details or {}),
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
 
     def upsert_transition_review(
         self,
@@ -1388,6 +1422,7 @@ class CaseRepository:
                     new_value=review_state,
                     reason=f"Transition {transition_id} marked {review_state}",
                     details={"transition_id": transition_id, "notes": analyst_notes},
+                    conn=conn,
                 )
 
         return {
@@ -1531,6 +1566,7 @@ class CaseRepository:
                         "closure_readiness": closure_readiness,
                         "evidence_state": evidence_state,
                     },
+                    conn=conn,
                 )
 
         return {
@@ -1655,6 +1691,7 @@ class CaseRepository:
                     new_value=question_id,
                     reason=f"Added investigation question: {safe_question[:80]}",
                     details={"question_id": question_id, "category": category},
+                    conn=conn,
                 )
 
         return {
@@ -1717,6 +1754,7 @@ class CaseRepository:
                     new_value=status,
                     reason=f"Question {question_id} marked {status}",
                     details={"question_id": question_id, "resolution_notes": resolution_notes},
+                    conn=conn,
                 )
 
         updated = self.get_investigation_question(case_id, question_id)

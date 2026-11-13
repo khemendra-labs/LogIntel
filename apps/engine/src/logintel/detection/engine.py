@@ -180,9 +180,10 @@ class DetectionEngine:
             while window and window[0][0] < cutoff_time:
                 window.pop(0)
 
-            # Hard memory bound per window
-            if len(window) > MAX_EVENTS_PER_WINDOW:
-                del window[:-MAX_EVENTS_PER_WINDOW]
+            # Hard memory bound per window (respect threshold.count if larger than default cap)
+            retain_limit = max(MAX_EVENTS_PER_WINDOW, rule.threshold.count)
+            if len(window) > retain_limit:
+                del window[:-retain_limit]
 
             # Check if threshold count is reached
             if len(window) >= rule.threshold.count:

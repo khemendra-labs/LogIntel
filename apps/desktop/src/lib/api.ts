@@ -197,44 +197,84 @@ export function setEngineToken(token: string | null): void {
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  if (init?.signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+
   let token = await getEngineToken();
   const headers = new Headers(init?.headers || {});
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
+
+  // Enforce a 15-second request ceiling so network/backend stalls cannot freeze frontend connection pool
+  const timeoutCtrl = new AbortController();
+  const timeoutId = setTimeout(() => {
+    try {
+      timeoutCtrl.abort(new Error("Request timed out after 15s"));
+    } catch {}
+  }, 15000);
+
+  const onCallerAbort = () => {
+    try {
+      timeoutCtrl.abort(init?.signal?.reason);
+    } catch {}
+  };
+  if (init?.signal) {
+    init.signal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+
+  const effectiveSignal = timeoutCtrl.signal;
+
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers,
-    });
-  } catch (_err) {
-    // If backend engine was momentarily binding socket, await briefly and retry
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    token = await getEngineToken();
-    const retryHeaders = new Headers(init?.headers || {});
-    if (token) {
-      retryHeaders.set("Authorization", `Bearer ${token}`);
-    }
-    res = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers: retryHeaders,
-    });
-  }
-  if (res.status === 401 && cachedToken) {
-    // Engine may have restarted and rotated its token; invalidate cache and retry once
-    cachedToken = null;
-    token = await getEngineToken();
-    if (token) {
+    try {
+      res = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        headers,
+        signal: effectiveSignal,
+      });
+    } catch (_err) {
+      if (init?.signal?.aborted || effectiveSignal.aborted) {
+        throw _err;
+      }
+      // If backend engine was momentarily binding socket, await briefly and retry once
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (init?.signal?.aborted || effectiveSignal.aborted) {
+        throw _err;
+      }
+      token = await getEngineToken();
       const retryHeaders = new Headers(init?.headers || {});
-      retryHeaders.set("Authorization", `Bearer ${token}`);
+      if (token) {
+        retryHeaders.set("Authorization", `Bearer ${token}`);
+      }
       res = await fetch(`${API_BASE}${path}`, {
         ...init,
         headers: retryHeaders,
+        signal: effectiveSignal,
       });
     }
+    if (res.status === 401 && !init?.signal?.aborted) {
+      // Engine may have rotated token or initial attempt missed it; invalidate cache and retry once
+      cachedToken = null;
+      token = await getEngineToken();
+      if (token) {
+        const retryHeaders = new Headers(init?.headers || {});
+        retryHeaders.set("Authorization", `Bearer ${token}`);
+        res = await fetch(`${API_BASE}${path}`, {
+          ...init,
+          headers: retryHeaders,
+          signal: effectiveSignal,
+        });
+      }
+    }
+    return res;
+  } finally {
+    clearTimeout(timeoutId);
+    if (init?.signal) {
+      init.signal.removeEventListener("abort", onCallerAbort);
+    }
   }
-  return res;
 }
 
 export interface HandshakeInfo {
@@ -245,7 +285,13 @@ export interface HandshakeInfo {
 }
 
 export async function fetchHandshake(): Promise<HandshakeInfo> {
-  const res = await fetch(`${API_BASE}/handshake`);
+  try {
+    const res = await fetch(`${API_BASE}/handshake`);
+    if (res.ok) {
+      return res.json();
+    }
+  } catch {}
+  const res = await fetch("http://127.0.0.1:41721/handshake");
   if (!res.ok) {
     throw new Error(`Engine handshake failed: ${res.statusText}`);
   }
@@ -265,8 +311,8 @@ export interface EventQueryParams {
   sortOrder?: "DESC" | "ASC";
 }
 
-export async function fetchSystemStatus(): Promise<SystemStatus> {
-  const res = await apiFetch("/system/status");
+export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {
+  const res = await apiFetch("/system/status", { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch system status: ${res.statusText}`);
   }
@@ -298,6 +344,9 @@ export interface NotificationStatus {
   enabled: boolean;
   sink: string;
   webhook_configured: boolean;
+  telegram_configured?: boolean;
+  telegram_chat_id_masked?: string | null;
+  telegram_min_severity?: string;
   recent_deliveries: Array<{ delivery_id: number; event_type: string; timestamp: string; status: string; detail?: string | null }>;
 }
 
@@ -330,15 +379,63 @@ export async function fetchNotificationStatus(): Promise<NotificationStatus> {
   return res.json();
 }
 
-export async function fetchTelemetryHealth(): Promise<TelemetryHealthReport> {
-  const res = await apiFetch("/telemetry/health");
+export async function configureTelegramNotification(
+  botToken: string,
+  chatId: string,
+  enabled: boolean = true
+): Promise<{ status: string; message: string; telegram_configured: boolean; chat_id_masked: string }> {
+  const res = await apiFetch("/system/notifications/telegram", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bot_token: botToken, chat_id: chatId, enabled }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to configure Telegram: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function testTelegramNotification(): Promise<{ status: string; message: string }> {
+  const res = await apiFetch("/system/notifications/telegram/test", {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Telegram test failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function detectTelegramChatId(botToken?: string): Promise<{
+  found: boolean;
+  chat_id?: string;
+  chat_title?: string;
+  bot_username?: string;
+  bot_name?: string;
+  message: string;
+}> {
+  const res = await apiFetch("/system/notifications/telegram/detect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bot_token: botToken || undefined }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Detection failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchTelemetryHealth(signal?: AbortSignal): Promise<TelemetryHealthReport> {
+  const res = await apiFetch("/telemetry/health", { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch telemetry health: ${res.statusText}`);
   }
   return res.json();
 }
 
-export async function fetchEvents(params: EventQueryParams = {}): Promise<EventsQueryResponse> {
+export async function fetchEvents(params: EventQueryParams = {}, signal?: AbortSignal): Promise<EventsQueryResponse> {
   const query = new URLSearchParams();
   if (params.limit !== undefined) query.set("limit", params.limit.toString());
   if (params.offset !== undefined) query.set("offset", params.offset.toString());
@@ -351,23 +448,23 @@ export async function fetchEvents(params: EventQueryParams = {}): Promise<Events
   if (params.search) query.set("search", params.search);
   if (params.sortOrder) query.set("sort_order", params.sortOrder);
 
-  const res = await apiFetch(`/events?${query.toString()}`);
+  const res = await apiFetch(`/events?${query.toString()}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to query events: ${res.statusText}`);
   }
   return res.json();
 }
 
-export async function fetchEventDetail(eventId: string): Promise<CanonicalEvent> {
-  const res = await apiFetch(`/events/${eventId}`);
+export async function fetchEventDetail(eventId: string, signal?: AbortSignal): Promise<CanonicalEvent> {
+  const res = await apiFetch(`/events/${eventId}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to load event details: ${res.statusText}`);
   }
   return res.json();
 }
 
-export async function fetchEventStatistics(hours: number = 24): Promise<EventStatistics> {
-  const res = await apiFetch(`/events/stats/summary?hours=${hours}`);
+export async function fetchEventStatistics(hours: number = 24, signal?: AbortSignal): Promise<EventStatistics> {
+  const res = await apiFetch(`/events/stats/summary?hours=${hours}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to load event statistics: ${res.statusText}`);
   }
@@ -387,7 +484,7 @@ export async function triggerIngestionCycle(): Promise<{ status: string; ingeste
 // ============================================================================
 
 
-export async function fetchAlerts(params: AlertQueryParams = {}): Promise<AlertsQueryResponse> {
+export async function fetchAlerts(params: AlertQueryParams = {}, signal?: AbortSignal): Promise<AlertsQueryResponse> {
   const query = new URLSearchParams();
   if (params.status) query.set("status", params.status);
   if (params.severity) query.set("severity", params.severity);
@@ -396,7 +493,7 @@ export async function fetchAlerts(params: AlertQueryParams = {}): Promise<Alerts
   if (params.limit !== undefined) query.set("limit", params.limit.toString());
   if (params.offset !== undefined) query.set("offset", params.offset.toString());
 
-  const res = await apiFetch(`/alerts?${query.toString()}`);
+  const res = await apiFetch(`/alerts?${query.toString()}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to query alerts: ${res.statusText}`);
   }
@@ -462,7 +559,8 @@ export async function fetchDetectionRuleDetail(
 // ============================================================================
 
 export async function fetchIncidents(
-  params: IncidentQueryParams = {}
+  params: IncidentQueryParams = {},
+  signal?: AbortSignal
 ): Promise<IncidentsQueryResponse> {
   const query = new URLSearchParams();
   if (params.status) query.set("status", params.status);
@@ -472,7 +570,7 @@ export async function fetchIncidents(
   if (params.limit !== undefined) query.set("limit", params.limit.toString());
   if (params.offset !== undefined) query.set("offset", params.offset.toString());
 
-  const res = await apiFetch(`/incidents?${query.toString()}`);
+  const res = await apiFetch(`/incidents?${query.toString()}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to query incidents: ${res.statusText}`);
   }
@@ -1217,18 +1315,14 @@ export async function traceClaimExplainability(
 
 export async function fetchCases(
   status?: string,
-  limit: number = 50
+  limit: number = 50,
+  signal?: AbortSignal
 ): Promise<InvestigationCase[]> {
-  const token = await getEngineToken();
   const params = new URLSearchParams();
   if (status) params.append("status", status);
   if (limit) params.append("limit", limit.toString());
 
-  const res = await fetch(`${API_BASE}/cases?${params.toString()}`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  const res = await apiFetch(`/cases?${params.toString()}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch investigation cases: ${res.statusText}`);
   }
@@ -1365,7 +1459,7 @@ export async function createCaseHypothesis(
     },
     body: JSON.stringify({
       statement,
-      supporting_evidence_tags: tags || [],
+      supporting_tags: tags || [],
     }),
   });
   if (!res.ok) {
@@ -1412,7 +1506,10 @@ export async function addCaseEvidenceReference(
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify(ref),
+    body: JSON.stringify({
+      ...ref,
+      annotation: ref.analyst_annotation,
+    }),
   });
   if (!res.ok) {
     throw new Error(`Failed to add evidence reference: ${res.statusText}`);
@@ -1462,7 +1559,7 @@ export async function generateCaseReportDraft(
   title?: string
 ): Promise<CaseReportVersion> {
   const token = await getEngineToken();
-  const res = await fetch(`${API_BASE}/cases/${caseId}/reports`, {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/draft`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1478,7 +1575,7 @@ export async function generateCaseReportDraft(
 
 export async function fetchCaseReports(caseId: number): Promise<CaseReportVersion[]> {
   const token = await getEngineToken();
-  const res = await fetch(`${API_BASE}/cases/${caseId}/reports`, {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/drafts`, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
@@ -1503,7 +1600,7 @@ export async function compareCaseReportVersions(
   recommendations_diff: string[];
 }> {
   const token = await getEngineToken();
-  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/compare?v1=${v1}&v2=${v2}`, {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/drafts/compare?v1=${v1}&v2=${v2}`, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
@@ -1542,7 +1639,7 @@ export async function fetchCaseAIContext(caseId: number): Promise<any> {
 
 export async function fetchCaseFindings(caseId: number): Promise<{ case_id: number; findings: InvestigationFinding[]; correlations: InvestigationCorrelation[] }> {
   const token = await getEngineToken();
-  const res = await fetch(`${API_BASE}/cases/${caseId}/findings`, {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/correlation/findings`, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
@@ -1627,7 +1724,7 @@ export async function createThreatHuntProposal(
       template_id: templateId,
       parameters,
       rationale,
-      actor,
+      suggested_by: actor,
     }),
   });
   if (!res.ok) {
@@ -1649,7 +1746,11 @@ export async function executeCaseThreatHunt(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
-      proposal,
+      proposal_id: proposal.proposal_id,
+      template_id: proposal.template_id,
+      parameters: proposal.parameters,
+      rationale: proposal.rationale,
+      suggested_by: proposal.suggested_by,
       approved_by: approvedBy,
     }),
   });
@@ -2262,8 +2363,8 @@ export async function reviewTemporalTransition(
     },
     body: JSON.stringify({
       review_state: reviewState,
-      reviewer,
-      notes: notes || null,
+      reviewed_by: reviewer,
+      analyst_notes: notes || null,
     }),
   });
   if (!res.ok) {
@@ -2306,6 +2407,18 @@ export async function exportTemporalReconstruction(
   });
   if (!res.ok) {
     throw new Error(`Failed to export temporal reconstruction: ${res.statusText}`);
+  }
+  if (typeof res.text === "function") {
+    const text = await res.text();
+    try {
+      const data = JSON.parse(text);
+      if (data && typeof data === "object" && "content" in data) {
+        return data;
+      }
+    } catch {
+      // Non-JSON format (CSV or GraphML)
+    }
+    return { case_id: caseId, format, content: text };
   }
   return res.json();
 }
@@ -2538,15 +2651,16 @@ export async function explainCaseAssessment(
 function buildTimelineQueryString(params?: TimelineFilterParams): string {
   if (!params) return "";
   const query = new URLSearchParams();
-  if (params.start_time) query.set("start_time", params.start_time);
-  if (params.end_time) query.set("end_time", params.end_time);
+  if (params.start_time) query.set("time_start", params.start_time);
+  if (params.end_time) query.set("time_end", params.end_time);
   if (params.host) query.set("host", params.host);
   if (params.event_type) query.set("event_type", params.event_type);
-  if (params.source_layer) query.set("source_layer", params.source_layer);
+  if (params.source_layer) query.set("layer", params.source_layer);
   if (params.entity) query.set("entity", params.entity);
   if (params.epistemic_status) query.set("epistemic_status", params.epistemic_status);
   if (params.collection_status) query.set("collection_status", params.collection_status);
-  if (params.search_text) query.set("search_text", params.search_text);
+  if (params.search_text) query.set("search", params.search_text);
+  if (params.bookmarked_only !== undefined) query.set("bookmarked_only", String(params.bookmarked_only));
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   if (params.offset !== undefined) query.set("offset", String(params.offset));
   const qs = query.toString();
@@ -2555,13 +2669,11 @@ function buildTimelineQueryString(params?: TimelineFilterParams): string {
 
 export async function fetchUnifiedTimeline(
   caseId: number,
-  params?: TimelineFilterParams
+  params?: TimelineFilterParams,
+  signal?: AbortSignal
 ): Promise<TimelineQueryResponse> {
-  const token = await getEngineToken();
   const qs = buildTimelineQueryString(params);
-  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/unified${qs}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const res = await apiFetch(`/cases/${caseId}/timeline/unified${qs}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch unified timeline: ${res.statusText}`);
   }
@@ -2570,13 +2682,11 @@ export async function fetchUnifiedTimeline(
 
 export async function fetchTimelineReplay(
   caseId: number,
-  params?: TimelineFilterParams
+  params?: TimelineFilterParams,
+  signal?: AbortSignal
 ): Promise<TimelineReplaySession> {
-  const token = await getEngineToken();
   const qs = buildTimelineQueryString(params);
-  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/replay${qs}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const res = await apiFetch(`/cases/${caseId}/timeline/replay${qs}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch timeline replay session: ${res.statusText}`);
   }
@@ -2585,12 +2695,10 @@ export async function fetchTimelineReplay(
 
 export async function fetchTimelineContext(
   caseId: number,
-  timelineId: string
+  timelineId: string,
+  signal?: AbortSignal
 ): Promise<TimelineContextResponse> {
-  const token = await getEngineToken();
-  const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/context/${encodeURIComponent(timelineId)}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const res = await apiFetch(`/cases/${caseId}/timeline/context/${encodeURIComponent(timelineId)}`, { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch timeline context: ${res.statusText}`);
   }
@@ -2609,7 +2717,7 @@ export async function bookmarkTimelineItem(
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ annotation: annotation || "Bookmarked from timeline" }),
+    body: JSON.stringify({ analyst_note: annotation || "Bookmarked from timeline" }),
   });
   if (!res.ok) {
     throw new Error(`Failed to bookmark timeline item: ${res.statusText}`);
@@ -2641,15 +2749,16 @@ export async function exportUnifiedTimeline(
   const baseParams = params ? { ...params } : {};
   const qsObj = new URLSearchParams();
   qsObj.set("format", format);
-  if (baseParams.start_time) qsObj.set("start_time", baseParams.start_time);
-  if (baseParams.end_time) qsObj.set("end_time", baseParams.end_time);
+  if (baseParams.start_time) qsObj.set("time_start", baseParams.start_time);
+  if (baseParams.end_time) qsObj.set("time_end", baseParams.end_time);
   if (baseParams.host) qsObj.set("host", baseParams.host);
   if (baseParams.event_type) qsObj.set("event_type", baseParams.event_type);
-  if (baseParams.source_layer) qsObj.set("source_layer", baseParams.source_layer);
+  if (baseParams.source_layer) qsObj.set("layer", baseParams.source_layer);
   if (baseParams.entity) qsObj.set("entity", baseParams.entity);
   if (baseParams.epistemic_status) qsObj.set("epistemic_status", baseParams.epistemic_status);
   if (baseParams.collection_status) qsObj.set("collection_status", baseParams.collection_status);
-  if (baseParams.search_text) qsObj.set("search_text", baseParams.search_text);
+  if (baseParams.search_text) qsObj.set("search", baseParams.search_text);
+  if (baseParams.bookmarked_only !== undefined) qsObj.set("bookmarked_only", String(baseParams.bookmarked_only));
   if (baseParams.limit !== undefined) qsObj.set("limit", String(baseParams.limit));
 
   const res = await fetch(`${API_BASE}/cases/${caseId}/timeline/unified/export?${qsObj.toString()}`, {
@@ -3368,7 +3477,7 @@ export async function listCaseReportsM76(
   caseId: number
 ): Promise<{ case_id: number; versions: ReportVersionSummary[]; total_versions: number }> {
   const token = await getEngineToken();
-  const res = await fetch(`${API_BASE}/cases/${caseId}/reports`, {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reports/drafts`, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },

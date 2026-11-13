@@ -11,6 +11,7 @@ import {
   TelemetryHealthReport,
 } from "../types/events";
 import { Incident } from "../types/incidents";
+import prahariLogo from "../assets/prahari_logo.png";
 
 interface OverviewPageProps {
   stats: EventStatistics | null;
@@ -33,6 +34,7 @@ interface OverviewPageProps {
   onTimeWindowChange?: (hours: number) => void;
   currentHours?: number;
   isLoadingStats?: boolean;
+  refreshTrigger?: number;
   backendConnected?: boolean;
   backendError?: string | null;
   onRetryConnection?: () => void;
@@ -58,6 +60,7 @@ export function OverviewPage({
   onNavigateToDiagnostics,
   onTimeWindowChange,
   currentHours = 24,
+  refreshTrigger = 0,
   isLoadingStats = false,
   backendConnected = true,
   backendError = null,
@@ -101,7 +104,7 @@ export function OverviewPage({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [refreshTrigger]);
 
   const totalEventsAllTime = status?.total_events || stats?.total_events || 0;
   const windowEvents = stats?.window_events || 0;
@@ -166,6 +169,90 @@ export function OverviewPage({
           </div>
         </div>
       )}
+
+      {/* ====================================================================== */}
+      {/* PRAHARI SENTINEL HERO BANNER                                          */}
+      {/* ====================================================================== */}
+      <div className="sentinel-hero">
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <img
+            src={prahariLogo}
+            alt="Prahari Sentinel"
+            style={{
+              width: "50px",
+              height: "50px",
+              borderRadius: "12px",
+              objectFit: "cover",
+              boxShadow: "0 0 20px rgba(0, 210, 255, 0.45)",
+              border: "1.5px solid rgba(0, 210, 255, 0.7)",
+            }}
+          />
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+              <span
+                style={{
+                  fontSize: "19px",
+                  fontWeight: 800,
+                  letterSpacing: "1.5px",
+                  color: "var(--accent-cyan)",
+                  textShadow: "0 0 14px rgba(0,210,255,0.45)",
+                }}
+              >
+                प्रहरी · PRAHARI
+              </span>
+              <span className="sentinel-chip sentinel-chip-active">
+                सदा जाग्रत
+              </span>
+            </div>
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "3px" }}>
+              Autonomous Linux Security Sentinel · Unbroken 24/7 Forensic Telemetry Watch
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <div
+            className="sentinel-chip"
+            style={{
+              background: backendConnected ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)",
+              borderColor: backendConnected ? "rgba(16, 185, 129, 0.3)" : "rgba(239, 68, 68, 0.3)",
+              color: backendConnected ? "var(--badge-normal-text)" : "var(--badge-alert-text)",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-block",
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: backendConnected ? "#10b981" : "#ef4444",
+                boxShadow: backendConnected ? "0 0 6px #10b981" : "0 0 6px #ef4444",
+              }}
+            />
+            Engine: {backendConnected ? "ACTIVE 24/7" : "OFFLINE"}
+          </div>
+          <div
+            className="sentinel-chip"
+            style={{
+              background: "rgba(0, 210, 255, 0.08)",
+              borderColor: "rgba(0, 210, 255, 0.3)",
+              color: "var(--accent-cyan)",
+            }}
+          >
+            Database: IMMUTABLE
+          </div>
+          <div
+            className="sentinel-chip"
+            style={{
+              background: "rgba(245, 158, 11, 0.08)",
+              borderColor: "rgba(245, 158, 11, 0.3)",
+              color: "var(--accent-amber)",
+            }}
+          >
+            Telegram: REAL-TIME DISPATCH
+          </div>
+        </div>
+      </div>
 
       {/* ====================================================================== */}
       {/* TIER 1: OPERATIONAL TELEMETRY & SECURITY KPI STRIP                     */}

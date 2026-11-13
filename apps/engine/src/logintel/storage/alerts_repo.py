@@ -41,38 +41,39 @@ class AlertsRepository:
         if not rules_list:
             return 0
 
-        with self.db.connection() as conn:
-            cur = conn.cursor()
-            for rule in rules_list:
-                yaml_str = rule.to_yaml() if hasattr(rule, "to_yaml") else ""
-                cur.execute(
-                    """
-                    INSERT INTO detection_rules (
-                        id, name, description, severity, category, rule_type, definition_yaml, enabled, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'utc'))
-                    ON CONFLICT(id) DO UPDATE SET
-                        name = excluded.name,
-                        description = excluded.description,
-                        severity = excluded.severity,
-                        category = excluded.category,
-                        rule_type = excluded.rule_type,
-                        definition_yaml = excluded.definition_yaml,
-                        enabled = excluded.enabled,
-                        updated_at = datetime('now', 'utc')
-                    """,
-                    (
-                        rule.id,
-                        rule.name,
-                        rule.description,
-                        rule.severity.value,
-                        rule.category.value,
-                        rule.rule_type.value,
-                        yaml_str,
-                        1 if rule.enabled else 0,
-                    ),
-                )
-            conn.commit()
-            return len(rules_list)
+        with self._lock:
+            with self.db.connection() as conn:
+                cur = conn.cursor()
+                for rule in rules_list:
+                    yaml_str = rule.to_yaml() if hasattr(rule, "to_yaml") else ""
+                    cur.execute(
+                        """
+                        INSERT INTO detection_rules (
+                            id, name, description, severity, category, rule_type, definition_yaml, enabled, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'utc'))
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            description = excluded.description,
+                            severity = excluded.severity,
+                            category = excluded.category,
+                            rule_type = excluded.rule_type,
+                            definition_yaml = excluded.definition_yaml,
+                            enabled = excluded.enabled,
+                            updated_at = datetime('now', 'utc')
+                        """,
+                        (
+                            rule.id,
+                            rule.name,
+                            rule.description,
+                            rule.severity.value,
+                            rule.category.value,
+                            rule.rule_type.value,
+                            yaml_str,
+                            1 if rule.enabled else 0,
+                        ),
+                    )
+                conn.commit()
+                return len(rules_list)
 
     def compute_dedup_key(self, result: DetectionResult, rule: DetectionRule) -> str:
         """Deterministically calculate a unique deduplication key for an alert.
@@ -134,8 +135,8 @@ class AlertsRepository:
 
                         elapsed = (result.timestamp - last_seen_dt).total_seconds()
 
-                        # Case A: Alert was resolved or dismissed -> Archive old key and create new alert
-                        if old_status in (AlertStatus.RESOLVED, AlertStatus.FALSE_POSITIVE):
+                        # Case A: Alert was resolved or dismissed, or cooldown expired -> Archive old key and create new alert
+                        if old_status in (AlertStatus.RESOLVED, AlertStatus.FALSE_POSITIVE) or elapsed > cooldown_sec:
                             archived_key = f"{dedup_key}:archived:{old_id}"
                             cur.execute(
                                 "UPDATE alerts SET dedup_key = ? WHERE id = ?",
@@ -232,7 +233,8 @@ class AlertsRepository:
 
                     conn.execute("COMMIT;")
                 except Exception:
-                    conn.execute("ROLLBACK;")
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK;")
                     raise
                 finally:
                     conn.isolation_level = old_isolation

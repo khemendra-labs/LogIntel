@@ -365,6 +365,17 @@ class AdvancedEvidenceCorrelator:
             all_refs.extend(e.evidence_references)
             all_ev_ids.extend(e.evidence_event_ids)
 
+        edge_statuses = [
+            str(getattr(e.epistemic_status, "value", e.epistemic_status)).upper()
+            for e in edges
+        ]
+        if any(s == "UNKNOWN" for s in edge_statuses):
+            cluster_ep = EpistemicStatus.UNKNOWN
+        elif any(s == "INFERRED" for s in edge_statuses):
+            cluster_ep = EpistemicStatus.INFERRED
+        else:
+            cluster_ep = EpistemicStatus.OBSERVED
+
         return EvidenceCluster(
             cluster_id=f"cluster-{case.case_id}-graph-relational",
             case_id=case.case_id,
@@ -376,7 +387,7 @@ class AdvancedEvidenceCorrelator:
             participating_entities=[n.node_id for n in nodes],
             evidence_references=all_refs[:20],
             evidence_event_ids=list(set(all_ev_ids)),
-            epistemic_status=EpistemicStatus.INFERRED if any(e.epistemic_status.value == "INFERRED" for e in edges) else EpistemicStatus.OBSERVED,
+            epistemic_status=cluster_ep,
             corroboration_status=CorroborationStatus.CORROBORATED if len(edges) > 1 else CorroborationStatus.DIRECT_EVIDENCE,
             contradictions=[],
             gaps=[],
@@ -481,8 +492,12 @@ class AdvancedEvidenceCorrelator:
                         affected_hypotheses=[],
                         resolution_remedy="Query authentication and network connections for host or user records associated with this IP.",
                         recommended_governed_query=QueryProposal(
-                            query_type="events",
-                            parameters={"src_ip": ip, "limit": 25},
+                            title=f"Investigate activity for external IP {ip}",
+                            intent="IP_ACTIVITY",
+                            target_entity=f"ip:{ip}",
+                            src_ip=ip,
+                            filters={"src_ip": ip},
+                            limit=25,
                             rationale=f"Search for additional events connecting {ip} to internal hosts",
                         ),
                         status="OPEN",
@@ -506,8 +521,14 @@ class AdvancedEvidenceCorrelator:
                         affected_hypotheses=[],
                         resolution_remedy="Execute governed hunt query for process launches on host within session window.",
                         recommended_governed_query=QueryProposal(
-                            query_type="events",
-                            parameters={"host": h, "event_type": "process_execution", "limit": 50},
+                            title=f"Hunt process execution on {h} for {u}",
+                            intent="PROCESS_EXECUTION",
+                            target_entity=f"host:{h}",
+                            host=h,
+                            username=u,
+                            event_types=["process_execution"],
+                            filters={"host": h, "event_type": "process_execution"},
+                            limit=50,
                             rationale=f"Verify whether processes were spawned by {u} following authentication",
                         ),
                         status="OPEN",
@@ -560,8 +581,9 @@ class AdvancedEvidenceCorrelator:
 
         recommended_queries = [
             QueryProposal(
-                query_type="events",
-                parameters={"limit": 50},
+                title="Gather corroborating events for hypothesis",
+                intent="CORROBORATION_SEARCH",
+                limit=50,
                 rationale=f"Gather corroborating evidence for hypothesis: {hypothesis_statement[:40]}...",
             )
         ]
@@ -663,6 +685,15 @@ class AdvancedEvidenceCorrelator:
             tag = it.get("_citation_tag", f"[{s_type}:{s_id}]")
             ts = it.get("timestamp") or it.get("created_at")
             summary = it.get("summary") or it.get("title") or it.get("raw_message", "Evidence record")[:80]
+            raw_ep = it.get("_epistemic_status") or it.get("epistemic_status")
+            ep_val = str(raw_ep.value if hasattr(raw_ep, "value") else (raw_ep or "INFERRED")).upper()
+            if ep_val == "OBSERVED":
+                ep_stat = EpistemicStatus.OBSERVED
+            elif ep_val == "UNKNOWN":
+                ep_stat = EpistemicStatus.UNKNOWN
+            else:
+                ep_stat = EpistemicStatus.INFERRED
+            is_auth = (ep_stat == EpistemicStatus.OBSERVED) and bool(it.get("_is_authoritative", it.get("is_authoritative", False)))
             refs.append(
                 GraphEvidenceItem(
                     reference_id=str(it.get("_ref_id", f"ref-{s_id}")),
@@ -672,8 +703,8 @@ class AdvancedEvidenceCorrelator:
                     citation_tag=tag,
                     timestamp=str(ts) if ts else None,
                     summary=summary,
-                    epistemic_status=EpistemicStatus.OBSERVED,
-                    is_authoritative=True,
+                    epistemic_status=ep_stat,
+                    is_authoritative=is_auth,
                     role="supporting",
                 )
             )

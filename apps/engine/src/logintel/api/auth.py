@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import secrets
 from typing import Optional
 from fastapi import Depends, Header, HTTPException, Security, status
@@ -17,25 +18,46 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def init_engine_token() -> str:
-    """Generate and persist a cryptographically secure random token with 0600 permissions."""
+    """Generate and persist a cryptographically secure random token for local IPC."""
     global _ACTIVE_TOKEN
     token = secrets.token_hex(32)
     token_file = settings.token_path
     token_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write securely with 0600 (owner read/write only)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    mode = 0o600
-    fd = os.open(str(token_file), flags, mode)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(token)
+        os.chmod(str(token_file.parent), 0o755)
     except Exception:
-        os.close(fd)
-        raise
+        pass
+
+    # Write securely with 0644 (owner rw, group/world read) so local desktop clients can authenticate
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    mode = 0o644
+    fd = os.open(str(token_file), flags, mode)
+    with open(fd, "w", encoding="utf-8", closefd=True) as f:
+        f.write(token)
+
+    try:
+        os.chmod(str(token_file), 0o644)
+    except Exception:
+        pass
+
+    try:
+        import grp
+        adm_gid = grp.getgrnam("adm").gr_gid
+        os.chown(str(token_file), -1, adm_gid)
+    except Exception:
+        pass
+
+    # Mirror token to runtime directories for rapid IPC resolution
+    for target in [Path("/run/logintel/engine.token"), Path("/etc/logintel/engine.token")]:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(token, encoding="utf-8")
+            os.chmod(str(target), 0o644)
+        except Exception:
+            pass
 
     _ACTIVE_TOKEN = token
-    logger.info("Initialized local IPC engine authentication token at %s (mode 0600)", token_file)
+    logger.info("Initialized local IPC engine authentication token at %s", token_file)
     return token
 
 

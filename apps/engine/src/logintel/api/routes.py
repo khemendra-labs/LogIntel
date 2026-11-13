@@ -118,6 +118,54 @@ def get_notification_status() -> Dict[str, Any]:
     return notification_service.status()
 
 
+class TelegramConfigRequest(BaseModel):
+    bot_token: str = Field(..., min_length=10, max_length=128)
+    chat_id: str = Field(..., min_length=1, max_length=64)
+    enabled: bool = True
+
+
+@protected_router.post("/system/notifications/telegram")
+def configure_telegram(req: TelegramConfigRequest) -> Dict[str, Any]:
+    """Configure or update Telegram bot alert notifications."""
+    from logintel.notifications import notification_service
+    notification_service.configure_telegram(
+        bot_token=req.bot_token,
+        chat_id=req.chat_id,
+        enabled=req.enabled,
+    )
+    return {
+        "status": "ok",
+        "message": "Telegram notification settings configured successfully",
+        "telegram_configured": True,
+        "chat_id_masked": f"{req.chat_id[:2]}***{req.chat_id[-2:]}" if len(req.chat_id) > 4 else "***",
+    }
+
+
+@protected_router.post("/system/notifications/telegram/test")
+def test_telegram_notification() -> Dict[str, Any]:
+    """Dispatch a test alert to the configured Telegram bot."""
+    from logintel.notifications import notification_service
+    try:
+        res = notification_service.send_telegram_test()
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class TelegramDetectRequest(BaseModel):
+    bot_token: Optional[str] = None
+
+
+@protected_router.post("/system/notifications/telegram/detect")
+def detect_telegram_chat_id(req: TelegramDetectRequest = Body(default_factory=TelegramDetectRequest)) -> Dict[str, Any]:
+    """Auto-detect chat ID by querying Telegram Bot API getUpdates."""
+    from logintel.notifications import notification_service
+    try:
+        return notification_service.detect_telegram_chat_id(bot_token=req.bot_token)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @protected_router.get("/fleet/hosts")
 def get_fleet_hosts() -> Dict[str, Any]:
     """Return lightweight remote/local host inventory for the operator GUI."""
@@ -125,7 +173,7 @@ def get_fleet_hosts() -> Dict[str, Any]:
         SELECT h.id, h.hostname, h.os_name, h.os_version, h.first_seen, h.last_seen,
                COUNT(e.id) AS event_count, MAX(e.ingested_at) AS last_ingested_at
         FROM hosts h
-        LEFT JOIN events e ON e.host = h.hostname
+        LEFT JOIN events e ON (e.host = h.hostname OR e.host = h.id OR LOWER(e.host) = LOWER(h.hostname) OR LOWER(e.host) = LOWER(h.id))
         GROUP BY h.id, h.hostname, h.os_name, h.os_version, h.first_seen, h.last_seen
         ORDER BY h.last_seen DESC, h.hostname ASC
     """
@@ -851,13 +899,16 @@ def create_investigation_note(incident_id: int, req: CreateNoteApiRequest) -> Di
             detail=f"Invalid target_type '{req.target_type}'. Valid values: {[t.value for t in NoteTargetType]}",
         )
 
-    note = investigation_repo.add_note(
-        incident_id=incident_id,
-        author=req.author,
-        content=req.content,
-        target_type=ttype,
-        target_id=req.target_id,
-    )
+    try:
+        note = investigation_repo.add_note(
+            incident_id=incident_id,
+            author=req.author,
+            content=req.content,
+            target_type=ttype,
+            target_id=req.target_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return note.model_dump(mode="json")
 
 
@@ -1631,7 +1682,13 @@ def list_investigation_cases(
     from logintel.ai.case_service import case_service
     from logintel.ai.domain.case import CaseStatus
 
-    filter_status = CaseStatus(status) if status else None
+    try:
+        filter_status = CaseStatus(status.upper()) if status else None
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid case status '{status}'. Valid values: {[s.value for s in CaseStatus]}",
+        )
     cases = case_service.list_cases(status=filter_status, owner=owner)
     return [c.model_dump(mode="json") for c in cases]
 
@@ -1762,8 +1819,8 @@ def update_case_hypothesis_endpoint(
     from logintel.ai.case_service import case_service
     from logintel.ai.domain.workspace import HypothesisStatus
 
-    status_enum = HypothesisStatus(req.status) if req.status else None
     try:
+        status_enum = HypothesisStatus(req.status.upper()) if req.status else None
         h = case_service.update_hypothesis(
             case_id=case_id,
             hypothesis_id=hyp_id,
@@ -1815,9 +1872,12 @@ def disassociate_case_evidence(case_id: int, ref_id: str) -> Dict[str, Any]:
     """Disassociate an evidence reference from a case."""
     from logintel.ai.case_service import case_service
 
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
     success = case_service.disassociate_evidence(case_id=case_id, reference_id=ref_id)
     if not success:
-        raise HTTPException(status_code=404, detail=f"Reference {ref_id} not found")
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id} not found in case {case_id}")
     return {"case_id": case_id, "reference_id": ref_id, "deleted": True}
 
 
@@ -1845,9 +1905,9 @@ def execute_case_query(case_id: int, proposal: Dict[str, Any]) -> Dict[str, Any]
         raise HTTPException(status_code=400, detail=f"Query execution failed: {str(e)}")
 
 
-@protected_router.get("/cases/{case_id}/reports")
+@protected_router.get("/cases/{case_id}/reports/drafts")
 def list_case_reports(case_id: int) -> List[Dict[str, Any]]:
-    """List all historical versions of case reports."""
+    """List all historical versions of M5.5 case report drafts."""
     from logintel.ai.case_service import case_service
 
     case = case_service.get_case(case_id)
@@ -1871,6 +1931,33 @@ def draft_case_report(case_id: int, req: DraftCaseReportRequest) -> Dict[str, An
         return rep.model_dump(mode="json")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@protected_router.get("/cases/{case_id}/reports/drafts/compare")
+def compare_latest_draft_versions_endpoint(
+    case_id: int,
+    v1: int = Query(..., description="First version number to compare"),
+    v2: int = Query(..., description="Second version number to compare"),
+    report_id: Optional[str] = Query(default=None, description="Optional report draft ID"),
+) -> Dict[str, Any]:
+    """Compare two historical M5.5 report draft versions for a case."""
+    from logintel.ai.case_service import case_service
+
+    try:
+        target_report_id = report_id
+        if not target_report_id:
+            case = case_service.get_case(case_id)
+            if not case or not case.reports:
+                raise HTTPException(status_code=404, detail=f"No report drafts found for case {case_id}")
+            target_report_id = case.reports[-1].report_id
+        return case_service.compare_report_versions(
+            case_id=case_id,
+            report_id=target_report_id,
+            v1=v1,
+            v2=v2,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @protected_router.get("/cases/{case_id}/reports/{report_id}/compare")
@@ -1943,9 +2030,9 @@ class IntelligenceSynthesisApiRequest(BaseModel):
     actor: str = "SecAnalyst-1"
 
 
-@protected_router.get("/cases/{case_id}/findings")
+@protected_router.get("/cases/{case_id}/correlation/findings")
 def get_case_findings(case_id: int) -> Dict[str, Any]:
-    """Retrieve deterministic investigation findings and multi-attribute correlations."""
+    """Retrieve deterministic investigation findings and multi-attribute correlations (M5.6)."""
     from logintel.ai.case_service import case_service
 
     try:
@@ -2380,12 +2467,21 @@ class CorrelationExplanationApiRequest(BaseModel):
 
 
 @protected_router.get("/cases/{case_id}/correlation/clusters")
-def get_evidence_clusters_endpoint(case_id: int) -> Dict[str, Any]:
+def get_evidence_clusters_endpoint(
+    case_id: int,
+    cluster_type: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
     """Retrieve multi-dimensional evidence clusters, behavioral sequences, and gaps for a case (M5.9)."""
     from logintel.ai.case_service import case_service
 
     try:
         clusters, sequences, gaps = case_service.get_evidence_clusters(case_id)
+        if cluster_type:
+            ct_norm = cluster_type.strip().upper()
+            clusters = [
+                c for c in clusters
+                if str(getattr(c.cluster_type, "value", c.cluster_type)).upper() == ct_norm
+            ]
         return {
             "case_id": case_id,
             "clusters": [c.model_dump(mode="json") for c in clusters],
@@ -2468,6 +2564,7 @@ def generate_findings_from_clusters_endpoint(case_id: int, actor: str = "SecAnal
             "case_id": case_id,
             "generated_findings": [f.model_dump(mode="json") for f in findings],
             "total_generated": len(findings),
+            "generated_count": len(findings),
         }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -2948,6 +3045,7 @@ def explain_case_assessment_endpoint(
 
 class BookmarkRequest(BaseModel):
     analyst_note: Optional[str] = None
+    annotation: Optional[str] = None
     actor: str = "SecAnalyst-1"
 
 
@@ -3081,10 +3179,11 @@ def bookmark_timeline_item_endpoint(
     from logintel.timeline.service import timeline_service
 
     try:
+        note_text = req.analyst_note if req.analyst_note is not None else req.annotation
         return timeline_service.bookmark_item(
             case_id=case_id,
             timeline_id=timeline_id,
-            analyst_note=req.analyst_note,
+            analyst_note=note_text,
             actor=req.actor,
         )
     except ValueError as e:
@@ -3749,7 +3848,13 @@ def pivot_hunt_temporal_endpoint(case_id: int, req: Dict[str, Any] = Body(...)) 
     anchor = req.get("anchor_timestamp")
     if not anchor:
         raise HTTPException(status_code=422, detail="Missing 'anchor_timestamp'")
-    window = int(req.get("window_minutes", 15))
+    if "window_minutes" in req and req["window_minutes"] is not None:
+        try:
+            window = int(req["window_minutes"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="Invalid 'window_minutes': must be an integer")
+    else:
+        window = 15
     direction = req.get("direction", "around")
     try:
         res = threat_hunting_service.pivot_hunt_temporal(case_id, anchor, window_minutes=window, direction=direction)

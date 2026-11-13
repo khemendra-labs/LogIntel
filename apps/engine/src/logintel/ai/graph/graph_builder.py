@@ -65,7 +65,10 @@ class InvestigationGraphBuilder:
         if not ts_str:
             return None
         try:
-            return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
         except Exception:
             return None
 
@@ -200,6 +203,8 @@ class InvestigationGraphBuilder:
 
             edge_time = rel.matched_at.isoformat() if rel.matched_at else None
             edge_dt = rel.matched_at
+            if edge_dt and edge_dt.tzinfo is None:
+                edge_dt = edge_dt.replace(tzinfo=timezone.utc)
             if start_dt and edge_dt and edge_dt < start_dt:
                 continue
             if end_dt and edge_dt and edge_dt > end_dt:
@@ -469,8 +474,10 @@ class InvestigationGraphBuilder:
             nature = PathNature.OBSERVED
         elif has_inf and not has_obs:
             nature = PathNature.INFERRED
-        else:
+        elif has_obs and has_inf:
             nature = PathNature.MIXED
+        else:
+            nature = PathNature.INFERRED
 
         evidence_count = sum(len(e.evidence_references) for e in shortest_path)
         summary = (
@@ -496,7 +503,10 @@ class InvestigationGraphBuilder:
         """Derive a chronological sequence of relationship transitions with delta time calculation."""
         # Filter edges with timestamps and sort chronologically
         timed_edges = [e for e in graph.edges if e.first_seen is not None]
-        timed_edges.sort(key=lambda e: e.first_seen or "")
+        timed_edges.sort(
+            key=lambda e: self._parse_timestamp(e.first_seen)
+            or datetime.max.replace(tzinfo=timezone.utc)
+        )
 
         steps: List[TemporalChainStep] = []
         prev_dt: Optional[datetime] = None

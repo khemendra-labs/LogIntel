@@ -952,7 +952,7 @@ describe("Frontend API Client and Authentication", () => {
     const result = await compareCaseReportVersions(301, 1, 2);
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://127.0.0.1:41721/api/v1/cases/301/reports/compare?v1=1&v2=2",
+      "http://127.0.0.1:41721/api/v1/cases/301/reports/drafts/compare?v1=1&v2=2",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer m55_diff_token" }),
       })
@@ -1030,7 +1030,7 @@ describe("Frontend API Client and Authentication", () => {
     const result = await fetchCaseFindings(501);
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://127.0.0.1:41721/api/v1/cases/501/findings",
+      "http://127.0.0.1:41721/api/v1/cases/501/correlation/findings",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer m56_findings_token" }),
       })
@@ -3005,6 +3005,120 @@ describe("Frontend API Client and Authentication", () => {
     } as Response);
     const expText = await exportCaseReview(1, "json");
     expect(expText).toContain("rev-1-test");
+  });
+
+  it("Batch 1 contracts: aligned params/payloads for timeline, temporal, hypothesis, evidence, hunts, and reports", async () => {
+    setEngineToken("batch1_tok");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const {
+      fetchUnifiedTimeline,
+      exportUnifiedTimeline,
+      bookmarkTimelineItem,
+      exportTemporalReconstruction,
+      reviewTemporalTransition,
+      createCaseHypothesis,
+      addCaseEvidenceReference,
+      createThreatHuntProposal,
+      executeCaseThreatHunt,
+      generateCaseReportDraft,
+      fetchCaseReports,
+    } = await import("../lib/api");
+
+    // 1. Timeline query string & export mapping (time_start/time_end/layer/search/bookmarked_only)
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ total: 0, items: [], filter_applied: {}, deterministic_hash: "h" }),
+    } as Response);
+    await fetchUnifiedTimeline(11, {
+      start_time: "2026-10-01T00:00:00Z",
+      end_time: "2026-10-02T00:00:00Z",
+      source_layer: "ALERT",
+      search_text: "sudo",
+      bookmarked_only: true,
+    });
+    const tlUrl = String(fetchSpy.mock.calls[0][0]);
+    expect(tlUrl).toContain("time_start=2026-10-01T00%3A00%3A00Z");
+    expect(tlUrl).toContain("time_end=2026-10-02T00%3A00%3A00Z");
+    expect(tlUrl).toContain("layer=ALERT");
+    expect(tlUrl).toContain("search=sudo");
+    expect(tlUrl).toContain("bookmarked_only=true");
+
+    fetchSpy.mockResolvedValueOnce({ ok: true, text: async () => "[]" } as Response);
+    await exportUnifiedTimeline(11, "csv", { start_time: "2026-10-01T00:00:00Z", source_layer: "EVENT" });
+    const expUrl = String(fetchSpy.mock.calls[1][0]);
+    expect(expUrl).toContain("format=csv");
+    expect(expUrl).toContain("time_start=2026-10-01T00%3A00%3A00Z");
+    expect(expUrl).toContain("layer=EVENT");
+
+    // 2. Bookmark sends analyst_note
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, bookmark_ref_id: "r1" }) } as Response);
+    await bookmarkTimelineItem(11, "tl-evt-1", "Lateral SSH");
+    expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toEqual({ analyst_note: "Lateral SSH" });
+
+    // 3. Temporal export handles PlainTextResponse (CSV/GraphML) & review sends reviewed_by + analyst_notes
+    fetchSpy.mockResolvedValueOnce({ ok: true, text: async () => "col1,col2\na,b\n" } as unknown as Response);
+    const csvExp = await exportTemporalReconstruction(11, "csv");
+    expect(csvExp).toEqual({ case_id: 11, format: "csv", content: "col1,col2\na,b\n" });
+
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ case_id: 11, transition_id: "tr-1", review_state: "ACCEPTED", epistemic_status_preserved: true }) } as Response);
+    await reviewTemporalTransition(11, "tr-1", "ACCEPTED", "SecAnalyst-2", "Verified edge");
+    expect(JSON.parse(String(fetchSpy.mock.calls[4][1]?.body))).toEqual({
+      review_state: "ACCEPTED",
+      reviewed_by: "SecAnalyst-2",
+      analyst_notes: "Verified edge",
+    });
+
+    // 4. Hypothesis & Evidence & Hunt payloads
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ hypothesis_id: "h1" }) } as Response);
+    await createCaseHypothesis(11, "Suspicious auth", ["[event:1]"]);
+    expect(JSON.parse(String(fetchSpy.mock.calls[5][1]?.body))).toEqual({
+      statement: "Suspicious auth",
+      supporting_tags: ["[event:1]"],
+    });
+
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ reference_id: "ref1" }) } as Response);
+    await addCaseEvidenceReference(11, {
+      source_type: "event",
+      source_id: "e1",
+      citation_tag: "[event:e1]",
+      analyst_annotation: "Root shell",
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[6][1]?.body))).toMatchObject({ annotation: "Root shell" });
+
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ proposal_id: "p1" }) } as Response);
+    await createThreatHuntProposal(11, "tpl-1", { host: "srv-1" }, "Check auth", "Alice");
+    expect(JSON.parse(String(fetchSpy.mock.calls[7][1]?.body))).toMatchObject({ suggested_by: "Alice" });
+
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ result_status: "MATCHED" }) } as Response);
+    await executeCaseThreatHunt(11, {
+      proposal_id: "p1",
+      case_id: 11,
+      template_id: "tpl-1",
+      parameters: { host: "srv-1" },
+      rationale: "Check auth",
+      validation_status: "VALID",
+      validation_errors: [],
+      preview_query_description: "desc",
+      suggested_by: "Alice",
+      created_at: "2026-10-10T00:00:00Z",
+    }, "Bob");
+    expect(JSON.parse(String(fetchSpy.mock.calls[8][1]?.body))).toEqual({
+      proposal_id: "p1",
+      template_id: "tpl-1",
+      parameters: { host: "srv-1" },
+      rationale: "Check auth",
+      suggested_by: "Alice",
+      approved_by: "Bob",
+    });
+
+    // 5. Legacy M5.5 report drafts hit /reports/draft and /reports/drafts
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => ({ version: 1 }) } as Response);
+    await generateCaseReportDraft(11, "Draft 1");
+    expect(String(fetchSpy.mock.calls[9][0])).toContain("/cases/11/reports/draft");
+
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => [] } as Response);
+    await fetchCaseReports(11);
+    expect(String(fetchSpy.mock.calls[10][0])).toContain("/cases/11/reports/drafts");
   });
 });
 

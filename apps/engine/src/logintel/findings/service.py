@@ -62,8 +62,7 @@ class FindingsWorkbenchService:
 
     def _ensure_case_exists(self, case_id: int) -> None:
         """Verify that case exists; raise ValueError if not found."""
-        case = self.case_repo.get_case(case_id)
-        if not case:
+        if not self.case_repo.case_exists(case_id):
             raise ValueError(f"Case {case_id} not found")
 
     def _log_audit(
@@ -566,6 +565,19 @@ class FindingsWorkbenchService:
         self._ensure_case_exists(case_id)
         raw_list = self.case_repo.list_hypotheses(case_id)
         findings = self.get_findings(case_id)
+        case = self.case_repo.get_case(case_id, resolve_evidence=False)
+        ref_ep_map = {r.citation_tag: getattr(r, "epistemic_status", None) for r in (case.evidence_references if case else [])}
+
+        def _resolve_tag_ep(tag: str) -> EpistemicStatus:
+            raw_s = ref_ep_map.get(tag)
+            if not raw_s:
+                return EpistemicStatus.UNKNOWN
+            s = str(getattr(raw_s, "value", raw_s)).upper()
+            if s == "OBSERVED":
+                return EpistemicStatus.OBSERVED
+            elif s == "INFERRED":
+                return EpistemicStatus.INFERRED
+            return EpistemicStatus.UNKNOWN
 
         enriched: List[HypothesisAssessmentView] = []
         for h in raw_list:
@@ -579,7 +591,7 @@ class FindingsWorkbenchService:
                         source_id=tag,
                         citation_tag=tag,
                         role=FindingEvidenceRole.SUPPORTING,
-                        epistemic_status=EpistemicStatus.OBSERVED,
+                        epistemic_status=_resolve_tag_ep(tag),
                         added_at=h.created_at,
                     )
                 )
@@ -594,7 +606,7 @@ class FindingsWorkbenchService:
                         source_id=tag,
                         citation_tag=tag,
                         role=FindingEvidenceRole.CONTRADICTING,
-                        epistemic_status=EpistemicStatus.OBSERVED,
+                        epistemic_status=_resolve_tag_ep(tag),
                         added_at=h.created_at,
                     )
                 )

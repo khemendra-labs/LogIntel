@@ -19,8 +19,13 @@ def get_default_data_dir() -> Path:
     logintel_dir = base / "logintel"
     logintel_dir.mkdir(parents=True, exist_ok=True)
     try:
-        if (logintel_dir.stat().st_mode & 0o777) != 0o700:
-            logintel_dir.chmod(0o700)
+        # For system data directories (/var/lib/logintel), ensure 0755 so desktop clients can read the IPC token
+        if str(logintel_dir).startswith("/var/lib") or (hasattr(os, "geteuid") and os.geteuid() == 0):
+            if (logintel_dir.stat().st_mode & 0o777) != 0o755:
+                logintel_dir.chmod(0o755)
+        else:
+            if (logintel_dir.stat().st_mode & 0o777) != 0o700:
+                logintel_dir.chmod(0o700)
     except OSError:
         pass
     return logintel_dir
@@ -95,7 +100,7 @@ class RetentionSettings(BaseModel):
 
 
 class Settings(BaseModel):
-    app_name: str = "LogIntel"
+    app_name: str = "Prahari"
     version: str = "0.1.0"
     
     host_name: str = Field(default_factory=socket.gethostname)

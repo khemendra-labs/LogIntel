@@ -117,6 +117,7 @@ class EvidenceWorkbenchService:
                 new_value=collection_id,
                 reason=f"Created logical evidence collection '{clean_name}'",
                 actor=actor,
+                conn=conn,
             )
 
         return EvidenceCollection(
@@ -361,6 +362,7 @@ class EvidenceWorkbenchService:
                 new_value=collection_id,
                 reason=f"Updated collection '{updated_name}' (status: {updated_status.value})",
                 actor=actor,
+                conn=conn,
             )
 
         return self.get_collection(case_id, collection_id)
@@ -399,6 +401,7 @@ class EvidenceWorkbenchService:
                 new_value=collection_id,
                 reason=f"Deleted logical collection '{existing.name}' (underlying evidence preserved)",
                 actor=actor,
+                conn=conn,
             )
 
         return True
@@ -496,6 +499,7 @@ class EvidenceWorkbenchService:
                 new_value=item_ref_id,
                 reason=f"Added evidence {tag} to collection '{existing_col.name}' (role: {clean_role})",
                 actor=actor,
+                conn=conn,
             )
 
         resolved = self._resolve_evidence_details(clean_type, clean_source_id)
@@ -550,6 +554,7 @@ class EvidenceWorkbenchService:
                     new_value=item_id,
                     reason=f"Removed item reference {item_id} from collection '{collection_id}'",
                     actor=actor,
+                    conn=conn,
                 )
                 return True
         return False
@@ -614,6 +619,7 @@ class EvidenceWorkbenchService:
                 new_value=item_id,
                 reason=f"Updated item {item_id} annotation/role in collection '{collection_id}'",
                 actor=actor,
+                conn=conn,
             )
 
         raw_source_type = row["source_type"].replace("col_item:", "")
@@ -709,7 +715,7 @@ class EvidenceWorkbenchService:
                 continue
             if params.epistemic_status and r["epistemic_status"] != params.epistemic_status.value:
                 continue
-            if params.host and resolved.get("host_id", "").lower() != params.host.lower():
+            if params.host and (resolved.get("host_id") or "").lower() != params.host.lower():
                 continue
 
             summary = resolved.get("display_summary") or f"{source_type} {source_id}"
@@ -832,17 +838,18 @@ class EvidenceWorkbenchService:
             if source_type in ("event", "events"):
                 try:
                     cur.execute(
-                        "SELECT id, host_id, event_type, timestamp, src_ip, dst_ip, user, process_name, message FROM events WHERE id = ?",
+                        "SELECT id, host, event_type, timestamp, src_ip, dst_ip, username, process_name, summary, raw_message FROM events WHERE id = ?",
                         (source_id,),
                     )
                     row = cur.fetchone()
                     if row:
-                        details["host_id"] = row["host_id"]
+                        details["host_id"] = row["host"]
                         details["event_type"] = row["event_type"]
                         details["timestamp"] = row["timestamp"]
                         details["display_summary"] = (
-                            row["message"]
-                            or f"Event {row['event_type']} on {row['host_id']} (proc: {row['process_name'] or 'N/A'})"
+                            row["summary"]
+                            or row["raw_message"]
+                            or f"Event {row['event_type']} on {row['host']} (proc: {row['process_name'] or 'N/A'})"
                         )
                         details["provenance"].update(
                             {
@@ -851,7 +858,7 @@ class EvidenceWorkbenchService:
                                 "record_id": row["id"],
                                 "src_ip": row["src_ip"],
                                 "dst_ip": row["dst_ip"],
-                                "user": row["user"],
+                                "user": row["username"],
                             }
                         )
                 except Exception:
@@ -859,16 +866,16 @@ class EvidenceWorkbenchService:
             elif source_type in ("alert", "alerts"):
                 try:
                     cur.execute(
-                        "SELECT id, rule_id, rule_name, severity, timestamp, host_id, description FROM alerts WHERE id = ?",
+                        "SELECT id, rule_id, title, description, severity, first_seen, last_seen, host FROM alerts WHERE id = ?",
                         (source_id,),
                     )
                     row = cur.fetchone()
                     if row:
-                        details["host_id"] = row["host_id"]
+                        details["host_id"] = row["host"]
                         details["event_type"] = f"ALERT_{row['severity']}"
-                        details["timestamp"] = row["timestamp"]
+                        details["timestamp"] = row["last_seen"] or row["first_seen"]
                         details["display_summary"] = (
-                            f"Alert [{row['severity']}]: {row['rule_name']} - {row['description'] or ''}"
+                            f"Alert [{row['severity']}]: {row['title']} - {row['description'] or ''}"
                         )
                         details["provenance"].update(
                             {

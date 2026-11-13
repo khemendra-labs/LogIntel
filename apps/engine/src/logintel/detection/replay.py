@@ -185,7 +185,7 @@ class HistoricalReplayHarness:
 
                 # Check cooldown suppression
                 last_fired = alert_cooldowns.get(dedup_key)
-                if last_fired is not None and rule.cooldown_seconds > 0:
+                if last_fired is not None and rule.cooldown_seconds is not None and rule.cooldown_seconds > 0:
                     delta = (det.timestamp - last_fired).total_seconds()
                     if delta < rule.cooldown_seconds:
                         # Cooldown active: update existing alert last_seen without creating duplicate
@@ -251,7 +251,11 @@ class HistoricalReplayHarness:
             return f"{rule.id}:{result.host}"
         
         # Atomic rule dedup key
-        username = result.details.get("username") if result.details else None
+        matched = result.details.get("matched_fields") if result.details else None
+        username = (
+            (result.details.get("username") if result.details else None)
+            or (matched.get("username") if isinstance(matched, dict) else None)
+        )
         if username:
             return f"{rule.id}:{result.host}:{username}"
         return f"{rule.id}:{result.host}"

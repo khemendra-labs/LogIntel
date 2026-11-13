@@ -420,7 +420,7 @@ class EvidenceRetriever:
         target_ts_val = target_row["timestamp"]
         target_host = target_row["host"]
 
-        # Parse target timestamp robustly
+        # Parse target timestamp robustly into UTC
         if isinstance(target_ts_val, datetime):
             target_dt = target_ts_val
         else:
@@ -429,6 +429,10 @@ class EvidenceRetriever:
                 target_dt = datetime.fromisoformat(ts_clean)
             except Exception:
                 target_dt = datetime.now(timezone.utc)
+        if target_dt.tzinfo is None:
+            target_dt = target_dt.replace(tzinfo=timezone.utc)
+        else:
+            target_dt = target_dt.astimezone(timezone.utc)
 
         start_dt = target_dt - timedelta(seconds=window_seconds)
         end_dt = target_dt + timedelta(seconds=window_seconds)
@@ -480,10 +484,28 @@ class EvidenceRetriever:
             )
             if is_target:
                 target_items.append(item)
-            elif str(r["timestamp"]) < str(target_ts_val) or (str(r["timestamp"]) == str(target_ts_val) and ev_id < str(event_id)):
-                before_items.append(item)
             else:
-                after_items.append(item)
+                ev_ts_raw = r["timestamp"]
+                ev_dt: Optional[datetime] = None
+                try:
+                    ev_dt = ev_ts_raw if isinstance(ev_ts_raw, datetime) else datetime.fromisoformat(str(ev_ts_raw).replace("Z", "+00:00"))
+                    if ev_dt.tzinfo is None:
+                        ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        ev_dt = ev_dt.astimezone(timezone.utc)
+                except Exception:
+                    ev_dt = None
+
+                if ev_dt is not None:
+                    is_before = ev_dt < target_dt or (ev_dt == target_dt and ev_id < str(event_id))
+                else:
+                    is_before = str(ev_ts_raw) < str(target_ts_val) or (
+                        str(ev_ts_raw) == str(target_ts_val) and ev_id < str(event_id)
+                    )
+                if is_before:
+                    before_items.append(item)
+                else:
+                    after_items.append(item)
 
         return {"before": before_items, "target": target_items, "after": after_items}
 

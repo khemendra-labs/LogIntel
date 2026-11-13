@@ -169,7 +169,9 @@ export function CasesPage({ onSelectCase, refreshTrigger = 0 }: CasesPageProps) 
               >
                 <option value="">All Statuses</option>
                 <option value="OPEN">Open</option>
-                <option value="IN_PROGRESS">In Progress</option>
+                <option value="ACTIVE">Active</option>
+                <option value="PAUSED">Paused</option>
+                <option value="READY_FOR_REVIEW">Ready for Review</option>
                 <option value="CLOSED">Closed</option>
                 <option value="ARCHIVED">Archived</option>
               </select>

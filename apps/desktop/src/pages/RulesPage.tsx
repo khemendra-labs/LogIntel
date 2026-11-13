@@ -18,6 +18,7 @@ export function RulesPage() {
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
   const [ruleDetail, setRuleDetail] = useState<DetectionRuleDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState<boolean>(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [copiedYaml, setCopiedYaml] = useState<boolean>(false);
 
   const loadRules = async () => {
@@ -41,11 +42,13 @@ export function RulesPage() {
   const loadRuleDetail = async (ruleId: string) => {
     setSelectedRuleId(ruleId);
     setDetailLoading(true);
+    setDetailError(null);
     setCopiedYaml(false);
     try {
       const data = await fetchDetectionRuleDetail(ruleId);
       setRuleDetail(data);
     } catch (err: any) {
+      setDetailError(err.message || "Failed to load rule definition");
       console.error("Failed to load rule detail:", err);
     } finally {
       setDetailLoading(false);
@@ -238,9 +241,24 @@ export function RulesPage() {
             </div>
 
             <div className="modal-body" style={{ overflowY: "auto", padding: "18px 24px" }}>
-              {detailLoading || !ruleDetail ? (
+              {detailLoading ? (
                 <div style={{ padding: "32px", textAlign: "center", color: "var(--text-muted)" }}>
                   Loading rule definition...
+                </div>
+              ) : detailError ? (
+                <div style={{ padding: "32px", textAlign: "center", color: "var(--accent-red)" }}>
+                  <p style={{ marginBottom: "12px" }}>{detailError}</p>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: "4px 12px", fontSize: "11px" }}
+                    onClick={() => selectedRuleId && loadRuleDetail(selectedRuleId)}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : !ruleDetail ? (
+                <div style={{ padding: "32px", textAlign: "center", color: "var(--text-muted)" }}>
+                  No rule definition available.
                 </div>
               ) : (
                 <div>

@@ -1370,7 +1370,7 @@ export function InvestigationThreatHuntWorkbench({
           <div className="bg-white border border-[#d6d4cc] rounded p-4 w-full max-w-md space-y-3">
             <div className="font-semibold text-sm text-[#1f2421]">Add to Logical Evidence Collection</div>
             <p className="text-xs text-[#5c635d]">
-              Adds {selectedResultIds.length} selected items to an existing logical collection (M7.3).
+              Adds {selectedResultIds.length} selected items to an existing logical collection.
             </p>
             <div>
               <label className="block text-[11px] text-[#5c635d] mb-0.5">Collection ID</label>

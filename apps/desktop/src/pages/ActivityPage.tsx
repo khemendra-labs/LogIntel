@@ -31,10 +31,12 @@ export function ActivityPage({
   const [username, setUsername] = useState<string>("");
   const [ip, setIp] = useState<string>("");
   const [search, setSearch] = useState<string>("");
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
   const [sortOrder, setSortOrder] = useState<"DESC" | "ASC">("DESC");
 
   const retryCountRef = React.useRef(0);
-  const isFetchingRef = React.useRef(false);
+  const abortCtrlRef = React.useRef<AbortController | null>(null);
+  const reqIdRef = React.useRef(0);
   const retryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isTransientNetworkError = (err: any): boolean => {
@@ -58,20 +60,30 @@ export function ActivityPage({
     );
   };
 
-  // Clean up retry timer on unmount
+  // Clean up retry timer and in-flight request on unmount
   useEffect(() => {
     return () => {
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
+      if (abortCtrlRef.current) {
+        abortCtrlRef.current.abort();
+        abortCtrlRef.current = null;
+      }
     };
   }, []);
 
   // Load events
   const loadEvents = async () => {
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+    if (abortCtrlRef.current) {
+      abortCtrlRef.current.abort();
+      abortCtrlRef.current = null;
+    }
+    const currentAbortCtrl = new AbortController();
+    abortCtrlRef.current = currentAbortCtrl;
+
+    const currentReqId = ++reqIdRef.current;
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
@@ -91,38 +103,45 @@ export function ActivityPage({
       if (outcome) params.outcome = outcome;
       if (username) params.username = username;
       if (ip) params.ip = ip;
-      if (search) params.search = search;
+      if (debouncedSearch) params.search = debouncedSearch;
 
-      const data = await fetchEvents(params);
+      const data = await fetchEvents(params, currentAbortCtrl.signal);
+      if (currentReqId !== reqIdRef.current || currentAbortCtrl.signal.aborted) return;
       setEvents(data.items);
       setTotal(data.total);
       retryCountRef.current = 0;
     } catch (err: any) {
-      setError(err.message || "Failed to query telemetry events");
-      if (isTransientNetworkError(err) && retryCountRef.current < 2) {
-        retryCountRef.current += 1;
-        retryTimerRef.current = setTimeout(() => {
-          loadEvents();
-        }, 1500 * retryCountRef.current);
+      if (currentAbortCtrl.signal.aborted || err?.name === "AbortError") {
+        return;
+      }
+      if (currentReqId === reqIdRef.current) {
+        setError(err.message || "Failed to query telemetry events");
+        if (isTransientNetworkError(err) && retryCountRef.current < 2) {
+          retryCountRef.current += 1;
+          retryTimerRef.current = setTimeout(() => {
+            loadEvents();
+          }, 1500 * retryCountRef.current);
+        }
       }
     } finally {
-      setLoading(false);
-      isFetchingRef.current = false;
+      if (currentReqId === reqIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  useEffect(() => {
-    loadEvents();
-  }, [page, source, severity, eventType, outcome, username, ip, sortOrder, refreshTrigger]);
-
-  // Debounced search
+  // Debounced search updates debouncedSearch and resets page to 0 cleanly
   useEffect(() => {
     const handler = setTimeout(() => {
       setPage(0);
-      loadEvents();
-    }, 300);
+      setDebouncedSearch(search);
+    }, 350);
     return () => clearTimeout(handler);
   }, [search]);
+
+  useEffect(() => {
+    loadEvents();
+  }, [page, source, severity, eventType, outcome, username, ip, sortOrder, debouncedSearch, refreshTrigger]);
 
   const totalPages = Math.ceil(total / pageSize);
 
@@ -309,7 +328,16 @@ export function ActivityPage({
               events.map((event) => (
                 <tr key={event.id} onClick={() => onSelectEvent(event)}>
                   <td className="mono-cell" style={{ whiteSpace: "nowrap" }}>
-                    {new Date(event.timestamp).toISOString().replace("T", " ").substring(0, 19)}
+                    {(() => {
+                      if (!event.timestamp) return "—";
+                      try {
+                        const d = new Date(event.timestamp);
+                        if (isNaN(d.getTime())) return String(event.timestamp);
+                        return d.toISOString().replace("T", " ").substring(0, 19);
+                      } catch {
+                        return String(event.timestamp);
+                      }
+                    })()}
                   </td>
                   <td>
                     <SeverityBadge severity={event.severity} />

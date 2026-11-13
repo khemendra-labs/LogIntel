@@ -74,3 +74,40 @@ def test_database_preservation_and_read_only_access():
         assert count > 0, f"Expected events in {db_path}, found {count}"
     finally:
         conn.close()
+
+
+def test_root_and_apiv1_handshake_endpoints():
+    """Verify both /handshake and /api/v1/handshake respond with 200 without authentication."""
+    from fastapi.testclient import TestClient
+    from logintel.api.app import app
+
+    with TestClient(app) as client:
+        res1 = client.get("/handshake")
+        assert res1.status_code == 200
+        data1 = res1.json()
+        assert data1["service"] == "logintel-engine"
+        assert data1["api_version"] == "v1"
+        assert data1["status"] == "ready"
+
+        res2 = client.get("/api/v1/handshake")
+        assert res2.status_code == 200
+        data2 = res2.json()
+        assert data2["service"] == "logintel-engine"
+        assert data2["api_version"] == "v1"
+        assert data2["status"] == "ready"
+
+
+def test_token_ipc_accessibility(tmp_path, monkeypatch):
+    """Verify engine token file is written with 0644 readable permissions."""
+    import stat
+    from logintel.api.auth import init_engine_token
+    from logintel.config import settings
+
+    fake_token = tmp_path / ".engine_token"
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    token = init_engine_token()
+    assert token and len(token) == 64
+    assert fake_token.exists()
+    mode = stat.S_IMODE(fake_token.stat().st_mode)
+    assert mode == 0o644
+

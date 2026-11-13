@@ -182,7 +182,7 @@ class SocketStateCollector(Collector):
         fp = hashlib.sha256(raw_line.encode("utf-8")).hexdigest()
         event_id = f"sock-listen-{entry.inode}-{fp[:12]}"
 
-        return CanonicalEvent(
+        ev = CanonicalEvent(
             id=event_id,
             timestamp=now,
             ingested_at=now,

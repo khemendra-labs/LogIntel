@@ -23,15 +23,24 @@ export function Header({
 
   return (
     <header className="app-header">
-      <div className="header-brand">
+      <div className="header-brand" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
         <BrandLogo className="brand-symbol" />
-        <span className="brand-title">LogIntel</span>
-        <span className="brand-tag">v{status?.version || "0.1.0"}</span>
-        {status?.host && (
-          <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
-            [{status.host}]
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span className="brand-title" style={{ letterSpacing: "1px", fontWeight: 800 }}>
+              प्रहरी <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--accent-cyan, #00d2ff)", opacity: 0.95 }}>PRAHARI</span>
+            </span>
+            <span className="brand-tag">v{status?.version || "0.1.0"}</span>
+            {status?.host && (
+              <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
+                [{status.host}]
+              </span>
+            )}
+          </div>
+          <span style={{ fontSize: "10px", color: "var(--text-muted)", letterSpacing: "0.6px", fontWeight: 500 }}>
+            सदा जाग्रत · Autonomous Linux Security Sentinel
           </span>
-        )}
+        </div>
       </div>
 
       <div className="header-right">

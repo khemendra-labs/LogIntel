@@ -149,6 +149,10 @@ export function Navigation({
           <ServerIcon />
           <span>Uptime: <strong>{Math.floor((status?.uptime_seconds || 0) / 60)}m</strong></span>
         </div>
+        <div style={{ marginTop: "6px", paddingTop: "6px", borderTop: "1px solid var(--border-subtle)", fontSize: "10px", color: "var(--accent-cyan)", opacity: 0.85, letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: "4px" }}>
+          <span>🛡️</span>
+          <span>Prahari Sentinel · सदा जाग्रत</span>
+        </div>
       </div>
     </aside>
   );

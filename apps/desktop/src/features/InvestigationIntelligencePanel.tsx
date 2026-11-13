@@ -384,22 +384,22 @@ export function InvestigationIntelligencePanel({
   };
 
   const stateColors: Record<string, { bg: string; text: string; border: string }> = {
-    OPEN: { bg: "#edf2f7", text: "#4a5568", border: "#cbd5e0" },
-    ACTIVE: { bg: "#feebc8", text: "#744210", border: "#fbd38d" },
-    PAUSED: { bg: "#edf2f7", text: "#718096", border: "#e2e8f0" },
-    READY_FOR_REVIEW: { bg: "#e6fffa", text: "#234e52", border: "#81e6d9" },
-    CLOSED: { bg: "#e2e8f0", text: "#2d3748", border: "#a0aec0" },
-    ARCHIVED: { bg: "#f1f5f9", text: "#64748b", border: "#cbd5e1" },
+    OPEN: { bg: "rgba(0, 210, 255, 0.12)", text: "var(--accent-cyan)", border: "rgba(0, 210, 255, 0.35)" },
+    ACTIVE: { bg: "rgba(245, 158, 11, 0.15)", text: "var(--accent-amber)", border: "rgba(245, 158, 11, 0.4)" },
+    PAUSED: { bg: "rgba(100, 116, 139, 0.2)", text: "var(--text-muted)", border: "var(--border-subtle)" },
+    READY_FOR_REVIEW: { bg: "rgba(16, 185, 129, 0.15)", text: "var(--badge-success-text)", border: "rgba(16, 185, 129, 0.4)" },
+    CLOSED: { bg: "rgba(51, 65, 85, 0.3)", text: "var(--text-secondary)", border: "var(--border-subtle)" },
+    ARCHIVED: { bg: "rgba(51, 65, 85, 0.2)", text: "var(--text-muted)", border: "var(--border-subtle)" },
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "16px 0" }}>
-      {/* Persistent Investigation Case Header (M5.5 Continuity) */}
+      {/* Persistent Investigation Case Header (Continuity) */}
       <div
         style={{
           padding: "12px 16px",
-          background: "var(--bg-subtle, #f5f4ef)",
-          border: "1px solid var(--border-color, #e2e8f0)",
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border-subtle)",
           borderRadius: "4px",
           display: "flex",
           justifyContent: "space-between",
@@ -412,7 +412,7 @@ export function InvestigationIntelligencePanel({
           <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px", color: "var(--text-primary, #1a202c)" }}>
             CASE #{caseData?.case_id ?? incidentId}
           </div>
-          <div style={{ fontSize: "11px", fontWeight: 700, padding: "2px 6px", background: "#edf2f7", borderRadius: "3px", color: "#4a5568" }}>
+          <div style={{ fontSize: "11px", fontWeight: 700, padding: "2px 6px", background: "var(--bg-surface-subtle)", borderRadius: "3px", color: "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>
             v{caseData?.version ?? 1}
           </div>
           <div
@@ -422,14 +422,14 @@ export function InvestigationIntelligencePanel({
               textTransform: "uppercase",
               padding: "3px 8px",
               borderRadius: "3px",
-              background: stateColors[(caseData?.status as any) || workspace?.state || "OPEN"]?.bg || "#edf2f7",
+              background: stateColors[(caseData?.status as any) || workspace?.state || "OPEN"]?.bg || "rgba(0, 210, 255, 0.12)",
               color: stateColors[(caseData?.status as any) || workspace?.state || "OPEN"]?.text || "#4a5568",
               border: `1px solid ${stateColors[(caseData?.status as any) || workspace?.state || "OPEN"]?.border || "#cbd5e0"}`,
             }}
           >
             STATUS: {caseData?.status || workspace?.state || "OPEN"}
           </div>
-          <div style={{ fontSize: "11px", color: "#4a5568", background: "#f7fafc", padding: "2px 6px", borderRadius: "3px", border: "1px solid #e2e8f0" }}>
+          <div style={{ fontSize: "11px", color: "var(--text-secondary)", background: "var(--bg-surface-subtle)", padding: "2px 6px", borderRadius: "3px", border: "1px solid var(--border-subtle)" }}>
             Owner: <strong>{caseData?.owner || "SecAnalyst-1"}</strong>
           </div>
           <button
@@ -490,8 +490,8 @@ export function InvestigationIntelligencePanel({
 
       {/* Case Handoff Inline Form */}
       {handoffModalOpen && (
-        <div style={{ padding: "12px 16px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "4px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <div style={{ fontSize: "12px", fontWeight: 700, color: "#1e293b" }}>ANALYST CASE HANDOFF</div>
+        <div style={{ padding: "12px 16px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>ANALYST CASE HANDOFF</div>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <input
               type="text"
@@ -522,20 +522,20 @@ export function InvestigationIntelligencePanel({
       )}
 
       {/* Sub-Navigation Bar */}
-      <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-color, #e2e8f0)", paddingBottom: "4px" }}>
+      <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "4px" }}>
         {[
           { id: "ask", label: "Analyst Questions & AI" },
-          { id: "m78_review", label: "Quality, Closure & Forensic Review (M7.8)" },
-          { id: "m77_comparison", label: "Case Comparison & Campaign Correlation (M7.7)" },
-          { id: "m76_report", label: "Investigation Report & Handoff (M7.6)" },
-          { id: "m75_hunting", label: "Threat Hunting & Queries (M7.5)" },
-          { id: "m74_findings", label: "Findings & Hypotheses (M7.4)" },
-          { id: "m73_workbench", label: "Evidence Workbench & Collections (M7.3)" },
-          { id: "m72_timeline", label: "Unified Timeline & Replay (M7.2)" },
-          { id: "assessment", label: "Case Assessment & Closure (M5.11)" },
-          { id: "timeline", label: "Temporal Reconstruction & Timeline (M5.10)" },
-          { id: "correlation", label: "Evidence Correlation & Findings (M5.9)" },
-          { id: "graph", label: "Investigation Graph & Pivots (M5.8)" },
+          { id: "m78_review", label: "Forensic Review & Closure" },
+          { id: "m77_comparison", label: "Case Comparison & Correlation" },
+          { id: "m76_report", label: "Investigation Report & Handoff" },
+          { id: "m75_hunting", label: "Threat Hunting & Queries" },
+          { id: "m74_findings", label: "Findings & Hypotheses" },
+          { id: "m73_workbench", label: "Evidence Workbench & Collections" },
+          { id: "m72_timeline", label: "Unified Timeline & Replay" },
+          { id: "assessment", label: "Case Assessment & Closure" },
+          { id: "timeline", label: "Temporal Reconstruction & Timeline" },
+          { id: "correlation", label: "Evidence Correlation & Findings" },
+          { id: "graph", label: "Investigation Graph & Pivots" },
           { id: "hypotheses", label: `Hypothesis Workbench (${hypotheses.length})` },
           { id: "queries", label: "Query Execution & Evidence Candidates" },
           { id: "summary", label: "Structured Summary" },
@@ -548,10 +548,10 @@ export function InvestigationIntelligencePanel({
               padding: "6px 12px",
               fontSize: "12px",
               fontWeight: subTab === tab.id ? 600 : 400,
-              background: subTab === tab.id ? "var(--card-bg, #ffffff)" : "transparent",
+              background: subTab === tab.id ? "var(--bg-surface)" : "transparent",
               color: subTab === tab.id ? "var(--text-primary, #1a202c)" : "#718096",
               border: "1px solid",
-              borderColor: subTab === tab.id ? "var(--border-color, #e2e8f0)" : "transparent",
+              borderColor: subTab === tab.id ? "var(--border-subtle)" : "transparent",
               borderBottom: subTab === tab.id ? "2px solid var(--text-primary, #1a202c)" : "none",
               borderRadius: "4px 4px 0 0",
               cursor: "pointer",
@@ -617,7 +617,7 @@ export function InvestigationIntelligencePanel({
                 padding: "8px 12px",
                 fontSize: "13px",
                 fontFamily: "inherit",
-                border: "1px solid var(--border-color, #e2e8f0)",
+                border: "1px solid var(--border-subtle)",
                 borderRadius: "4px",
               }}
               placeholder="Ask an investigation question against scope..."
@@ -637,13 +637,13 @@ export function InvestigationIntelligencePanel({
           {response && (
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               {/* Answer Card */}
-              <div style={{ padding: "16px", background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px" }}>
+              <div style={{ padding: "16px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                   <div style={{ display: "flex", gap: "8px" }}>
                     <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", background: "#feebc8", color: "#744210" }}>
                       STATUS: {response.epistemic_status}
                     </span>
-                    <span style={{ fontSize: "10px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", background: "#edf2f7", color: "#4a5568" }}>
+                    <span style={{ fontSize: "10px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", background: "var(--bg-surface-subtle)", color: "var(--accent-cyan)", border: "1px solid var(--border-subtle)" }}>
                       INTENT: {response.intent}
                     </span>
                   </div>
@@ -662,7 +662,7 @@ export function InvestigationIntelligencePanel({
 
               {/* Claims & Interactive Explainability Table */}
               {response.claims && response.claims.length > 0 && (
-                <div style={{ padding: "16px", background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px" }}>
+                <div style={{ padding: "16px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
                   <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "8px", color: "var(--text-primary, #1a202c)" }}>
                     VALIDATED EPISTEMIC CLAIMS & PROVENANCE TRACING
                   </div>
@@ -677,9 +677,9 @@ export function InvestigationIntelligencePanel({
                     </thead>
                     <tbody>
                       {response.claims.map((claim, idx) => (
-                        <tr key={idx} style={{ borderBottom: "1px solid #edf2f7" }}>
+                        <tr key={idx} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
                           <td style={{ padding: "6px", verticalAlign: "top" }}>
-                            <span style={{ fontSize: "10px", fontWeight: 600, padding: "2px 4px", borderRadius: "2px", background: claim.status === "OBSERVED" ? "#e6fffa" : claim.status === "INFERRED" ? "#feebc8" : "#edf2f7", color: claim.status === "OBSERVED" ? "#234e52" : claim.status === "INFERRED" ? "#744210" : "#4a5568" }}>
+                            <span style={{ fontSize: "10px", fontWeight: 600, padding: "2px 4px", borderRadius: "2px", background: claim.status === "OBSERVED" ? "var(--badge-success-bg)" : claim.status === "INFERRED" ? "var(--badge-warn-bg)" : "var(--badge-neutral-bg)", color: claim.status === "OBSERVED" ? "var(--badge-success-text)" : claim.status === "INFERRED" ? "var(--badge-warn-text)" : "var(--badge-neutral-text)" }}>
                               {claim.status}
                             </span>
                           </td>
@@ -690,7 +690,7 @@ export function InvestigationIntelligencePanel({
                                 <button
                                   key={rIdx}
                                   onClick={() => handleCitationClick(ref.citation_tag)}
-                                  style={{ border: "1px solid #cbd5e0", background: "#edf2f7", fontSize: "10px", padding: "1px 4px", borderRadius: "3px", cursor: "pointer", fontFamily: "var(--font-mono, monospace)" }}
+                                  style={{ border: "1px solid var(--border-subtle)", background: "var(--bg-surface-active)", color: "var(--text-primary)", fontSize: "10px", padding: "1px 4px", borderRadius: "3px", cursor: "pointer", fontFamily: "var(--font-mono, monospace)" }}
                                 >
                                   {ref.citation_tag}
                                 </button>
@@ -715,36 +715,36 @@ export function InvestigationIntelligencePanel({
 
               {/* Explainability Provenance Drawer / Modal */}
               {activeTraceClaim && (
-                <div style={{ padding: "14px", background: "#f7fafc", border: "1px solid #cbd5e0", borderRadius: "4px" }}>
+                <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#2d3748" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>
                       AUTHORITATIVE EVIDENCE PROVENANCE TRACE
                     </div>
                     <button className="btn btn-secondary" style={{ fontSize: "10px", padding: "1px 6px" }} onClick={() => setActiveTraceClaim(null)}>
                       Close
                     </button>
                   </div>
-                  <div style={{ fontSize: "12px", color: "#4a5568", marginBottom: "10px", fontStyle: "italic" }}>
+                  <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "10px", fontStyle: "italic" }}>
                     Claim: "{activeTraceClaim}"
                   </div>
                   {tracingLoading ? (
-                    <div style={{ fontSize: "12px", color: "#718096" }}>Tracing citation provenance in authoritative database...</div>
+                    <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Tracing citation provenance in authoritative database...</div>
                   ) : activeTraces.length === 0 ? (
-                    <div style={{ fontSize: "12px", color: "#718096" }}>No citation tags attached to this claim.</div>
+                    <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>No citation tags attached to this claim.</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                       {activeTraces.map((trace, tIdx) => (
-                        <div key={tIdx} style={{ padding: "8px 10px", background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "3px", fontSize: "11px" }}>
+                        <div key={tIdx} style={{ padding: "8px 10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "3px", fontSize: "11px" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                            <strong style={{ fontFamily: "var(--font-mono, monospace)", color: "#2b6cb0" }}>{trace.citation_tag}</strong>
-                            <span style={{ color: "#718096" }}>Table: {trace.source_table} • Record ID: {trace.source_id}</span>
+                            <strong style={{ fontFamily: "var(--font-mono, monospace)", color: "var(--accent-cyan)" }}>{trace.citation_tag}</strong>
+                            <span style={{ color: "var(--text-muted)" }}>Table: {trace.source_table} • Record ID: {trace.source_id}</span>
                           </div>
-                          <div style={{ color: "#2d3748", marginBottom: "4px" }}>{trace.summary}</div>
-                          {trace.timestamp && <div style={{ color: "#718096", fontSize: "10px" }}>Authoritative Timestamp: {trace.timestamp}</div>}
+                          <div style={{ color: "var(--text-primary)", marginBottom: "4px" }}>{trace.summary}</div>
+                          {trace.timestamp && <div style={{ color: "var(--text-muted)", fontSize: "10px" }}>Authoritative Timestamp: {trace.timestamp}</div>}
                           {trace.raw_evidence && (
                             <details style={{ marginTop: "4px" }}>
-                              <summary style={{ cursor: "pointer", color: "#4a5568", fontSize: "10px" }}>Raw Database Record</summary>
-                              <pre style={{ margin: "4px 0 0 0", padding: "6px", background: "#edf2f7", fontSize: "10px", borderRadius: "2px", overflowX: "auto" }}>
+                              <summary style={{ cursor: "pointer", color: "var(--text-secondary)", fontSize: "10px" }}>Raw Database Record</summary>
+                              <pre style={{ margin: "4px 0 0 0", padding: "6px", background: "var(--bg-code)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)", fontSize: "10px", borderRadius: "2px", overflowX: "auto" }}>
                                 {JSON.stringify(trace.raw_evidence, null, 2)}
                               </pre>
                             </details>
@@ -766,7 +766,7 @@ export function InvestigationIntelligencePanel({
       {subTab === "hypotheses" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {/* Create Hypothesis Card */}
-          <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px" }}>
+          <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
             <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>CREATE ANALYST HYPOTHESIS</div>
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <input
@@ -806,10 +806,10 @@ export function InvestigationIntelligencePanel({
               </div>
             ) : (
               hypotheses.map((hyp) => (
-                <div key={hyp.hypothesis_id} style={{ padding: "12px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
+                <div key={hyp.hypothesis_id} style={{ padding: "12px", background: "var(--bg-surface)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", background: hyp.status === "SUPPORTED" ? "#e6fffa" : hyp.status === "REJECTED" ? "#fff5f5" : "#edf2f7", color: hyp.status === "SUPPORTED" ? "#234e52" : hyp.status === "REJECTED" ? "#c53030" : "#4a5568" }}>
+                      <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", background: hyp.status === "SUPPORTED" ? "var(--badge-success-bg)" : hyp.status === "REJECTED" ? "var(--badge-alert-bg)" : "var(--badge-neutral-bg)", color: hyp.status === "SUPPORTED" ? "var(--badge-success-text)" : hyp.status === "REJECTED" ? "var(--badge-alert-text)" : "var(--badge-neutral-text)" }}>
                         STATUS: {hyp.status}
                       </span>
                       <strong style={{ fontSize: "12px", color: "var(--text-primary, #1a202c)" }}>{hyp.statement}</strong>
@@ -822,9 +822,9 @@ export function InvestigationIntelligencePanel({
                             fontSize: "9px",
                             padding: "2px 5px",
                             borderRadius: "2px",
-                            border: "1px solid #cbd5e0",
-                            background: hyp.status === st ? "#2d3748" : "#edf2f7",
-                            color: hyp.status === st ? "#ffffff" : "#4a5568",
+                            border: "1px solid var(--border-subtle)",
+                            background: hyp.status === st ? "var(--accent-cyan)" : "var(--bg-surface-subtle)",
+                            color: hyp.status === st ? "var(--text-inverse)" : "var(--text-secondary)",
                             cursor: "pointer",
                           }}
                           onClick={() => handleUpdateHypStatus(hyp.hypothesis_id, st)}
@@ -835,10 +835,10 @@ export function InvestigationIntelligencePanel({
                     </div>
                   </div>
                   {hyp.supporting_evidence_tags.length > 0 && (
-                    <div style={{ fontSize: "11px", color: "#718096", display: "flex", gap: "4px", alignItems: "center", marginTop: "4px" }}>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)", display: "flex", gap: "4px", alignItems: "center", marginTop: "4px" }}>
                       <span>Supporting Evidence:</span>
                       {hyp.supporting_evidence_tags.map((tag, tIdx) => (
-                        <span key={tIdx} style={{ fontFamily: "var(--font-mono, monospace)", background: "#edf2f7", padding: "1px 4px", borderRadius: "2px", color: "#2b6cb0" }}>
+                        <span key={tIdx} style={{ fontFamily: "var(--font-mono, monospace)", background: "var(--bg-surface-active)", border: "1px solid var(--border-subtle)", padding: "1px 4px", borderRadius: "2px", color: "var(--accent-cyan)" }}>
                           {tag}
                         </span>
                       ))}
@@ -857,16 +857,16 @@ export function InvestigationIntelligencePanel({
       {subTab === "queries" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {/* Query Proposals List */}
-          <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px" }}>
+          <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
             <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>AI THREAT HUNTING QUERY PROPOSALS</div>
             {response?.suggested_query_proposals && response.suggested_query_proposals.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {response.suggested_query_proposals.map((prop, idx) => (
-                  <div key={idx} style={{ padding: "10px", background: "#f7fafc", border: "1px solid #e2e8f0", borderRadius: "3px" }}>
+                  <div key={idx} style={{ padding: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "3px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div>
-                        <strong style={{ fontSize: "12px", color: "#2d3748" }}>{prop.title || prop.intent}</strong>
-                        <div style={{ fontSize: "11px", color: "#718096" }}>{prop.rationale || "Suggested follow-up threat hunting query"}</div>
+                        <strong style={{ fontSize: "12px", color: "var(--text-primary)" }}>{prop.title || prop.intent}</strong>
+                        <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{prop.rationale || "Suggested follow-up threat hunting query"}</div>
                       </div>
                       <div style={{ display: "flex", gap: "6px" }}>
                         <button className="btn btn-secondary" style={{ fontSize: "11px", padding: "3px 8px" }} onClick={() => handlePreviewQuery(prop)} disabled={previewLoading}>
@@ -881,7 +881,7 @@ export function InvestigationIntelligencePanel({
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: "12px", color: "#718096" }}>
+              <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                 Ask an investigation question in the Assistant tab to generate structured query proposals.
               </div>
             )}
@@ -889,17 +889,17 @@ export function InvestigationIntelligencePanel({
 
           {/* Preview / Execution Results */}
           {(previewResult || queryExecutionResult) && (
-            <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px" }}>
+            <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
               <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>
                 {queryExecutionResult ? "APPROVED QUERY EXECUTION RESULTS (EVIDENCE CANDIDATES)" : "READ-ONLY QUERY PREVIEW"}
               </div>
-              <div style={{ fontSize: "11px", color: "#718096", marginBottom: "8px" }}>
+              <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "8px" }}>
                 Matched {previewResult?.matched_count || queryExecutionResult?.matched_events_count || 0} events in canonical database.
               </div>
-              <div style={{ maxHeight: "200px", overflowY: "auto", border: "1px solid #edf2f7", borderRadius: "3px" }}>
+              <div style={{ maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border-subtle)", borderRadius: "3px" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}>
                   <thead>
-                    <tr style={{ background: "#edf2f7", textAlign: "left", color: "#4a5568" }}>
+                    <tr style={{ background: "var(--bg-surface-subtle)", textAlign: "left", color: "var(--text-secondary)" }}>
                       <th style={{ padding: "4px" }}>Event ID</th>
                       <th style={{ padding: "4px" }}>Timestamp</th>
                       <th style={{ padding: "4px" }}>Host</th>
@@ -908,7 +908,7 @@ export function InvestigationIntelligencePanel({
                   </thead>
                   <tbody>
                     {((previewResult?.events || queryExecutionResult?.matched_events) || []).map((ev: any, idx: number) => (
-                      <tr key={idx} style={{ borderBottom: "1px solid #f7fafc" }}>
+                      <tr key={idx} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
                         <td style={{ padding: "4px", fontFamily: "var(--font-mono, monospace)" }}>{ev.id}</td>
                         <td style={{ padding: "4px" }}>{ev.timestamp}</td>
                         <td style={{ padding: "4px" }}>{ev.host}</td>
@@ -922,24 +922,24 @@ export function InvestigationIntelligencePanel({
           )}
 
           {/* Workspace Evidence Candidates */}
-          <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px" }}>
+          <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
             <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>
               WORKSPACE EVIDENCE CANDIDATES ({workspace?.evidence_candidates.length || 0})
             </div>
             {workspace?.evidence_candidates && workspace.evidence_candidates.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                 {workspace.evidence_candidates.map((cand, cIdx) => (
-                  <div key={cIdx} style={{ padding: "6px 10px", background: "#f7fafc", border: "1px solid #edf2f7", borderRadius: "3px", fontSize: "11px", display: "flex", justifyContent: "space-between" }}>
+                  <div key={cIdx} style={{ padding: "6px 10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "3px", fontSize: "11px", display: "flex", justifyContent: "space-between" }}>
                     <div>
-                      <strong style={{ fontFamily: "var(--font-mono, monospace)", color: "#2b6cb0" }}>{cand.citation_tag}</strong>
-                      <span style={{ marginLeft: "8px", color: "#2d3748" }}>{cand.summary}</span>
+                      <strong style={{ fontFamily: "var(--font-mono, monospace)", color: "var(--accent-cyan)" }}>{cand.citation_tag}</strong>
+                      <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{cand.summary}</span>
                     </div>
-                    <span style={{ color: "#718096" }}>Role: {cand.role}</span>
+                    <span style={{ color: "var(--text-muted)" }}>Role: {cand.role}</span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: "12px", color: "#718096" }}>No query evidence candidates collected yet.</div>
+              <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>No query evidence candidates collected yet.</div>
             )}
           </div>
         </div>
@@ -958,7 +958,7 @@ export function InvestigationIntelligencePanel({
           </div>
           {summaryData ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
+              <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>Key Observations</div>
                 <ul style={{ margin: "0 0 0 16px", padding: 0, fontSize: "12px", lineHeight: "1.6" }}>
                   {summaryData.key_observations.map((obs, idx) => (
@@ -967,18 +967,18 @@ export function InvestigationIntelligencePanel({
                 </ul>
               </div>
 
-              <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
+              <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>Identified Visibility Gaps</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   {summaryData.evidence_gaps.map((gap: any, idx: number) => (
-                    <div key={idx} style={{ fontSize: "11px", padding: "4px 8px", background: "#f7fafc", borderRadius: "2px" }}>
+                    <div key={idx} style={{ fontSize: "11px", padding: "4px 8px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "2px", color: "var(--text-primary)" }}>
                       <strong>{gap.source_type} ({gap.gap_type}):</strong> {gap.impact}
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
+              <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>Open Questions for Hunting</div>
                 <ul style={{ margin: "0 0 0 16px", padding: 0, fontSize: "12px", lineHeight: "1.6" }}>
                   {summaryData.open_questions.map((q, idx) => (
@@ -1007,8 +1007,9 @@ export function InvestigationIntelligencePanel({
                 onClick={async () => {
                   setReportLoading(true);
                   try {
-                    const r = await generateCaseReportDraft(incidentId, `Investigation Dossier - Case #${incidentId}`);
-                    const vers = await fetchCaseReports(incidentId);
+                    const targetCaseId = caseData?.case_id ?? incidentId;
+                    const r = await generateCaseReportDraft(targetCaseId, `Investigation Dossier - Case #${targetCaseId}`);
+                    const vers = await fetchCaseReports(targetCaseId);
                     setReportVersions(vers);
                     setSelectedReportVersion(r);
                     loadCase();
@@ -1029,7 +1030,8 @@ export function InvestigationIntelligencePanel({
                   onClick={async () => {
                     setComparingVersions(true);
                     try {
-                      const diff = await compareCaseReportVersions(incidentId, selectedReportVersion.version - 1, selectedReportVersion.version);
+                      const targetCaseId = caseData?.case_id ?? incidentId;
+                      const diff = await compareCaseReportVersions(targetCaseId, selectedReportVersion.version - 1, selectedReportVersion.version);
                       setVersionDiff(diff);
                     } catch (err: any) {
                       setError(`Failed to compare report versions: ${err.message}`);
@@ -1066,9 +1068,9 @@ export function InvestigationIntelligencePanel({
                     padding: "3px 8px",
                     borderRadius: "3px",
                     cursor: "pointer",
-                    background: selectedReportVersion?.version === v.version ? "var(--text-primary, #1a202c)" : "#edf2f7",
-                    color: selectedReportVersion?.version === v.version ? "#ffffff" : "#4a5568",
-                    border: "1px solid #cbd5e0",
+                    background: selectedReportVersion?.version === v.version ? "var(--accent-cyan)" : "var(--bg-surface-subtle)",
+                    color: selectedReportVersion?.version === v.version ? "var(--text-inverse)" : "var(--text-secondary)",
+                    border: "1px solid var(--border-subtle)",
                   }}
                   onClick={() => {
                     setSelectedReportVersion(v);
@@ -1083,9 +1085,9 @@ export function InvestigationIntelligencePanel({
 
           {/* Version Comparison Diff Panel */}
           {versionDiff && (
-            <div style={{ padding: "14px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "4px" }}>
+            <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <strong style={{ fontSize: "12px", color: "#1e293b" }}>
+                <strong style={{ fontSize: "12px", color: "var(--text-primary)" }}>
                   VERSION COMPARISON: v{versionDiff.version_a} vs v{versionDiff.version_b}
                 </strong>
                 <button className="btn btn-secondary" style={{ fontSize: "10px", padding: "2px 6px" }} onClick={() => setVersionDiff(null)}>
@@ -1094,16 +1096,16 @@ export function InvestigationIntelligencePanel({
               </div>
               <div style={{ fontSize: "11px", display: "flex", flexDirection: "column", gap: "6px" }}>
                 <div>
-                  <span style={{ color: "#047857", fontWeight: 600 }}>Facts Added:</span> {versionDiff.facts_added.length > 0 ? versionDiff.facts_added.join(", ") : "None"}
+                  <span style={{ color: "var(--badge-success-text)", fontWeight: 600 }}>Facts Added:</span> {versionDiff.facts_added.length > 0 ? versionDiff.facts_added.join(", ") : "None"}
                 </div>
                 <div>
-                  <span style={{ color: "#b91c1c", fontWeight: 600 }}>Facts Removed:</span> {versionDiff.facts_removed.length > 0 ? versionDiff.facts_removed.join(", ") : "None"}
+                  <span style={{ color: "var(--badge-alert-text)", fontWeight: 600 }}>Facts Removed:</span> {versionDiff.facts_removed.length > 0 ? versionDiff.facts_removed.join(", ") : "None"}
                 </div>
                 <div>
-                  <span style={{ fontWeight: 600 }}>Summary Differences:</span>
-                  <div style={{ background: "#ffffff", padding: "6px 8px", borderRadius: "3px", border: "1px solid #e2e8f0", marginTop: "4px", maxHeight: "120px", overflowY: "auto", fontFamily: "var(--font-mono, monospace)", fontSize: "11px" }}>
+                  <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>Summary Differences:</span>
+                  <div style={{ background: "var(--bg-code)", padding: "6px 8px", borderRadius: "3px", border: "1px solid var(--border-subtle)", marginTop: "4px", maxHeight: "120px", overflowY: "auto", fontFamily: "var(--font-mono, monospace)", fontSize: "11px" }}>
                     {versionDiff.summary_diff.map((line: string, lIdx: number) => (
-                      <div key={lIdx} style={{ color: line.startsWith("+") ? "#047857" : line.startsWith("-") ? "#b91c1c" : "#475569" }}>
+                      <div key={lIdx} style={{ color: line.startsWith("+") ? "var(--badge-success-text)" : line.startsWith("-") ? "var(--badge-alert-text)" : "var(--text-secondary)" }}>
                         {line}
                       </div>
                     ))}
@@ -1116,29 +1118,29 @@ export function InvestigationIntelligencePanel({
           {/* Selected Report Version Content */}
           {selectedReportVersion ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ padding: "16px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
+              <div style={{ padding: "16px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
                   <div>
-                    <div style={{ fontSize: "14px", fontWeight: 700 }}>{selectedReportVersion.title} (v{selectedReportVersion.version})</div>
-                    <div style={{ fontSize: "11px", color: "#718096" }}>Created: {selectedReportVersion.created_at} by {selectedReportVersion.created_by}</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)" }}>{selectedReportVersion.title} (v{selectedReportVersion.version})</div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Created: {selectedReportVersion.created_at} by {selectedReportVersion.created_by}</div>
                   </div>
                   <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                    <span style={{ fontSize: "10px", padding: "2px 6px", background: selectedReportVersion.origin === "ANALYST_AUTHORED" ? "#dcfce7" : "#e0e7ff", color: selectedReportVersion.origin === "ANALYST_AUTHORED" ? "#166534" : "#3730a3", borderRadius: "3px", fontWeight: 600 }}>
+                    <span style={{ fontSize: "10px", padding: "2px 6px", background: selectedReportVersion.origin === "ANALYST_AUTHORED" ? "rgba(16, 185, 129, 0.15)" : "rgba(0, 210, 255, 0.15)", color: selectedReportVersion.origin === "ANALYST_AUTHORED" ? "var(--badge-success-text)" : "var(--accent-cyan)", border: "1px solid var(--border-subtle)", borderRadius: "3px", fontWeight: 600 }}>
                       ORIGIN: {selectedReportVersion.origin}
                     </span>
                     {selectedReportVersion.model_name && (
-                      <span style={{ fontSize: "10px", padding: "2px 6px", background: "#f1f5f9", color: "#475569", borderRadius: "3px", fontFamily: "var(--font-mono, monospace)" }}>
+                      <span style={{ fontSize: "10px", padding: "2px 6px", background: "var(--bg-surface-active)", color: "var(--text-secondary)", border: "1px solid var(--border-subtle)", borderRadius: "3px", fontFamily: "var(--font-mono, monospace)" }}>
                         {selectedReportVersion.model_name}
                       </span>
                     )}
                   </div>
                 </div>
-                <div style={{ fontSize: "13px", lineHeight: "1.6", color: "#2d3748" }}>{selectedReportVersion.executive_summary}</div>
+                <div style={{ fontSize: "13px", lineHeight: "1.6", color: "var(--text-primary)" }}>{selectedReportVersion.executive_summary}</div>
               </div>
 
               {/* Observed Facts */}
-              <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
-                <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "#234e52" }}>OBSERVED FORENSIC FACTS</div>
+              <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--accent-cyan)" }}>OBSERVED FORENSIC FACTS</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   {selectedReportVersion.facts.map((fact: any, idx: number) => (
                     <div key={idx} style={{ fontSize: "12px", padding: "6px 8px", background: "#e6fffa", borderRadius: "3px", display: "flex", justifyContent: "space-between" }}>
@@ -1150,7 +1152,7 @@ export function InvestigationIntelligencePanel({
               </div>
 
               {/* Analytical Inferences */}
-              <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
+              <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "#744210" }}>ANALYTICAL INFERENCES</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   {selectedReportVersion.inferences.map((inf: any, idx: number) => (
@@ -1163,7 +1165,7 @@ export function InvestigationIntelligencePanel({
               </div>
 
               {/* Analyst Recommendations */}
-              <div style={{ padding: "14px", background: "var(--card-bg, #ffffff)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
+              <div style={{ padding: "14px", background: "var(--bg-surface)", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
                 <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>ANALYST RECOMMENDATIONS</div>
                 <ul style={{ margin: "0 0 0 16px", padding: 0, fontSize: "12px", lineHeight: "1.6" }}>
                   {selectedReportVersion.recommendations.map((rec, idx) => (
@@ -1191,7 +1193,8 @@ export function InvestigationIntelligencePanel({
               onClick={async () => {
                 setAuditLoading(true);
                 try {
-                  const log = await fetchCaseAuditLog(incidentId);
+                  const targetCaseId = caseData?.case_id ?? incidentId;
+                  const log = await fetchCaseAuditLog(targetCaseId);
                   setAuditLog(log);
                 } catch (err: any) {
                   setError(`Failed to fetch audit log: ${err.message}`);
@@ -1205,10 +1208,10 @@ export function InvestigationIntelligencePanel({
             </button>
           </div>
 
-          <div style={{ background: "var(--card-bg, #ffffff)", border: "1px solid var(--border-color, #e2e8f0)", borderRadius: "4px", overflowX: "auto" }}>
+          <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", borderRadius: "4px", overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", textAlign: "left" }}>
               <thead>
-                <tr style={{ background: "var(--bg-subtle, #f8fafc)", borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
+                <tr style={{ background: "var(--bg-surface-subtle)", borderBottom: "1px solid var(--border-subtle)" }}>
                   <th style={{ padding: "8px 12px" }}>Timestamp (UTC)</th>
                   <th style={{ padding: "8px 12px" }}>Actor</th>
                   <th style={{ padding: "8px 12px" }}>Action</th>
@@ -1220,13 +1223,13 @@ export function InvestigationIntelligencePanel({
               <tbody>
                 {auditLog.length > 0 ? (
                   auditLog.map((entry, idx) => (
-                    <tr key={idx} style={{ borderBottom: "1px solid #edf2f7" }}>
-                      <td style={{ padding: "8px 12px", fontFamily: "var(--font-mono, monospace)", color: "#64748b" }}>
+                    <tr key={idx} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                      <td style={{ padding: "8px 12px", fontFamily: "var(--font-mono, monospace)", color: "var(--text-muted)" }}>
                         {entry.timestamp?.slice(0, 19).replace("T", " ")}
                       </td>
                       <td style={{ padding: "8px 12px", fontWeight: 600 }}>{entry.actor}</td>
                       <td style={{ padding: "8px 12px" }}>
-                        <span style={{ padding: "2px 6px", background: "#f1f5f9", borderRadius: "3px", fontFamily: "var(--font-mono, monospace)" }}>
+                        <span style={{ padding: "2px 6px", background: "var(--bg-surface-active)", color: "var(--text-secondary)", border: "1px solid var(--border-subtle)", borderRadius: "3px", fontFamily: "var(--font-mono, monospace)" }}>
                           {entry.action}
                         </span>
                       </td>

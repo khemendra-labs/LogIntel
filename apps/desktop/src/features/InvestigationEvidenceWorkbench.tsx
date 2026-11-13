@@ -374,7 +374,7 @@ export function InvestigationEvidenceWorkbench({
                 <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>{activeCol.name}</span>
                 <span className="badge badge-neutral" style={{ fontSize: "9px" }}>{activeCol.status}</span>
                 {activeCol.tags.map((t) => (
-                  <span key={t} style={{ fontSize: "9px", background: "#e2e8f0", padding: "1px 5px", borderRadius: "2px", color: "#475569" }}>
+                  <span key={t} style={{ fontSize: "9px", background: "var(--bg-surface-active)", border: "1px solid var(--border-subtle)", padding: "1px 5px", borderRadius: "2px", color: "var(--text-secondary)" }}>
                     #{t}
                   </span>
                 ))}
@@ -524,9 +524,9 @@ export function InvestigationEvidenceWorkbench({
                     style={{
                       padding: "8px 12px",
                       cursor: "pointer",
-                      borderBottom: "1px solid var(--border-subtle, #f1f5f9)",
-                      borderLeft: isSelected ? "4px solid var(--text-primary, #0f172a)" : "4px solid transparent",
-                      background: isSelected ? "var(--bg-selected, #f8fafc)" : "transparent",
+                      borderBottom: "1px solid var(--border-subtle)",
+                      borderLeft: isSelected ? "4px solid var(--accent-cyan)" : "4px solid transparent",
+                      background: isSelected ? "var(--bg-selected)" : "transparent",
                       transition: "background 0.1s ease",
                     }}
                   >
@@ -750,13 +750,14 @@ export function InvestigationEvidenceWorkbench({
                   </span>
                   <pre
                     style={{
-                      fontSize: "9px",
+                      fontSize: "10px",
                       fontFamily: "var(--font-mono)",
-                      background: "var(--bg-subtle, #f8fafc)",
-                      padding: "6px",
-                      borderRadius: "2px",
+                      background: "var(--bg-code, #05070a)",
+                      color: "var(--text-primary)",
+                      padding: "8px 10px",
+                      borderRadius: "4px",
                       overflowX: "auto",
-                      marginTop: "4px",
+                      marginTop: "6px",
                       border: "1px solid var(--border-subtle)",
                     }}
                   >
@@ -790,10 +791,11 @@ export function InvestigationEvidenceWorkbench({
             style={{
               width: "420px",
               padding: "16px",
-              background: "#ffffff",
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
               border: "1px solid var(--border-strong)",
               borderRadius: "4px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
             }}
           >
             <h3 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 700 }}>Create Logical Evidence Collection</h3>
@@ -879,10 +881,11 @@ export function InvestigationEvidenceWorkbench({
             style={{
               width: "420px",
               padding: "16px",
-              background: "#ffffff",
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
               border: "1px solid var(--border-strong)",
               borderRadius: "4px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
             }}
           >
             <h3 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 700 }}>

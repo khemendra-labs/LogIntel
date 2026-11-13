@@ -79,6 +79,7 @@ class JournalCollector(Collector):
             return
 
         cmd = [self._journalctl_bin, "-o", "json", "-n", str(limit)]
+        proc: Optional[subprocess.Popen[str]] = None
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -86,7 +87,13 @@ class JournalCollector(Collector):
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            stdout, stderr = proc.communicate(timeout=15)
+            try:
+                stdout, stderr = proc.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                logger.error("journalctl historical query timed out")
+                return
             if proc.returncode != 0:
                 logger.error("journalctl failed: %s", stderr.strip())
                 return
@@ -131,6 +138,18 @@ class JournalCollector(Collector):
                     logger.debug("Failed parsing journal JSON record: %s", exc)
         except Exception as exc:
             logger.error("Error executing journalctl historical query: %s", exc)
+        finally:
+            if proc is not None:
+                if proc.poll() is None:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        pass
+                if proc.stdout:
+                    proc.stdout.close()
+                if proc.stderr:
+                    proc.stderr.close()
 
     def collect_new(self) -> Generator[RawRecord, None, None]:
         available, reason = self.check_availability()
@@ -147,6 +166,7 @@ class JournalCollector(Collector):
         else:
             cmd.extend(["-n", "50"])
 
+        proc: Optional[subprocess.Popen[str]] = None
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -214,3 +234,16 @@ class JournalCollector(Collector):
                     self.cursor = None
         except Exception as exc:
             logger.error("Error running incremental journalctl: %s", exc)
+        finally:
+            if proc is not None:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                if proc.stdout:
+                    proc.stdout.close()
+                if proc.stderr:
+                    proc.stderr.close()

@@ -91,7 +91,7 @@ def test_system_status(auth_client):
     res = auth_client.get("/api/v1/system/status")
     assert res.status_code == 200
     data = res.json()
-    assert data["app_name"] == "LogIntel"
+    assert data["app_name"] in ("Prahari", "LogIntel")
     assert "version" in data
     assert data["total_events"] >= 1
 

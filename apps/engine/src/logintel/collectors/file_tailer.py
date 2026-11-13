@@ -101,7 +101,7 @@ class FileTailer:
         except Exception as exc:
             logger.error("Error reading historical records from %s: %s", self.file_path, exc)
 
-    def read_new(self) -> Generator[RawRecord, None, None]:
+    def read_new(self, max_records: int = 1000) -> Generator[RawRecord, None, None]:
         """Read new appended lines since last offset. Detect log rotation."""
         available, reason = self.check_availability()
         if not available:
@@ -125,10 +125,11 @@ class FileTailer:
 
         self.current_inode = stat.st_ino
 
+        count = 0
         try:
             with open(self.file_path, "r", encoding="utf-8", errors="replace") as f:
                 f.seek(self.current_offset)
-                while True:
+                while count < max_records:
                     line_start_offset = f.tell()
                     line = f.readline()
                     if not line:
@@ -144,5 +145,6 @@ class FileTailer:
                             source_file=str(self.file_path),
                             source_offset=str(line_start_offset),
                         )
+                        count += 1
         except Exception as exc:
             logger.error("Error reading new lines from %s: %s", self.file_path, exc)

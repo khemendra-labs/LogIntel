@@ -59,14 +59,48 @@ export function InvestigationUnifiedTimeline({
   const [filterEpistemic, setFilterEpistemic] = useState<EpistemicStatus | "">("");
   const [filterCollection, setFilterCollection] = useState<CollectionStatus | "">("");
   const [filterSearch, setFilterSearch] = useState<string>("");
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
   const [filterStartTime, setFilterStartTime] = useState<string>("");
   const [filterEndTime, setFilterEndTime] = useState<string>("");
+
+  const timelineAbortRef = useRef<AbortController | null>(null);
+  const contextAbortRef = useRef<AbortController | null>(null);
+
+  // Debounce search to prevent rapid keystrokes from spamming heavy timeline queries
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(filterSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [filterSearch]);
+
+  // Clean up in-flight requests on unmount
+  useEffect(() => {
+    return () => {
+      if (timelineAbortRef.current) {
+        timelineAbortRef.current.abort();
+        timelineAbortRef.current = null;
+      }
+      if (contextAbortRef.current) {
+        contextAbortRef.current.abort();
+        contextAbortRef.current = null;
+      }
+    };
+  }, []);
 
   // Notification Banner
   const [notice, setNotice] = useState<string | null>(null);
 
   // Load Timeline & Replay
   const loadTimelineData = useCallback(async () => {
+    if (!caseId) return;
+    if (timelineAbortRef.current) {
+      timelineAbortRef.current.abort();
+      timelineAbortRef.current = null;
+    }
+    const currentAbort = new AbortController();
+    timelineAbortRef.current = currentAbort;
+
     setLoading(true);
     setError(null);
     try {
@@ -79,15 +113,16 @@ export function InvestigationUnifiedTimeline({
       if (filterLayer) params.source_layer = filterLayer;
       if (filterEpistemic) params.epistemic_status = filterEpistemic;
       if (filterCollection) params.collection_status = filterCollection;
-      if (filterSearch) params.search_text = filterSearch.trim();
+      if (debouncedSearch) params.search_text = debouncedSearch.trim();
       if (filterStartTime) params.start_time = filterStartTime.trim();
       if (filterEndTime) params.end_time = filterEndTime.trim();
 
       const [timelineRes, replayRes] = await Promise.all([
-        fetchUnifiedTimeline(caseId, params),
-        fetchTimelineReplay(caseId, params),
+        fetchUnifiedTimeline(caseId, params, currentAbort.signal),
+        fetchTimelineReplay(caseId, params, currentAbort.signal),
       ]);
 
+      if (currentAbort.signal.aborted) return;
       setItems(timelineRes.items);
       setTotalCount(timelineRes.total);
       setDeterministicHash(timelineRes.deterministic_hash);
@@ -101,11 +136,14 @@ export function InvestigationUnifiedTimeline({
         setItemContext(null);
       }
     } catch (err: any) {
+      if (currentAbort.signal.aborted || err?.name === "AbortError") return;
       setError(`Failed to load investigation timeline: ${err.message}`);
     } finally {
-      setLoading(false);
+      if (!currentAbort.signal.aborted) {
+        setLoading(false);
+      }
     }
-  }, [caseId, filterHost, filterEventType, filterLayer, filterEpistemic, filterCollection, filterSearch, filterStartTime, filterEndTime]);
+  }, [caseId, filterHost, filterEventType, filterLayer, filterEpistemic, filterCollection, debouncedSearch, filterStartTime, filterEndTime]);
 
   useEffect(() => {
     loadTimelineData();
@@ -117,26 +155,32 @@ export function InvestigationUnifiedTimeline({
       setItemContext(null);
       return;
     }
-    let isCancelled = false;
+    if (contextAbortRef.current) {
+      contextAbortRef.current.abort();
+      contextAbortRef.current = null;
+    }
+    const currentAbort = new AbortController();
+    contextAbortRef.current = currentAbort;
+
     setContextLoading(true);
-    fetchTimelineContext(caseId, selectedItem.timeline_id)
+    fetchTimelineContext(caseId, selectedItem.timeline_id, currentAbort.signal)
       .then((res) => {
-        if (!isCancelled) {
+        if (!currentAbort.signal.aborted) {
           setItemContext(res);
         }
       })
       .catch(() => {
-        if (!isCancelled) {
+        if (!currentAbort.signal.aborted) {
           setItemContext(null);
         }
       })
       .finally(() => {
-        if (!isCancelled) {
+        if (!currentAbort.signal.aborted) {
           setContextLoading(false);
         }
       });
     return () => {
-      isCancelled = true;
+      currentAbort.abort();
     };
   }, [caseId, selectedItem]);
 
@@ -160,7 +204,8 @@ export function InvestigationUnifiedTimeline({
         const nextIndex = prevIndex + 1;
         const frame = replaySession.frames[nextIndex];
         if (frame) {
-          setSelectedItem(frame.item);
+          const target = frame.item || items.find((it) => it.timeline_id === frame.timeline_id) || null;
+          if (target) setSelectedItem(target);
         }
         return nextIndex;
       });
@@ -201,40 +246,57 @@ export function InvestigationUnifiedTimeline({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [replaySession, currentFrameIndex]);
 
+  const syncSelectedItemFromFrame = (idx: number) => {
+    if (!replaySession || !replaySession.frames[idx]) return;
+    const frame = replaySession.frames[idx];
+    const target = frame.item || items.find((it) => it.timeline_id === frame.timeline_id) || null;
+    if (target) setSelectedItem(target);
+  };
+
   // Navigation handlers
   const stepForward = () => {
     if (!replaySession || replaySession.frames.length === 0) return;
     const nextIdx = Math.min(currentFrameIndex + 1, replaySession.frames.length - 1);
     setCurrentFrameIndex(nextIdx);
-    setSelectedItem(replaySession.frames[nextIdx].item);
+    syncSelectedItemFromFrame(nextIdx);
   };
 
   const stepBackward = () => {
     if (!replaySession || replaySession.frames.length === 0) return;
     const prevIdx = Math.max(currentFrameIndex - 1, 0);
     setCurrentFrameIndex(prevIdx);
-    setSelectedItem(replaySession.frames[prevIdx].item);
+    syncSelectedItemFromFrame(prevIdx);
   };
 
   const jumpToStart = () => {
     if (!replaySession || replaySession.frames.length === 0) return;
     setCurrentFrameIndex(0);
-    setSelectedItem(replaySession.frames[0].item);
+    syncSelectedItemFromFrame(0);
   };
 
   const jumpToEnd = () => {
     if (!replaySession || replaySession.frames.length === 0) return;
     const lastIdx = replaySession.frames.length - 1;
     setCurrentFrameIndex(lastIdx);
-    setSelectedItem(replaySession.frames[lastIdx].item);
+    syncSelectedItemFromFrame(lastIdx);
+  };
+
+  const isFrameEvidence = (f: any) => {
+    if (!f) return false;
+    return Boolean(
+      f.is_evidence ||
+      f.layer === "EVIDENCE" ||
+      f.item?.source_layer === "EVIDENCE" ||
+      (f.item?.evidence_refs && f.item.evidence_refs.length > 0)
+    );
   };
 
   const jumpToNextEvidence = () => {
     if (!replaySession) return;
     for (let i = currentFrameIndex + 1; i < replaySession.frames.length; i++) {
-      if (replaySession.frames[i].item.source_layer === "EVIDENCE" || replaySession.frames[i].item.evidence_refs.length > 0) {
+      if (isFrameEvidence(replaySession.frames[i])) {
         setCurrentFrameIndex(i);
-        setSelectedItem(replaySession.frames[i].item);
+        syncSelectedItemFromFrame(i);
         return;
       }
     }
@@ -245,9 +307,9 @@ export function InvestigationUnifiedTimeline({
   const jumpToPrevEvidence = () => {
     if (!replaySession) return;
     for (let i = currentFrameIndex - 1; i >= 0; i--) {
-      if (replaySession.frames[i].item.source_layer === "EVIDENCE" || replaySession.frames[i].item.evidence_refs.length > 0) {
+      if (isFrameEvidence(replaySession.frames[i])) {
         setCurrentFrameIndex(i);
-        setSelectedItem(replaySession.frames[i].item);
+        syncSelectedItemFromFrame(i);
         return;
       }
     }
@@ -259,7 +321,7 @@ export function InvestigationUnifiedTimeline({
     const val = parseInt(e.target.value, 10);
     if (!isNaN(val) && replaySession && replaySession.frames[val]) {
       setCurrentFrameIndex(val);
-      setSelectedItem(replaySession.frames[val].item);
+      syncSelectedItemFromFrame(val);
     }
   };
 
@@ -354,7 +416,7 @@ export function InvestigationUnifiedTimeline({
     }
   };
 
-  const getLayerColor = (layer: TimelineSourceLayer) => {
+  const getLayerColor = (layer?: TimelineSourceLayer) => {
     switch (layer) {
       case "EVENT": return "#2563eb";
       case "ALERT": return "#dc2626";
@@ -362,6 +424,16 @@ export function InvestigationUnifiedTimeline({
       case "HOST_TELEMETRY": return "#059669";
       case "INCIDENT": return "#d97706";
       case "AUDIT": return "#475569";
+      case "AUTH": return "#0284c7";
+      case "PROCESS": return "#10b981";
+      case "NETWORK": return "#6366f1";
+      case "FILESYSTEM": return "#8b5cf6";
+      case "SYSTEMD": return "#ec4899";
+      case "KERNEL": return "#f97316";
+      case "CONTAINER": return "#14b8a6";
+      case "DETECTION": return "#e11d48";
+      case "CORRELATION": return "#f59e0b";
+      case "ANALYST_NOTE": return "#84cc16";
       default: return "#4b5563";
     }
   };
@@ -664,8 +736,10 @@ export function InvestigationUnifiedTimeline({
             <div style={{ display: "flex", flexDirection: "column" }}>
               {items.map((it, idx) => {
                 const isSelected = selectedItem?.timeline_id === it.timeline_id;
-                const isCurrentReplay = replaySession?.frames[currentFrameIndex]?.item?.timeline_id === it.timeline_id;
-                const layerCol = getLayerColor(it.source_layer);
+                const isCurrentReplay =
+                  replaySession?.frames[currentFrameIndex]?.timeline_id === it.timeline_id ||
+                  replaySession?.frames[currentFrameIndex]?.item?.timeline_id === it.timeline_id;
+                const layerCol = getLayerColor(it.layer || it.source_layer);
 
                 return (
                   <div
@@ -676,14 +750,14 @@ export function InvestigationUnifiedTimeline({
                       cursor: "pointer",
                       borderBottom: "1px solid var(--border-subtle, #f1f5f9)",
                       borderLeft: isSelected
-                        ? "4px solid var(--text-primary, #0f172a)"
+                        ? "4px solid var(--accent-cyan)"
                         : isCurrentReplay
-                        ? "4px solid #2563eb"
+                        ? "4px solid var(--accent-cyan)"
                         : "4px solid transparent",
                       background: isSelected
-                        ? "var(--bg-selected, #f8fafc)"
+                        ? "var(--bg-selected)"
                         : isCurrentReplay
-                        ? "var(--bg-highlight, #eff6ff)"
+                        ? "var(--bg-surface-active)"
                         : "transparent",
                       transition: "background 0.1s ease",
                     }}
@@ -704,7 +778,7 @@ export function InvestigationUnifiedTimeline({
                             fontFamily: "var(--font-mono)",
                           }}
                         >
-                          {it.source_layer}
+                          {it.layer || it.source_layer}
                         </span>
                         <span style={{ fontSize: "11px", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
                           {it.timestamp}
@@ -872,6 +946,28 @@ export function InvestigationUnifiedTimeline({
                 </div>
               )}
 
+              {/* Related Graph Nodes */}
+              {itemContext && itemContext.related_graph_nodes && itemContext.related_graph_nodes.length > 0 && (
+                <div>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" }}>
+                    Related Graph Nodes ({itemContext.related_graph_nodes.length})
+                  </span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "6px" }}>
+                    {itemContext.related_graph_nodes.map((nodeKey: string) => (
+                      <button
+                        key={nodeKey}
+                        className="btn btn-secondary"
+                        onClick={() => onSelectEntityKey && onSelectEntityKey(nodeKey)}
+                        style={{ fontSize: "10px", padding: "2px 6px", fontFamily: "var(--font-mono)" }}
+                        title="Pivot to node in attack graph"
+                      >
+                        {nodeKey}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Synchronized Alerts & Evidence */}
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                 {selectedItem.source_layer === "EVENT" && onSelectEventId && (
@@ -903,13 +999,14 @@ export function InvestigationUnifiedTimeline({
                   </span>
                   <pre
                     style={{
-                      fontSize: "9px",
+                      fontSize: "10px",
                       fontFamily: "var(--font-mono)",
-                      background: "var(--bg-subtle, #f8fafc)",
-                      padding: "6px",
-                      borderRadius: "2px",
+                      background: "var(--bg-code, #05070a)",
+                      color: "var(--text-primary)",
+                      padding: "8px 10px",
+                      borderRadius: "4px",
                       overflowX: "auto",
-                      marginTop: "4px",
+                      marginTop: "6px",
                       border: "1px solid var(--border-subtle)",
                     }}
                   >

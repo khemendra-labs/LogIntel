@@ -227,15 +227,22 @@ class HostThreatCorrelator:
     # Internal Classification & Synthesis
     # =========================================================================
 
+    @staticmethod
+    def _safe_severity(raw: Any) -> Severity:
+        if isinstance(raw, Severity):
+            return raw
+        if isinstance(raw, str):
+            try:
+                return Severity(raw.strip().upper())
+            except Exception:
+                return Severity.NOTICE
+        return Severity.NOTICE
+
     def _classify_alert_to_stage(self, alert: Dict[str, Any]) -> Optional[HostThreatStage]:
         """Convert an operational alert record into a HostThreatStage."""
         aid = alert.get("id") or 0
         rule_id = alert.get("rule_id", "")
-        sev_str = alert.get("severity", "NOTICE")
-        try:
-            sev = Severity(sev_str)
-        except Exception:
-            sev = Severity.NOTICE
+        sev = self._safe_severity(alert.get("severity"))
 
         ts = self._parse_dt(alert.get("first_seen") or alert.get("timestamp"))
 
@@ -308,7 +315,7 @@ class HostThreatCorrelator:
         proc_name = str(ev.get("process_name") or "")
         summary = str(ev.get("summary") or "")
         metadata = ev.get("metadata") or {}
-        sev = Severity(ev.get("severity", Severity.NOTICE.value)) if isinstance(ev.get("severity"), str) else Severity.NOTICE
+        sev = self._safe_severity(ev.get("severity"))
 
         stages: List[HostThreatStage] = []
 
@@ -349,15 +356,21 @@ class HostThreatCorrelator:
         if ev_type == "NETWORK_SOCKET_CONNECTION" and (
             proc_name.lower() in RE_SHELL_NAMES or "reverse" in summary.lower()
         ):
+            rev_entities: List[str] = []
+            dst_ip_val = ev.get("dst_ip")
+            if dst_ip_val is not None and str(dst_ip_val).strip() not in ("", "-", "None"):
+                rev_entities.append(f"ip:{str(dst_ip_val).strip()}")
+            if proc_name.strip():
+                rev_entities.append(f"process:{proc_name.strip()}")
             stages.append(
                 HostThreatStage(
                     stage_id=f"ev-stage-{ev_id}-rev-shell",
                     tactic=MitreTactic.COMMAND_AND_CONTROL,
                     technique=TECHNIQUES_CATALOG.get("T1071"),
                     timestamp=ts,
-                    summary=f"Shell process established outbound network socket: {proc_name} -> {ev.get('dst_ip')}:{ev.get('dst_port')}",
+                    summary=f"Shell process established outbound network socket: {proc_name} -> {dst_ip_val}:{ev.get('dst_port')}",
                     event_ids=[ev_id],
-                    entity_keys=[f"ip:{ev.get('dst_ip')}", f"process:{proc_name}"],
+                    entity_keys=rev_entities,
                     epistemic_certainty="OBSERVED",
                     severity=Severity.CRITICAL,
                 )
@@ -418,6 +431,12 @@ class HostThreatCorrelator:
         if ev_type == "SUDO_COMMAND" and (
             "bash" in proc_cmd or "sh" in proc_cmd or "su" in proc_cmd or "root" in proc_cmd
         ):
+            sudo_entities: List[str] = []
+            raw_user = ev.get("username")
+            if raw_user is not None and str(raw_user).strip() not in ("", "-", "None"):
+                sudo_entities.append(f"user:{str(raw_user).strip()}")
+            if proc_name.strip():
+                sudo_entities.append(f"process:{proc_name.strip()}")
             stages.append(
                 HostThreatStage(
                     stage_id=f"ev-stage-{ev_id}-sudo-priv",
@@ -426,7 +445,7 @@ class HostThreatCorrelator:
                     timestamp=ts,
                     summary=f"Privileged root execution via sudo: {proc_cmd}",
                     event_ids=[ev_id],
-                    entity_keys=[f"user:{ev.get('username', 'root')}", f"process:{proc_name}"],
+                    entity_keys=sudo_entities,
                     epistemic_certainty="OBSERVED",
                     severity=Severity.ALERT,
                 )

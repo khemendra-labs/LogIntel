@@ -56,6 +56,9 @@ class HostGraphBuilder:
             epistemic_status="OBSERVED",
         )
 
+        pid_to_proc_node_id: dict[int, str] = {}
+        pending_parent_links: list[tuple[int, str, Optional[str], Optional[datetime]]] = []
+
         for ev in events:
             ev_id = ev.get("id")
             ev_type = ev.get("event_type", "")
@@ -64,14 +67,33 @@ class HostGraphBuilder:
             ts = self._parse_dt(ts_val)
 
             user = ev.get("username") or raw_meta.get("username")
-            pid = ev.get("pid") or raw_meta.get("pid")
-            ppid = ev.get("ppid") or raw_meta.get("ppid")
+            raw_pid = ev.get("pid") if ev.get("pid") is not None else ev.get("process_pid")
+            if raw_pid is None:
+                raw_pid = raw_meta.get("pid")
+            pid = self._safe_int(raw_pid) if raw_pid is not None else None
+            if pid is None and raw_pid not in (None, ""):
+                pid = raw_pid
+
+            raw_ppid = ev.get("ppid") if ev.get("ppid") is not None else ev.get("process_ppid")
+            if raw_ppid is None:
+                raw_ppid = raw_meta.get("ppid")
+            ppid_int = self._safe_int(raw_ppid)
+
             proc_name = ev.get("process_name") or raw_meta.get("process_name") or raw_meta.get("exe")
-            cmdline = raw_meta.get("cmdline") or raw_meta.get("command_line") or ev.get("summary")
+            cmdline = (
+                ev.get("process_command_line")
+                or raw_meta.get("cmdline")
+                or raw_meta.get("command_line")
+                or ev.get("summary")
+            )
             src_ip = ev.get("src_ip") or raw_meta.get("src_ip")
             dst_ip = ev.get("dst_ip") or raw_meta.get("dst_ip")
-            dst_port = raw_meta.get("dst_port") or raw_meta.get("remote_port")
-            src_port = raw_meta.get("src_port") or raw_meta.get("local_port")
+            dst_port = ev.get("dst_port") if ev.get("dst_port") is not None else (
+                raw_meta.get("dst_port") if raw_meta.get("dst_port") is not None else raw_meta.get("remote_port")
+            )
+            src_port = ev.get("src_port") if ev.get("src_port") is not None else (
+                raw_meta.get("src_port") if raw_meta.get("src_port") is not None else raw_meta.get("local_port")
+            )
             file_path = raw_meta.get("file_path") or raw_meta.get("path")
             unit_name = raw_meta.get("unit_name") or raw_meta.get("service")
             container_id = raw_meta.get("container_id") or raw_meta.get("container")
@@ -120,7 +142,7 @@ class HostGraphBuilder:
                         label=p_label,
                         properties={
                             "pid": pid,
-                            "ppid": ppid,
+                            "ppid": ppid_int if ppid_int is not None else raw_ppid,
                             "name": proc_name,
                             "command_line": cmdline,
                             "host": host_clean,
@@ -131,6 +153,10 @@ class HostGraphBuilder:
                     )
                 else:
                     self._update_node_times(nodes[proc_node_id], ts)
+
+                pid_int = self._safe_int(pid)
+                if pid_int is not None and pid_int not in pid_to_proc_node_id:
+                    pid_to_proc_node_id[pid_int] = proc_node_id
 
                 # User -> Process EXECUTED
                 if user_node_id:
@@ -146,30 +172,9 @@ class HostGraphBuilder:
                             timestamp=ts,
                         )
 
-                # Parent -> Child SPAWNED
-                if ppid and ppid > 0:
-                    parent_node_id = f"process:{host_clean}:{ppid}:parent"
-                    if parent_node_id not in nodes:
-                        nodes[parent_node_id] = HostGraphNode(
-                            id=parent_node_id,
-                            node_type=HostNodeType.PROCESS,
-                            label=f"PID:{ppid}",
-                            properties={"pid": ppid, "host": host_clean},
-                            epistemic_status="INFERRED",
-                            first_seen=ts,
-                            last_seen=ts,
-                        )
-                    edge_id = f"{parent_node_id}->{proc_node_id}:SPAWNED"
-                    if edge_id not in edges:
-                        edges[edge_id] = HostGraphEdge(
-                            id=edge_id,
-                            source=parent_node_id,
-                            target=proc_node_id,
-                            edge_type=HostEdgeType.SPAWNED,
-                            confidence=ConfidenceLevel.DIRECT,
-                            evidence_event_ids=[ev_id] if ev_id else [],
-                            timestamp=ts,
-                        )
+                # Defer Parent -> Child SPAWNED link until all observed processes are indexed
+                if ppid_int is not None and ppid_int > 0:
+                    pending_parent_links.append((ppid_int, proc_node_id, ev_id, ts))
 
             # --- C. Network Connection Node & Edge ---
             target_ip = dst_ip or src_ip
@@ -298,6 +303,35 @@ class HostGraphBuilder:
                             timestamp=ts,
                         )
 
+        # Resolve deferred parent -> child SPAWNED links against observed processes first
+        for ppid_int, proc_node_id, ev_id, ts in pending_parent_links:
+            parent_node_id = pid_to_proc_node_id.get(ppid_int)
+            if not parent_node_id:
+                parent_node_id = f"process:{host_clean}:{ppid_int}:parent"
+                if parent_node_id not in nodes:
+                    nodes[parent_node_id] = HostGraphNode(
+                        id=parent_node_id,
+                        node_type=HostNodeType.PROCESS,
+                        label=f"PID:{ppid_int}",
+                        properties={"pid": ppid_int, "host": host_clean},
+                        epistemic_status="INFERRED",
+                        first_seen=ts,
+                        last_seen=ts,
+                    )
+                else:
+                    self._update_node_times(nodes[parent_node_id], ts)
+            edge_id = f"{parent_node_id}->{proc_node_id}:SPAWNED"
+            if edge_id not in edges:
+                edges[edge_id] = HostGraphEdge(
+                    id=edge_id,
+                    source=parent_node_id,
+                    target=proc_node_id,
+                    edge_type=HostEdgeType.SPAWNED,
+                    confidence=ConfidenceLevel.DIRECT,
+                    evidence_event_ids=[ev_id] if ev_id else [],
+                    timestamp=ts,
+                )
+
         # Sort nodes and edges deterministically by ID
         sorted_nodes = sorted(nodes.values(), key=lambda n: n.id)
         sorted_edges = sorted(edges.values(), key=lambda e: e.id)
@@ -334,6 +368,15 @@ class HostGraphBuilder:
             node.first_seen = ts
         if not node.last_seen or ts > node.last_seen:
             node.last_seen = ts
+
+    @staticmethod
+    def _safe_int(val: Any) -> Optional[int]:
+        if val is None or isinstance(val, bool):
+            return None
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _parse_dt(val: Any) -> Optional[datetime]:

@@ -207,21 +207,21 @@ export function InvestigationCorrelationExplorer({
 
   // Helper for Epistemic Badge styling
   const renderEpistemicBadge = (status: EpistemicStatus | string) => {
-    let bg = "#f7fafc";
-    let text = "#4a5568";
-    let border = "#cbd5e0";
+    let bg = "var(--bg-surface-subtle)";
+    let text = "var(--text-muted)";
+    let border = "var(--border-subtle)";
     if (status === "OBSERVED") {
-      bg = "rgba(40, 167, 69, 0.12)";
-      text = "#2e7d32";
-      border = "rgba(40, 167, 69, 0.35)";
+      bg = "var(--badge-success-bg)";
+      text = "var(--badge-success-text)";
+      border = "var(--badge-success-border)";
     } else if (status === "INFERRED") {
-      bg = "rgba(255, 193, 7, 0.12)";
-      text = "#b78103";
-      border = "rgba(255, 193, 7, 0.4)";
+      bg = "var(--badge-warn-bg)";
+      text = "var(--badge-warn-text)";
+      border = "var(--badge-warn-border)";
     } else if (status === "UNKNOWN") {
-      bg = "rgba(108, 117, 125, 0.12)";
-      text = "#5a6268";
-      border = "rgba(108, 117, 125, 0.3)";
+      bg = "var(--badge-neutral-bg)";
+      text = "var(--badge-neutral-text)";
+      border = "var(--badge-neutral-border)";
     }
     return (
       <span
@@ -244,21 +244,21 @@ export function InvestigationCorrelationExplorer({
 
   // Helper for Corroboration Badge styling
   const renderCorroborationBadge = (status: CorroborationStatus | string) => {
-    let bg = "#f7fafc";
-    let text = "#4a5568";
-    let border = "#cbd5e0";
+    let bg = "var(--bg-surface-subtle)";
+    let text = "var(--text-muted)";
+    let border = "var(--border-subtle)";
     if (status === "CORROBORATED") {
-      bg = "rgba(40, 167, 69, 0.12)";
-      text = "#2e7d32";
-      border = "rgba(40, 167, 69, 0.35)";
+      bg = "var(--badge-success-bg)";
+      text = "var(--badge-success-text)";
+      border = "var(--badge-success-border)";
     } else if (status === "CONTRADICTED") {
-      bg = "rgba(220, 53, 69, 0.12)";
-      text = "#c53030";
-      border = "rgba(220, 53, 69, 0.4)";
+      bg = "var(--badge-alert-bg)";
+      text = "var(--badge-alert-text)";
+      border = "var(--badge-alert-border)";
     } else if (status === "INSUFFICIENT_EVIDENCE") {
-      bg = "rgba(237, 137, 54, 0.12)";
-      text = "#c05621";
-      border = "rgba(237, 137, 54, 0.35)";
+      bg = "var(--badge-warn-bg)";
+      text = "var(--badge-warn-text)";
+      border = "var(--badge-warn-border)";
     }
     return (
       <span
@@ -290,11 +290,11 @@ export function InvestigationCorrelationExplorer({
         display: "flex",
         flexDirection: "column",
         gap: "12px",
-        background: "var(--card-bg, #ffffff)",
-        border: "1px solid var(--border-color, #e2e8f0)",
+        background: "var(--bg-surface)",
+        border: "1px solid var(--border-subtle)",
         borderRadius: "4px",
         padding: "16px",
-        color: "var(--text-primary, #1a202c)",
+        color: "var(--text-primary)",
       }}
     >
       {/* Top Header & View Switcher */}
@@ -305,21 +305,22 @@ export function InvestigationCorrelationExplorer({
           alignItems: "center",
           flexWrap: "wrap",
           gap: "8px",
-          borderBottom: "1px solid var(--border-color, #e2e8f0)",
+          borderBottom: "1px solid var(--border-subtle)",
           paddingBottom: "10px",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.4px" }}>
-            EVIDENCE CORRELATION & INVESTIGATION INTELLIGENCE (M5.9)
+            EVIDENCE CORRELATION & INVESTIGATION INTELLIGENCE
           </div>
           <span
             style={{
               fontSize: "10px",
               padding: "2px 6px",
-              background: "#edf2f7",
+              background: "var(--bg-surface-subtle)",
               borderRadius: "3px",
-              color: "#4a5568",
+              color: "var(--accent-cyan)",
+              border: "1px solid var(--border-subtle)",
               fontFamily: "var(--font-mono, monospace)",
             }}
           >
@@ -417,7 +418,7 @@ export function InvestigationCorrelationExplorer({
               display: "flex",
               flexDirection: "column",
               gap: "8px",
-              borderRight: "1px solid var(--border-color, #e2e8f0)",
+              borderRight: "1px solid var(--border-subtle)",
               paddingRight: "12px",
             }}
           >
@@ -430,8 +431,9 @@ export function InvestigationCorrelationExplorer({
                 style={{
                   padding: "3px 6px",
                   fontSize: "11px",
-                  background: "var(--card-bg, #ffffff)",
-                  border: "1px solid var(--border-color, #cbd5e0)",
+                  background: "var(--bg-surface-subtle)",
+                  border: "1px solid var(--border-subtle)",
+                  color: "var(--text-primary)",
                   borderRadius: "3px",
                   flex: 1,
                 }}
@@ -454,7 +456,7 @@ export function InvestigationCorrelationExplorer({
               }}
             >
               {filteredClusters.length === 0 ? (
-                <div style={{ fontSize: "11px", color: "#718096", padding: "12px", textAlign: "center" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", padding: "12px", textAlign: "center" }}>
                   No evidence clusters identified for this filter.
                 </div>
               ) : (
@@ -470,8 +472,8 @@ export function InvestigationCorrelationExplorer({
                       style={{
                         padding: "8px 10px",
                         borderRadius: "4px",
-                        border: isSelected ? "2px solid #3182ce" : "1px solid var(--border-color, #e2e8f0)",
-                        background: isSelected ? "#ebf8ff" : "#f7fafc",
+                        border: isSelected ? "1px solid var(--accent-cyan)" : "1px solid var(--border-subtle)",
+                        background: isSelected ? "var(--bg-selected)" : "var(--bg-surface-subtle)",
                         cursor: "pointer",
                         transition: "border-color 0.15s ease",
                       }}
@@ -503,18 +505,18 @@ export function InvestigationCorrelationExplorer({
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "flex-start",
-                    borderBottom: "1px solid var(--border-color, #e2e8f0)",
+                    borderBottom: "1px solid var(--border-subtle)",
                     paddingBottom: "8px",
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: "14px", fontWeight: 700, color: "#1a202c" }}>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)" }}>
                       {selectedCluster.title}
                     </div>
                     <div
                       style={{
                         fontSize: "11px",
-                        color: "#718096",
+                        color: "var(--text-muted)",
                         fontFamily: "var(--font-mono, monospace)",
                         marginTop: "2px",
                       }}
@@ -528,7 +530,7 @@ export function InvestigationCorrelationExplorer({
                   </div>
                 </div>
 
-                <div style={{ fontSize: "12px", lineHeight: "1.5", color: "#2d3748" }}>
+                <div style={{ fontSize: "12px", lineHeight: "1.5", color: "var(--text-secondary)" }}>
                   {selectedCluster.summary}
                 </div>
 
@@ -538,23 +540,23 @@ export function InvestigationCorrelationExplorer({
                     display: "flex",
                     gap: "12px",
                     padding: "6px 10px",
-                    background: "#f7fafc",
-                    border: "1px solid #edf2f7",
+                    background: "var(--bg-surface-subtle)",
+                    border: "1px solid var(--border-subtle)",
                     borderRadius: "4px",
                     fontSize: "11px",
                   }}
                 >
                   <div>
-                    <span style={{ color: "#718096" }}>Start:</span>{" "}
+                    <span style={{ color: "var(--text-muted)" }}>Start:</span>{" "}
                     <strong>{selectedCluster.temporal_bounds.start_time || "N/A"}</strong>
                   </div>
                   <div>
-                    <span style={{ color: "#718096" }}>End:</span>{" "}
+                    <span style={{ color: "var(--text-muted)" }}>End:</span>{" "}
                     <strong>{selectedCluster.temporal_bounds.end_time || "N/A"}</strong>
                   </div>
                   {selectedCluster.temporal_bounds.duration_seconds && (
                     <div>
-                      <span style={{ color: "#718096" }}>Duration:</span>{" "}
+                      <span style={{ color: "var(--text-muted)" }}>Duration:</span>{" "}
                       <strong>{selectedCluster.temporal_bounds.duration_seconds}</strong>
                     </div>
                   )}
@@ -562,7 +564,7 @@ export function InvestigationCorrelationExplorer({
 
                 {/* Correlation Reasons */}
                 <div>
-                  <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#4a5568", marginBottom: "4px" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "4px" }}>
                     Deterministic Correlation Reasons ({selectedCluster.correlation_reasons.length})
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
@@ -571,8 +573,8 @@ export function InvestigationCorrelationExplorer({
                         key={idx}
                         style={{
                           padding: "6px 8px",
-                          background: "#ffffff",
-                          border: "1px solid #e2e8f0",
+                          background: "var(--bg-surface-subtle)",
+                          border: "1px solid var(--border-subtle)",
                           borderRadius: "3px",
                           fontSize: "11px",
                           display: "flex",
@@ -581,19 +583,19 @@ export function InvestigationCorrelationExplorer({
                         }}
                       >
                         <div>
-                          <strong style={{ color: "#2b6cb0", fontFamily: "var(--font-mono, monospace)" }}>
+                          <strong style={{ color: "var(--accent-cyan)", fontFamily: "var(--font-mono, monospace)" }}>
                             {r.reason_type}
                           </strong>
-                          {r.dimension_value && <span style={{ marginLeft: "8px", color: "#4a5568" }}>({r.dimension_value})</span>}
-                          <div style={{ fontSize: "10px", color: "#718096", marginTop: "2px" }}>{r.description}</div>
+                          {r.dimension_value && <span style={{ marginLeft: "8px", color: "var(--text-secondary)" }}>({r.dimension_value})</span>}
+                          <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>{r.description}</div>
                         </div>
                         <span
                           style={{
                             fontSize: "9px",
                             fontFamily: "var(--font-mono, monospace)",
-                            color: "#718096",
+                            color: "var(--text-muted)",
                             padding: "2px 4px",
-                            background: "#edf2f7",
+                            background: "var(--bg-surface-active)",
                             borderRadius: "2px",
                           }}
                         >
@@ -634,7 +636,7 @@ export function InvestigationCorrelationExplorer({
 
                 {/* Evidence Citations */}
                 <div>
-                  <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#4a5568", marginBottom: "4px" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "4px" }}>
                     Evidence Citations ({selectedCluster.evidence_references.length})
                   </div>
                   <div style={{ maxHeight: "150px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
@@ -643,8 +645,8 @@ export function InvestigationCorrelationExplorer({
                         key={idx}
                         style={{
                           padding: "4px 8px",
-                          background: "#f7fafc",
-                          border: "1px solid #edf2f7",
+                          background: "var(--bg-surface-subtle)",
+                          border: "1px solid var(--border-subtle)",
                           borderRadius: "3px",
                           fontSize: "10px",
                           fontFamily: "var(--font-mono, monospace)",
@@ -655,7 +657,7 @@ export function InvestigationCorrelationExplorer({
                       >
                         <span>
                           [{ev.citation_tag || ev.reference_id}] {ev.source_type} #{ev.source_id}
-                          {ev.summary && <span style={{ color: "#718096", marginLeft: "6px" }}>— {ev.summary}</span>}
+                          {ev.summary && <span style={{ color: "var(--text-muted)", marginLeft: "6px" }}>— {ev.summary}</span>}
                         </span>
                         {ev.source_type === "events" && onSelectEventId && (
                           <button
@@ -676,16 +678,16 @@ export function InvestigationCorrelationExplorer({
                   style={{
                     marginTop: "auto",
                     padding: "10px",
-                    background: "#f7fafc",
-                    border: "1px solid #e2e8f0",
+                    background: "var(--bg-surface-subtle)",
+                    border: "1px solid var(--border-subtle)",
                     borderRadius: "4px",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#2d3748" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-primary)" }}>
                       Advisory Local AI Explanation
                     </span>
-                    <span style={{ fontSize: "10px", color: "#718096", fontStyle: "italic" }}>
+                    <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>
                       Non-authoritative
                     </span>
                   </div>
@@ -693,7 +695,7 @@ export function InvestigationCorrelationExplorer({
                     <input
                       type="text"
                       className="input-field"
-                      style={{ flex: 1, padding: "4px 8px", fontSize: "11px" }}
+                      style={{ flex: 1, padding: "4px 8px", fontSize: "11px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-primary)" }}
                       placeholder="Ask local AI to explain why these records are correlated..."
                       value={aiQuestion}
                       onChange={(e) => setAiQuestion(e.target.value)}
@@ -712,20 +714,20 @@ export function InvestigationCorrelationExplorer({
                       style={{
                         marginTop: "8px",
                         padding: "8px",
-                        background: "#ffffff",
-                        border: "1px solid #cbd5e0",
+                        background: "var(--bg-surface)",
+                        border: "1px solid var(--border-subtle)",
                         borderRadius: "3px",
                         fontSize: "11px",
                       }}
                     >
-                      <div style={{ fontWeight: 600, color: "#2b6cb0", marginBottom: "2px" }}>
+                      <div style={{ fontWeight: 600, color: "var(--accent-cyan)", marginBottom: "2px" }}>
                         {aiExplanation.summary}
                       </div>
-                      <div style={{ color: "#4a5568", lineHeight: "1.4" }}>
+                      <div style={{ color: "var(--text-secondary)", lineHeight: "1.4" }}>
                         {aiExplanation.reasoning_explanation}
                       </div>
                       {aiExplanation.identified_unknowns.length > 0 && (
-                        <div style={{ marginTop: "4px", color: "#c53030", fontSize: "10px" }}>
+                        <div style={{ marginTop: "4px", color: "var(--badge-alert-text)", fontSize: "10px" }}>
                           <strong>Unknowns / Gaps:</strong> {aiExplanation.identified_unknowns.join("; ")}
                         </div>
                       )}
@@ -773,8 +775,8 @@ export function InvestigationCorrelationExplorer({
                   style={{
                     padding: "8px 10px",
                     borderRadius: "4px",
-                    border: selectedSequence?.sequence_id === s.sequence_id ? "2px solid #3182ce" : "1px solid #e2e8f0",
-                    background: selectedSequence?.sequence_id === s.sequence_id ? "#ebf8ff" : "#f7fafc",
+                    border: selectedSequence?.sequence_id === s.sequence_id ? "1px solid var(--accent-cyan)" : "1px solid var(--border-subtle)",
+                    background: selectedSequence?.sequence_id === s.sequence_id ? "var(--bg-selected)" : "var(--bg-surface-subtle)",
                     cursor: "pointer",
                   }}
                 >
@@ -811,8 +813,8 @@ export function InvestigationCorrelationExplorer({
                       key={st.step_index}
                       style={{
                         padding: "8px 12px",
-                        background: "#ffffff",
-                        border: "1px solid #e2e8f0",
+                        background: "var(--bg-surface-subtle)",
+                        border: "1px solid var(--border-subtle)",
                         borderRadius: "4px",
                         display: "flex",
                         alignItems: "flex-start",
@@ -824,30 +826,30 @@ export function InvestigationCorrelationExplorer({
                           width: "24px",
                           height: "24px",
                           borderRadius: "50%",
-                          background: "#edf2f7",
+                          background: "var(--bg-surface-active)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
                           fontSize: "11px",
                           fontWeight: 700,
-                          color: "#4a5568",
+                          color: "var(--accent-cyan)",
                         }}
                       >
                         {st.step_index}
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#2d3748" }}>
+                          <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>
                             {st.stage_name}
                           </span>
-                          <span style={{ fontSize: "10px", color: "#718096", fontFamily: "var(--font-mono, monospace)" }}>
+                          <span style={{ fontSize: "10px", color: "var(--text-muted)", fontFamily: "var(--font-mono, monospace)" }}>
                             {st.timestamp}
                           </span>
                         </div>
-                        <div style={{ fontSize: "11px", color: "#4a5568", marginTop: "3px" }}>
+                        <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "3px" }}>
                           {st.action_summary}
                         </div>
-                        <div style={{ fontSize: "10px", color: "#718096", marginTop: "4px" }}>
+                        <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>
                           Actor: <strong>{st.actor_entity}</strong> → Target: <strong>{st.target_entity}</strong> • Citation: [{st.evidence_citation}]
                         </div>
                       </div>
@@ -904,8 +906,8 @@ export function InvestigationCorrelationExplorer({
               <div
                 style={{
                   padding: "10px",
-                  background: "#f7fafc",
-                  border: "1px solid #e2e8f0",
+                  background: "var(--bg-surface-subtle)",
+                  border: "1px solid var(--border-subtle)",
                   borderRadius: "4px",
                   display: "flex",
                   justifyContent: "space-between",
@@ -913,8 +915,8 @@ export function InvestigationCorrelationExplorer({
                 }}
               >
                 <div>
-                  <div style={{ fontSize: "12px", fontWeight: 700 }}>{hypothesisSupport.statement}</div>
-                  <div style={{ fontSize: "10px", color: "#718096", fontFamily: "var(--font-mono, monospace)" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>{hypothesisSupport.statement}</div>
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)", fontFamily: "var(--font-mono, monospace)" }}>
                     ID: {hypothesisSupport.hypothesis_id}
                   </div>
                 </div>
@@ -1009,11 +1011,11 @@ export function InvestigationCorrelationExplorer({
               {/* Missing Evidence & Unresolved Questions */}
               {(hypothesisSupport.missing_evidence_descriptions.length > 0 ||
                 hypothesisSupport.unresolved_questions.length > 0) && (
-                <div style={{ padding: "10px", background: "#f7fafc", border: "1px solid #e2e8f0", borderRadius: "4px" }}>
-                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#4a5568", marginBottom: "4px" }}>
+                <div style={{ padding: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", borderRadius: "4px" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "4px" }}>
                     EVIDENCE GAPS & UNRESOLVED QUESTIONS
                   </div>
-                  <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "11px", color: "#4a5568" }}>
+                  <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "11px", color: "var(--text-secondary)" }}>
                     {hypothesisSupport.missing_evidence_descriptions.map((m, idx) => (
                       <li key={`m-${idx}`}>Missing: {m}</li>
                     ))}
@@ -1033,11 +1035,11 @@ export function InvestigationCorrelationExplorer({
       {/* ========================================================================= */}
       {activeView === "gaps" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <div style={{ fontSize: "11px", color: "#718096" }}>
+          <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
             Deterministic gaps identified across telemetry coverage, unresolved entities, and missing corroboration:
           </div>
           {gaps.length === 0 ? (
-            <div style={{ fontSize: "12px", color: "#718096", padding: "16px", textAlign: "center" }}>
+            <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "16px", textAlign: "center" }}>
               No critical evidence gaps detected.
             </div>
           ) : (
@@ -1046,8 +1048,8 @@ export function InvestigationCorrelationExplorer({
                 key={g.gap_id}
                 style={{
                   padding: "10px 12px",
-                  background: "#ffffff",
-                  border: "1px solid #e2e8f0",
+                  background: "var(--bg-surface-subtle)",
+                  border: "1px solid var(--border-subtle)",
                   borderRadius: "4px",
                   display: "flex",
                   flexDirection: "column",
@@ -1055,26 +1057,26 @@ export function InvestigationCorrelationExplorer({
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: "12px", fontWeight: 700, color: "#2d3748" }}>{g.title}</span>
+                  <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>{g.title}</span>
                   <span
                     style={{
                       fontSize: "10px",
                       fontFamily: "var(--font-mono, monospace)",
                       padding: "2px 6px",
-                      background: "#edf2f7",
+                      background: "var(--bg-surface-active)",
                       borderRadius: "3px",
-                      color: "#4a5568",
+                      color: "var(--accent-cyan)",
                     }}
                   >
                     {g.gap_type}
                   </span>
                 </div>
-                <div style={{ fontSize: "11px", color: "#4a5568" }}>{g.description}</div>
-                <div style={{ fontSize: "10px", color: "#718096", marginTop: "2px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{g.description}</div>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>
                   <strong>Remedy:</strong> {g.resolution_remedy}
                 </div>
                 {g.affected_entities.length > 0 && (
-                  <div style={{ fontSize: "10px", color: "#718096" }}>
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
                     Affected entities: {g.affected_entities.join(", ")}
                   </div>
                 )}
@@ -1083,12 +1085,12 @@ export function InvestigationCorrelationExplorer({
                     style={{
                       marginTop: "4px",
                       padding: "4px 8px",
-                      background: "#f7fafc",
-                      border: "1px dashed #cbd5e0",
+                      background: "var(--bg-surface)",
+                      border: "1px dashed var(--border-subtle)",
                       borderRadius: "3px",
                       fontSize: "10px",
                       fontFamily: "var(--font-mono, monospace)",
-                      color: "#2b6cb0",
+                      color: "var(--accent-cyan)",
                     }}
                   >
                     Governed Hunt Query Intent: {g.recommended_governed_query.intent}
@@ -1146,8 +1148,8 @@ export function InvestigationCorrelationExplorer({
               <div
                 style={{
                   padding: "10px",
-                  background: "#f7fafc",
-                  border: "1px solid #e2e8f0",
+                  background: "var(--bg-surface-subtle)",
+                  border: "1px solid var(--border-subtle)",
                   borderRadius: "4px",
                   display: "flex",
                   justifyContent: "space-between",
@@ -1155,19 +1157,19 @@ export function InvestigationCorrelationExplorer({
                 }}
               >
                 <div>
-                  <div style={{ fontSize: "14px", fontWeight: 700 }}>{workbenchDossier.display_name}</div>
-                  <div style={{ fontSize: "10px", color: "#718096", fontFamily: "var(--font-mono, monospace)" }}>
+                  <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)" }}>{workbenchDossier.display_name}</div>
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)", fontFamily: "var(--font-mono, monospace)" }}>
                     {workbenchDossier.entity_key}
                   </div>
                 </div>
-                <div style={{ fontSize: "11px", color: "#4a5568" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
                   Clusters: {workbenchDossier.related_clusters.length} • Evidence: {workbenchDossier.evidence_references.length}
                 </div>
               </div>
 
               {/* Related Clusters */}
               <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "#4a5568", marginBottom: "4px" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "4px" }}>
                   Related Evidence Clusters ({workbenchDossier.related_clusters.length})
                 </div>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
@@ -1176,8 +1178,9 @@ export function InvestigationCorrelationExplorer({
                       key={c.cluster_id}
                       style={{
                         padding: "6px 8px",
-                        background: "#ffffff",
-                        border: "1px solid #e2e8f0",
+                        background: "var(--bg-surface-subtle)",
+                        border: "1px solid var(--border-subtle)",
+                        color: "var(--text-primary)",
                         borderRadius: "3px",
                         fontSize: "10px",
                       }}
@@ -1190,7 +1193,7 @@ export function InvestigationCorrelationExplorer({
 
               {/* Adjacent Graph Neighbors */}
               <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "#4a5568", marginBottom: "4px" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "4px" }}>
                   Adjacent Graph Entities ({workbenchDossier.adjacent_graph_entities.length})
                 </div>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
@@ -1199,7 +1202,9 @@ export function InvestigationCorrelationExplorer({
                       key={idx}
                       style={{
                         padding: "2px 6px",
-                        background: "#edf2f7",
+                        background: "var(--bg-surface-active)",
+                        border: "1px solid var(--border-subtle)",
+                        color: "var(--text-secondary)",
                         borderRadius: "3px",
                         fontSize: "10px",
                         fontFamily: "var(--font-mono, monospace)",

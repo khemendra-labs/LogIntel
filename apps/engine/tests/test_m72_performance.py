@@ -13,15 +13,19 @@ from logintel.timeline.service import timeline_service
 
 @pytest.fixture
 def perf_case():
-    case = case_repo.get_case_by_incident(7299, resolve_evidence=False)
+    case = case_repo.get_case_by_incident(72990, resolve_evidence=False)
     if not case:
         case = case_repo.create_case(
-            incident_id=7299,
+            incident_id=72990,
             title="M7.2 Performance Test Case",
             description="Synthetic case for measuring M7.2 operation latencies",
             created_by="SecAnalyst-1",
         )
     case_id = case.case_id
+
+    existing_refs = [r for r in (case.evidence_references or []) if r.source_id.startswith("perf-")]
+    if len(existing_refs) == 50:
+        return case_id
 
     # Clean up previous synthetic performance evidence references for test idempotency
     if case and case.evidence_references:

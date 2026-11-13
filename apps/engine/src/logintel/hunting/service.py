@@ -69,8 +69,7 @@ class ThreatHuntingService:
 
     def _ensure_case_exists(self, case_id: int) -> None:
         """Verify case existence; raise ValueError on failure."""
-        case = self.case_repo.get_case(case_id, resolve_evidence=False)
-        if not case:
+        if not self.case_repo.case_exists(case_id):
             raise ValueError(f"Case {case_id} not found")
 
     def _log_audit(
@@ -251,7 +250,7 @@ class ThreatHuntingService:
             self._load_hunt_from_db(case_id, hunt_id)
 
         state, _ = self._hunt_approvals.get(key, (HuntApprovalState.DRAFT, None))
-        if state not in (HuntApprovalState.VALIDATED, HuntApprovalState.READY, HuntApprovalState.DRAFT):
+        if state not in (HuntApprovalState.VALIDATED, HuntApprovalState.READY):
             if state == HuntApprovalState.APPROVED:
                 return {"case_id": case_id, "hunt_id": hunt_id, "status": "ALREADY_APPROVED"}
             raise ValueError(f"Cannot approve hunt {hunt_id} in state {state.value}")
@@ -299,7 +298,7 @@ class ThreatHuntingService:
         params = json.loads(row["parameters_json"])
         query_model = GovernedQueryModel.model_validate(params)
         self._hunt_proposals[(case_id, hunt_id)] = query_model
-        st = HuntApprovalState(row["execution_status"]) if row["execution_status"] in HuntApprovalState._value2member_map_ else HuntApprovalState.VALIDATED
+        st = HuntApprovalState(row["execution_status"]) if row["execution_status"] in HuntApprovalState._value2member_map_ else HuntApprovalState.DRAFT
         self._hunt_approvals[(case_id, hunt_id)] = (st, row["executed_by"])
 
     # =========================================================================
@@ -530,41 +529,96 @@ class ThreatHuntingService:
 
         return exec_res
 
+    def _build_op_predicate(self, expr: str, op: QueryOperator, val: Any) -> Tuple[Optional[str], List[Any]]:
+        """Construct parameterized predicate for a resolved SQL column or expression."""
+        if op == QueryOperator.EQUALS:
+            return f"{expr} = ?", [val]
+        elif op == QueryOperator.NOT_EQUALS:
+            return f"{expr} != ?", [val]
+        elif op == QueryOperator.CONTAINS:
+            return f"{expr} LIKE ?", [f"%{val}%"]
+        elif op == QueryOperator.PREFIX:
+            return f"{expr} LIKE ?", [f"{val}%"]
+        elif op == QueryOperator.SUFFIX:
+            return f"{expr} LIKE ?", [f"%{val}"]
+        elif op == QueryOperator.EXISTS:
+            return f"{expr} IS NOT NULL AND {expr} != ''", []
+        elif op == QueryOperator.IN and isinstance(val, list):
+            if not val:
+                return None, []
+            ph = ",".join("?" for _ in val)
+            return f"{expr} IN ({ph})", list(val)
+        elif op == QueryOperator.NOT_IN and isinstance(val, list):
+            if not val:
+                return None, []
+            ph = ",".join("?" for _ in val)
+            return f"{expr} NOT IN ({ph})", list(val)
+        elif op == QueryOperator.BEFORE:
+            return f"{expr} < ?", [val]
+        elif op == QueryOperator.AFTER:
+            return f"{expr} > ?", [val]
+        elif op in (QueryOperator.BETWEEN, QueryOperator.RANGE) and isinstance(val, list) and len(val) == 2:
+            return f"{expr} BETWEEN ? AND ?", [val[0], val[1]]
+        return None, []
+
     def _build_filter_clause(self, f: FieldFilter) -> Tuple[Optional[str], List[Any]]:
         """Construct parameterized SQL predicate for allowlisted field filter."""
         field = f.field
         op = f.operator
         val = f.value
 
-        if op == QueryOperator.EQUALS:
-            return f"{field} = ?", [val]
-        elif op == QueryOperator.NOT_EQUALS:
-            return f"{field} != ?", [val]
-        elif op == QueryOperator.CONTAINS:
-            return f"{field} LIKE ?", [f"%{val}%"]
-        elif op == QueryOperator.PREFIX:
-            return f"{field} LIKE ?", [f"{val}%"]
-        elif op == QueryOperator.SUFFIX:
-            return f"{field} LIKE ?", [f"%{val}"]
-        elif op == QueryOperator.EXISTS:
-            return f"{field} IS NOT NULL AND {field} != ''", []
-        elif op == QueryOperator.IN and isinstance(val, list):
-            if not val:
+        # Multi-column IP match across src_ip and dst_ip
+        if field == "ip":
+            c1, p1 = self._build_op_predicate("src_ip", op, val)
+            c2, p2 = self._build_op_predicate("dst_ip", op, val)
+            if c1 and c2:
+                joiner = " AND " if op in (QueryOperator.NOT_EQUALS, QueryOperator.NOT_IN) else " OR "
+                return f"({c1}{joiner}{c2})", p1 + p2
+            return None, []
+
+        # Subquery filters against detections/detection_evidence
+        if field in ("rule_id", "alert_id"):
+            target_col = "d.rule_id" if field == "rule_id" else "d.alert_id"
+            sub_clause, sub_params = self._build_op_predicate(target_col, op, val)
+            if not sub_clause:
                 return None, []
-            ph = ",".join("?" for _ in val)
-            return f"{field} IN ({ph})", list(val)
-        elif op == QueryOperator.NOT_IN and isinstance(val, list):
-            if not val:
-                return None, []
-            ph = ",".join("?" for _ in val)
-            return f"{field} NOT IN ({ph})", list(val)
-        elif op == QueryOperator.BEFORE:
-            return f"{field} < ?", [val]
-        elif op == QueryOperator.AFTER:
-            return f"{field} > ?", [val]
-        elif op in (QueryOperator.BETWEEN, QueryOperator.RANGE) and isinstance(val, list) and len(val) == 2:
-            return f"{field} BETWEEN ? AND ?", [val[0], val[1]]
-        return None, []
+            return (
+                f"id IN (SELECT de.event_id FROM detection_evidence de "
+                f"INNER JOIN detections d ON de.detection_id = d.id WHERE {sub_clause})",
+                sub_params,
+            )
+
+        # IOC JSON array field handling (match tokens cleanly even on EQUALS/IN)
+        if field == "ioc":
+            if op == QueryOperator.EQUALS:
+                return "EXISTS (SELECT 1 FROM json_each(iocs_json) WHERE value = ?)", [val]
+            if op == QueryOperator.NOT_EQUALS:
+                return "NOT EXISTS (SELECT 1 FROM json_each(iocs_json) WHERE value = ?)", [val]
+            if op == QueryOperator.IN and isinstance(val, list):
+                if not val:
+                    return None, []
+                ph = ",".join("?" for _ in val)
+                return f"EXISTS (SELECT 1 FROM json_each(iocs_json) WHERE value IN ({ph}))", list(val)
+            if op == QueryOperator.NOT_IN and isinstance(val, list):
+                if not val:
+                    return None, []
+                ph = ",".join("?" for _ in val)
+                return f"NOT EXISTS (SELECT 1 FROM json_each(iocs_json) WHERE value IN ({ph}))", list(val)
+            if op == QueryOperator.EXISTS:
+                return "iocs_json IS NOT NULL AND iocs_json != '[]' AND iocs_json != ''", []
+            return self._build_op_predicate("iocs_json", op, val)
+
+        column_map = {
+            "hostname": "host",
+            "user": "username",
+            "process": "process_name",
+            "command": "process_command_line",
+            "cmdline": "process_command_line",
+            "container_id": "json_extract(metadata_json, '$.container_id')",
+            "unit_name": "json_extract(metadata_json, '$.unit_name')",
+        }
+        sql_expr = column_map.get(field, field)
+        return self._build_op_predicate(sql_expr, op, val)
 
     def _build_entity_clause(self, ef: EntityFilter) -> Tuple[Optional[str], List[Any]]:
         """Map entity type to canonical event table columns."""
@@ -790,13 +844,14 @@ class ThreatHuntingService:
         if not selected_items:
             raise ValueError("No matching hunt result items selected for hypothesis evaluation")
 
+        is_contradicting = (req.role.upper() == "CONTRADICTING")
         for it in selected_items:
             evidence_tag = f"[{it.source_type}:{it.source_id}]"
             findings_workbench_service.add_hypothesis_evidence(
                 case_id=case_id,
                 hypothesis_id=req.hypothesis_id,
                 evidence_tag=evidence_tag,
-                role=req.role,
+                is_contradicting=is_contradicting,
                 actor=actor,
             )
 
@@ -844,6 +899,7 @@ class ThreatHuntingService:
                 source_type=it.source_type,
                 source_id=it.source_id,
                 role=role_enum.value,
+                epistemic_status=it.epistemic_status,
                 citation_tag=it.citation_tag,
                 analyst_annotation=req.analyst_annotation or f"Imported from hunt {req.hunt_id}: {it.summary}",
                 actor=actor,
